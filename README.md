@@ -5,7 +5,7 @@
 ![Platform](https://img.shields.io/badge/platform-Tampermonkey%20%7C%20Violentmonkey-orange)
 ![JavaScript](https://img.shields.io/badge/JavaScript-ES2020-F7DF1E?logo=javascript&logoColor=black)
 
-> A fast, undetectable YouTube ad blocker userscript with split-architecture proxy engine, remote filter lists, and a built-in dark-themed settings panel.
+> A fast, undetectable YouTube ad blocker userscript with split-architecture proxy engine and remote filter lists.
 
 ## Installation
 
