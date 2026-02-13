@@ -20,8 +20,8 @@
 // @connect      github.com
 // @homepageURL  https://github.com/SysAdminDoc/youtube-adblock
 // @supportURL   https://github.com/SysAdminDoc/youtube-adblock/issues
-// @downloadURL  https://raw.githubusercontent.com/SysAdminDoc/youtube-adblock/main/yt-adblock.user.js
-// @updateURL    https://raw.githubusercontent.com/SysAdminDoc/youtube-adblock/main/yt-adblock.user.js
+// @downloadURL  https://raw.githubusercontent.com/SysAdminDoc/youtubeadblock/main/YTAdBlock.user.js
+// @updateURL    https://raw.githubusercontent.com/SysAdminDoc/youtubeadblock/main/YTAdBlock.user.js
 // ==/UserScript==
 
 (function() {
