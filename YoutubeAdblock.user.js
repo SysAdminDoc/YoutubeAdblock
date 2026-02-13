@@ -33,7 +33,7 @@
 
     const SCRIPT_NAME = 'YoutubeAdblock';
     const SCRIPT_VERSION = '0.1.0';
-    const FILTER_URL_DEFAULT = 'https://raw.githubusercontent.com/SysAdminDoc/youtubeadblock/main/YoutubeAdblock-filters.json';
+    const FILTER_URL_DEFAULT = 'https://raw.githubusercontent.com/SysAdminDoc/YoutubeAdblock/refs/heads/main/youtube-adblock-filters.txt';
     const FILTER_CACHE_TTL = 4 * 60 * 60 * 1000; // 4 hours
     const CSS_PREFIX = 'ytab';
 
