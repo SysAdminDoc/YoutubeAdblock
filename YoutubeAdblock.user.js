@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         YoutubeAdblock
 // @namespace    https://github.com/SysAdminDoc
-// @version      0.1.0
+// @version      0.1.1
 // @description  YouTube Ad Blocker with remote filter list support
 // @author       SysAdminDoc
 // @match        https://www.youtube.com/*
@@ -32,7 +32,7 @@
      * ===================================================================== */
 
     const SCRIPT_NAME = 'YoutubeAdblock';
-    const SCRIPT_VERSION = '0.1.0';
+    const SCRIPT_VERSION = '0.1.1';
     const FILTER_URL_DEFAULT = 'https://raw.githubusercontent.com/SysAdminDoc/YoutubeAdblock/refs/heads/main/youtube-adblock-filters.txt';
     const FILTER_CACHE_TTL = 4 * 60 * 60 * 1000; // 4 hours
     const CSS_PREFIX = 'ytab';
@@ -148,6 +148,106 @@
     function saveStats() { setSetting('stats', state.stats); }
 
     /* =========================================================================
+     * FILTER PARSER (uBO filter list format)
+     * ===================================================================== */
+
+    function parseUBOFilterList(text) {
+        const lines = text.split('\n').map(l => l.trim()).filter(l => l && !l.startsWith('!'));
+        const cosmeticSelectors = new Set();
+        const cosmeticExceptions = new Set();
+        const upsellSelectors = new Set();
+        const setUndefined = new Set();
+        const pruneKeys = new Set();
+        const networkBlocks = [];
+        let filterCount = 0;
+
+        for (const line of lines) {
+            // Skip conditional compilation directives
+            if (line.startsWith('!#')) continue;
+
+            // Cosmetic exception rules (domain#@#selector) — exclude from hiding
+            const exMatch = line.match(/^[^#]*#@#(.+)$/);
+            if (exMatch) {
+                cosmeticExceptions.add(exMatch[1].trim());
+                continue;
+            }
+
+            // Scriptlet injection: ##+js(name, args...)
+            const jsMatch = line.match(/#\+js\(([^,)]+)(?:,\s*(.+))?\)$/);
+            if (jsMatch) {
+                const [, scriptlet, argsStr] = jsMatch;
+                const name = scriptlet.trim();
+
+                if (name === 'set' && argsStr) {
+                    const parts = argsStr.split(',').map(s => s.trim());
+                    if (parts.length >= 2 && parts[1] === 'undefined') {
+                        setUndefined.add(parts[0]);
+                    }
+                }
+
+                if ((name === 'json-prune' || name === 'json-prune-fetch-response' || name === 'json-prune-xhr-response') && argsStr) {
+                    // First arg before any comma-separated options is space-delimited keys
+                    const keysPart = argsStr.split(',')[0].trim();
+                    for (const key of keysPart.split(/\s+/)) {
+                        const clean = key.replace(/\[-\]\./g, '');
+                        if (clean && !['important', 'legacyImportant', 'no_ads'].includes(clean)) {
+                            pruneKeys.add(clean);
+                        }
+                    }
+                }
+
+                filterCount++;
+                continue;
+            }
+
+            // Cosmetic hiding rules: domain##selector
+            const cosmMatch = line.match(/^([^#]*)##([^+^].*)$/);
+            if (cosmMatch) {
+                const selector = cosmMatch[2].trim();
+                if (!selector || selector.startsWith('^')) continue;
+                // Check if it's a :style() rule — skip those
+                if (selector.includes(':style(')) continue;
+                // Upsell-related selectors
+                if (selector.includes('popup-container') || selector.includes('upsell') || selector.includes('mealbar')) {
+                    upsellSelectors.add(selector);
+                } else {
+                    cosmeticSelectors.add(selector);
+                }
+                filterCount++;
+                continue;
+            }
+
+            // Network block rules: ||url$options or *pattern$options
+            if (line.startsWith('||') || line.startsWith('*') || line.startsWith('/')) {
+                if (!line.startsWith('@@')) {
+                    networkBlocks.push(line);
+                    filterCount++;
+                }
+                continue;
+            }
+        }
+
+        // Remove exception selectors from cosmetic set
+        for (const ex of cosmeticExceptions) {
+            cosmeticSelectors.delete(ex);
+        }
+
+        return {
+            version: new Date().toISOString().slice(0, 10),
+            updated: new Date().toISOString().slice(0, 10),
+            filterCount,
+            pruneKeys: [...new Set([...DEFAULT_FILTERS.pruneKeys, ...pruneKeys])],
+            setUndefined: [...new Set([...DEFAULT_FILTERS.setUndefined, ...setUndefined])],
+            replaceKeys: DEFAULT_FILTERS.replaceKeys,
+            interceptPatterns: DEFAULT_FILTERS.interceptPatterns,
+            cosmeticSelectors: [...new Set([...DEFAULT_FILTERS.cosmeticSelectors, ...cosmeticSelectors])],
+            upsellSelectors: [...new Set([...DEFAULT_FILTERS.upsellSelectors, ...upsellSelectors])],
+            features: DEFAULT_FILTERS.features,
+            shortsAdPrune: DEFAULT_FILTERS.shortsAdPrune
+        };
+    }
+
+    /* =========================================================================
      * FILTER FETCHER
      * ===================================================================== */
 
@@ -162,25 +262,31 @@
                 timeout: 10000,
                 onload(resp) {
                     try {
-                        const data = JSON.parse(resp.responseText);
-                        if (data.pruneKeys && data.features) {
-                            state.filters = data;
-                            state.filterSource = 'remote';
-                            state.lastFilterUpdate = Date.now();
-                            setSetting('filters_cache', data);
-                            setSetting('filters_cache_time', Date.now());
-                            // Re-merge features with overrides
-                            const overrides = getSetting('feature_overrides', {});
-                            state.features = { ...data.features };
-                            for (const [k, v] of Object.entries(overrides)) {
-                                if (k in state.features) state.features[k] = v;
-                            }
-                            updateCosmeticCSS();
-                            resolve(data);
-                            showToast(`Filters updated to v${data.version}`, 'success');
+                        let data;
+                        const text = resp.responseText || '';
+                        // Detect format: JSON starts with { or [, otherwise uBO filter list
+                        if (text.trimStart().startsWith('{') || text.trimStart().startsWith('[')) {
+                            data = JSON.parse(text);
+                            if (!data.pruneKeys || !data.features) throw new Error('Invalid JSON filter format');
                         } else {
-                            throw new Error('Invalid filter format');
+                            data = parseUBOFilterList(text);
                         }
+
+                        state.filters = data;
+                        state.filterSource = 'remote';
+                        state.lastFilterUpdate = Date.now();
+                        setSetting('filters_cache', data);
+                        setSetting('filters_cache_time', Date.now());
+                        // Re-merge features with overrides
+                        const overrides = getSetting('feature_overrides', {});
+                        state.features = { ...data.features };
+                        for (const [k, v] of Object.entries(overrides)) {
+                            if (k in state.features) state.features[k] = v;
+                        }
+                        updateCosmeticCSS();
+                        resolve(data);
+                        const count = data.filterCount || data.cosmeticSelectors?.length || 0;
+                        showToast(`Filters updated: ${count} rules (${data.version})`, 'success');
                     } catch (e) {
                         console.warn(`[${SCRIPT_NAME}] Filter parse error:`, e);
                         resolve(state.filters);
@@ -273,7 +379,8 @@
     function safeOverride(obj, prop, newValue) {
         try {
             obj[prop] = newValue;
-            if (obj[prop] === newValue) return true;
+            // Skip strict equality check — proxied properties may not read back identically
+            return true;
         } catch (e) { /* direct assign failed */ }
         try {
             Object.defineProperty(obj, prop, {
@@ -282,14 +389,13 @@
             return true;
         } catch (e) { /* defineProperty failed */ }
         try {
-            // Last resort: delete and re-add
             delete obj[prop];
             Object.defineProperty(obj, prop, {
                 value: newValue, writable: true, configurable: true, enumerable: true
             });
             return true;
         } catch (e) {
-            console.warn(`[${SCRIPT_NAME}] Failed to override ${prop}`);
+            // Silent fail — another script (e.g. YTKit) may have already proxied this
             return false;
         }
     }
