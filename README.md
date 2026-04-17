@@ -1,17 +1,48 @@
+<!-- codex-branding:start -->
+<p align="center"><img src="icon.png" width="128" alt="Youtube Adblock"></p>
+
+<p align="center">
+  <img alt="Version" src="https://img.shields.io/badge/version-0.3.1-58A6FF?style=for-the-badge">
+  <img alt="License" src="https://img.shields.io/badge/license-MIT-4ade80?style=for-the-badge">
+  <img alt="Platform" src="https://img.shields.io/badge/platform-Userscript%20%7C%20Chrome%20%7C%20Firefox-58A6FF?style=for-the-badge">
+</p>
+<!-- codex-branding:end -->
+
 # YoutubeAdblock
 
-![Version](https://img.shields.io/badge/version-0.0.3-blue)
-![License](https://img.shields.io/badge/license-MIT-green)
-![Platform](https://img.shields.io/badge/platform-Tampermonkey%20%7C%20Violentmonkey-orange)
-![JavaScript](https://img.shields.io/badge/JavaScript-ES2020-F7DF1E?logo=javascript&logoColor=black)
+> A document-start YouTube ad blocker userscript with a split-context proxy engine, remote rule support, and a polished control center for tuning protection.
 
-> A fast, undetectable YouTube ad blocker userscript with split-architecture proxy engine and remote filter lists.
+## Quick Start
 
-## Installation
+### Userscript (Tampermonkey / Violentmonkey)
 
 1. Install [Tampermonkey](https://www.tampermonkey.net/) or [Violentmonkey](https://violentmonkey.github.io/)
 2. [Click here to install YoutubeAdblock](https://github.com/SysAdminDoc/YoutubeAdblock/raw/refs/heads/main/YoutubeAdblock.user.js)
-3. Confirm installation when prompted
+3. Confirm installation when prompted, then reload YouTube
+4. Open your userscript menu and use the built-in commands to open the control center, pause or resume protection, or refresh rules on demand
+
+### Chrome / Edge / Brave (MV3 extension, unpacked)
+
+1. Clone or download the repo, then run `powershell -ExecutionPolicy Bypass -File .\Build-Extension.ps1` to regenerate [extension/main.js](extension/main.js) from the userscript
+2. Visit `chrome://extensions`, enable **Developer mode**, and click **Load unpacked**
+3. Select the [extension/](extension/) folder
+4. Click the YoutubeAdblock toolbar button (or press `Ctrl+Shift+Y`) to open the control center
+
+### Firefox (MV3 extension, temporary install)
+
+1. Build the extension as above
+2. Visit `about:debugging#/runtime/this-firefox`
+3. Click **Load Temporary Add-on** and pick [extension/manifest.json](extension/manifest.json)
+4. Click the YoutubeAdblock toolbar button to open the control center
+
+The extension ships the same blocking engine as the userscript plus **declarativeNetRequest rules** that block ad-serving endpoints (`/pagead/`, `/api/stats/ads`, `/youtubei/v1/player/ad_break`, googlevideo `ctier=SA` segments, doubleclick.net and googlesyndication.com from YouTube origins) at the browser network layer — outside the reach of any page-level anti-adblock countermeasure.
+
+## Highlights
+
+- Blocks ads before they render by pruning payloads in `JSON.parse`, `fetch()`, and `XMLHttpRequest`
+- Handles anti-detection paths like abnormality callbacks, clean iframe bypasses, and playback timers
+- Keeps cosmetic cleanup separate from payload blocking so the interface stays tidy after the heavy lifting is done
+- Ships with a local fallback rule set, cached remote rules, and a diagnostics-friendly control center
 
 ## Features
 
@@ -27,8 +58,13 @@
 | CSS Cosmetic Filters | 150+ selectors hiding ad containers, banners, and promotions | Enabled |
 | SSAP Auto-Skip | Automatically clicks the skip button on skippable video ads | Enabled |
 | Anti-Detect Bypass | Defeats YouTube's abnormality/adblock detection system | Enabled |
+| Iframe Fetch-Lift Defense | Rebridges `contentWindow.fetch`, `XMLHttpRequest`, and `JSON.parse` in same-origin iframes so YouTube can't lift pristine globals | Enabled |
+| Aggressive Anti-Stall | Fast-forwards 17-second bound timers YouTube uses to stall playback when a blocker is suspected | Enabled |
+| Video Ad Fast-Forward | Mutes and accelerates any ad that slips past pruning (last-resort safety net) | Enabled |
+| SponsorBlock Auto-Skip | Silently skips sponsor, self-promo, intro, outro, interaction, preview, music-off-topic, and filler segments using the privacy-preserving SponsorBlock hash-prefix API | Enabled |
+| DNR Network Blocking *(extension only)* | Blocks `/pagead/`, `/api/stats/ads`, `/youtubei/v1/player/ad_break`, googlevideo `ctier=SA`, doubleclick.net, and googlesyndication.com at the browser network layer via MV3 declarativeNetRequest rules | Enabled |
 | Remote Filter List | Fetches and applies uBO-compatible filter lists from a configurable URL | Enabled |
-| Custom Filters | Add your own CSS selectors for additional cosmetic blocking | Disabled |
+| Control Center | Master switch, module toggles, rule refresh, diagnostics, and reset tools | Enabled |
 | Live Stats | Real-time counters for blocked, pruned, and skipped ads | Enabled |
 | TrustedHTML Safe | Full CSP/TrustedTypes compliance — no `innerHTML` violations | Always |
 
@@ -64,33 +100,33 @@ Each proxy installation is individually try/catch wrapped using a `safeOverride(
 
 ## Configuration
 
-All settings persist via `GM_setValue`. Right-click the Tampermonkey icon → YoutubeAdblock to access the settings panel.
+All settings persist via `GM_setValue`. Open the userscript menu and choose `YoutubeAdblock: Open Control Center` to adjust protection without leaving YouTube.
 
-### Settings Panel
+### Control Center
 
 | Setting | Description | Default |
 |---------|-------------|---------|
 | Master Toggle | Enable/disable all ad blocking | On |
-| Cosmetic Hide | CSS-based hiding of ad containers | On |
-| SSAP Auto-Skip | Auto-click skip button on video ads | On |
-| Anti-Detect | Bypass YouTube's abnormality detection | On |
-| Filter List URL | Point to any uBO/EasyList-compatible filter list | [youtube-adblock-filters.txt](https://raw.githubusercontent.com/SysAdminDoc/YoutubeAdblock/refs/heads/main/youtube-adblock-filters.txt) |
-| Custom Filters | Add your own CSS selectors | Empty |
-| Live Stats | Real-time blocked/pruned/skipped counters | Visible |
+| Rule Source | Point the script at any raw uBO/EasyList-compatible list and refresh it on demand | [youtube-adblock-filters.txt](https://raw.githubusercontent.com/SysAdminDoc/YoutubeAdblock/refs/heads/main/youtube-adblock-filters.txt) |
+| Core Blocking Toggles | Control JSON pruning, fetch/XHR interception, property traps, and request rewriting | On |
+| Anti-Detection Toggles | Control abnormality bypass, iframe bypass prevention, SSAP skipping, spoofing, and timer neutralization | On |
+| Interface Cleanup Toggles | Control cosmetic cleanup, Premium upsell blocking, and Shorts ad removal | On |
+| Diagnostics | Copy the active configuration and counters for bug reports | Available |
+| Reset Tools | Reset local counters or restore the recommended defaults | Available |
 
 ### Filter List
 
-The default remote filter list is hosted in this repo at [`youtube-adblock-filters.txt`](https://raw.githubusercontent.com/SysAdminDoc/YoutubeAdblock/refs/heads/main/youtube-adblock-filters.txt). It uses uBO-compatible filter syntax and is parsed on fetch. You can point the Filter List URL to any compatible list, or add custom selectors directly in the settings panel.
+The default remote filter list is hosted in this repo at [`youtube-adblock-filters.txt`](https://raw.githubusercontent.com/SysAdminDoc/YoutubeAdblock/refs/heads/main/youtube-adblock-filters.txt). It uses uBO-compatible filter syntax and is parsed on fetch. You can point the Rule Source field to any compatible raw list URL. If a refresh fails, YoutubeAdblock keeps the last working rules or the built-in fallback active so protection does not drop unexpectedly.
 
 ### Pruned API Fields
 
 The proxy engine strips these fields from YouTube API responses before they reach the player:
 
-`adPlacements` · `adSlots` · `playerAds` · `adBreakHeartbeatParams` · `auxiliaryUi.messageRenderers.upsellDialogRenderer` · `responseContext.adSignalsInfo`
+`adPlacements` · `adSlots` · `playerAds` · `adBreakHeartbeatParams` · `auxiliaryUi.messageRenderers.upsellDialogRenderer` · `responseContext.adSignalsInfo` · `frameworkUpdates`
 
 ### Intercepted Endpoints
 
-`/youtubei/v1/player` · `/youtubei/v1/get_watch` · `/youtubei/v1/browse` · `/youtubei/v1/search` · `/youtubei/v1/next` · `/watch?`
+`/youtubei/v1/player` · `/youtubei/v1/get_watch` · `/youtubei/v1/browse` · `/youtubei/v1/search` · `/youtubei/v1/next` · `/youtubei/v1/guide` · `/watch?`
 
 ## Supported Sites
 
@@ -114,16 +150,11 @@ Ensure the Anti-Detect setting is enabled. If YouTube recently changed their det
 **Works on Firefox?**
 Yes, with Violentmonkey or Tampermonkey. All features are cross-browser.
 
-**How do I add custom filters?**
-Open the settings panel and add CSS selectors to the Custom Filters field. One selector per line.
+**How do I use a different filter list?**
+Point the Rule Source field at a compatible raw list that includes the selectors you want, then refresh the rules from the control center.
 
 **How do I reset settings?**
-Open DevTools console (F12) and run:
-```javascript
-GM_setValue('ytab_enabled', true);
-GM_setValue('ytab_antidetect', true);
-```
-Then reload the page.
+Open the control center and use `Restore defaults`. That resets the master switch and feature toggles to the recommended starting state without requiring DevTools.
 
 ## Contributing
 

@@ -1,0 +1,132 @@
+name: Build
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+# Two runs for the same tag would race the `gh release upload --clobber`
+# call and could publish incomplete assets. Cancel in-progress runs when
+# a newer commit or a retry lands.
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Setup Node (for syntax-checking generated JS)
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Regenerate extension/main.js from userscript
+        shell: pwsh
+        run: ./Build-Extension.ps1
+
+      - name: Resolve + validate version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION=$(node -p "require('./extension/manifest.json').version")
+          USERSCRIPT_VERSION=$(grep -E '^// @version' YoutubeAdblock.user.js | head -n1 | awk '{print $3}')
+          if [ -z "$VERSION" ] || [ -z "$USERSCRIPT_VERSION" ]; then
+            echo "::error::Could not parse version from manifest or userscript"
+            exit 1
+          fi
+          if [ "$VERSION" != "$USERSCRIPT_VERSION" ]; then
+            echo "::error::Version mismatch: extension/manifest.json=$VERSION userscript=$USERSCRIPT_VERSION"
+            exit 1
+          fi
+          # On tag pushes, also verify the tag matches the manifest version.
+          if [[ "${GITHUB_REF:-}" == refs/tags/v* ]]; then
+            TAG_VERSION="${GITHUB_REF#refs/tags/v}"
+            if [ "$TAG_VERSION" != "$VERSION" ]; then
+              echo "::error::Tag version v$TAG_VERSION does not match manifest version $VERSION"
+              exit 1
+            fi
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Resolved VERSION=$VERSION"
+
+      - name: Syntax-check generated JS
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check YoutubeAdblock.user.js
+          node --check extension/main.js
+          node --check extension/bridge.js
+          node --check extension/background.js
+          # Validate JSON shape of manifest + DNR rules
+          node -e "JSON.parse(require('fs').readFileSync('extension/manifest.json','utf8'))"
+          node -e "JSON.parse(require('fs').readFileSync('extension/rules/network-blocks.json','utf8'))"
+
+      - name: Package extension (.zip)
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          cd extension
+          # Exclude the dev-facing README from the shipped package —
+          # it's only useful to contributors browsing the source tree.
+          zip -r -X "../YoutubeAdblock-extension-v${VERSION}.zip" . \
+            -x "README.md"
+          cd ..
+          ls -la YoutubeAdblock-extension-v*.zip
+
+      - name: Stage userscript artifact
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          cp YoutubeAdblock.user.js "YoutubeAdblock-v${VERSION}.user.js"
+
+      - name: Upload artifacts (manual dispatch)
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: YoutubeAdblock-v${{ steps.version.outputs.version }}
+          path: |
+            YoutubeAdblock-extension-v*.zip
+            YoutubeAdblock-v*.user.js
+          if-no-files-found: error
+
+      - name: Ensure release exists (tag push)
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          if ! gh release view "${{ github.ref_name }}" >/dev/null 2>&1; then
+            gh release create "${{ github.ref_name }}" \
+              --title "YoutubeAdblock v${VERSION}" \
+              --generate-notes \
+              --latest=false
+          fi
+
+      - name: Upload to release (tag push)
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          gh release upload "${{ github.ref_name }}" \
+            "YoutubeAdblock-extension-v${VERSION}.zip" \
+            "YoutubeAdblock-v${VERSION}.user.js" \
+            --clobber
