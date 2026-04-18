@@ -940,15 +940,20 @@
         // Fresh cache skips the network call unless forced. Stale cache and
         // built-in defaults both benefit from a refresh attempt on startup.
         if (!force && state.filterSource === 'cached') return Promise.resolve(state.filters);
-        if (state.filterSyncing && state.filterRequestPromise) {
-            if (state.activeFilterRequestUrl === url) return state.filterRequestPromise;
-            state.filterRequestId++;
+        // If an in-flight request is already targeting the same URL, reuse it.
+        // Anything else (different URL, forced refresh) issues a fresh request
+        // and supersedes the old one via the request-id token below.
+        if (state.filterSyncing && state.filterRequestPromise && state.activeFilterRequestUrl === url) {
+            return state.filterRequestPromise;
         }
         if (typeof GM_xmlhttpRequest !== 'function') {
             // No network privilege — stay on whatever we have.
             return Promise.resolve(state.filters);
         }
 
+        // Single monotonic bump. Any in-flight callback that reads its
+        // captured `requestId` after this assignment will see a mismatch
+        // and treat itself as stale.
         const requestId = ++state.filterRequestId;
         state.activeFilterRequestUrl = url;
         const request = new Promise((resolve) => {
@@ -1282,8 +1287,6 @@
 
     function installFetchProxy() {
         const originalFetch = window.fetch;
-        state.originals.fetch = originalFetch;
-
         const proxiedFetch = new Proxy(originalFetch, {
             apply(target, thisArg, args) {
                 const request = args[0];
@@ -1377,8 +1380,6 @@
     function installXHRProxy() {
         const originalOpen = XMLHttpRequest.prototype.open;
         const originalSend = XMLHttpRequest.prototype.send;
-        state.originals.xhrOpen = originalOpen;
-        state.originals.xhrSend = originalSend;
 
         const proxiedOpen = function(method, url, ...rest) {
             // url may be a URL instance per spec; coerce so downstream
@@ -1419,11 +1420,14 @@
             }
 
             const xhr = this;
-            let intercepted = false;
 
             function interceptResponse() {
-                if (intercepted) return;
                 if (xhr.readyState !== 4) return;
+                // Self-remove on the only state we care about. readystatechange
+                // fires for 0→1→2→3→4; the early-return above is the loop guard
+                // for earlier states, and removing here prevents accidentally
+                // re-processing a long-polling XHR that somehow ticks back past
+                // 4 (browsers don't, but the removal is free insurance).
                 try {
                     xhr.removeEventListener('readystatechange', interceptResponse, true);
                 } catch (e) { /* ignore */ }
@@ -1476,7 +1480,6 @@
                     if (wasPruned) {
                         incrementStat('blocked');
                     }
-                    intercepted = true;
                 } catch (e) { /* fail silently */ }
             }
 
@@ -1586,8 +1589,6 @@
 
     function installAbnormalityBypass() {
         const originalThen = Promise.prototype.then;
-        state.originals.promiseThen = originalThen;
-
         const proxiedThen = new Proxy(originalThen, {
             apply(target, thisArg, args) {
                 if (!isEnabled() || !state.features.abnormalityBypass) {
@@ -1690,9 +1691,6 @@
         const originalAppendChild = Node.prototype.appendChild;
         const originalInsertBefore = Node.prototype.insertBefore;
         const originalReplaceChild = Node.prototype.replaceChild;
-        state.originals.appendChild = originalAppendChild;
-        state.originals.insertBefore = originalInsertBefore;
-        state.originals.replaceChild = originalReplaceChild;
 
         function handleInsertion(node, result) {
             try {
@@ -1902,7 +1900,7 @@
 
         // Poll while an ad is actually on-screen. Outside of `.ad-showing`
         // this poll is a single classList read and returns immediately.
-        state._videoAdFastForwardInterval = registerInterval(tickVideo, 500);
+        registerInterval(tickVideo, 500);
     }
 
     /* =========================================================================
@@ -2127,7 +2125,7 @@
         // (e.g. theater-mode toggle on some builds).
         handleSponsorBlockNav();
         document.addEventListener('yt-navigate-finish', handleSponsorBlockNav);
-        state._sponsorBlockInterval = registerInterval(() => {
+        registerInterval(() => {
             if (!isEnabled() || !state.features.sponsorBlock) return;
             if (!sponsorBlockState.video || !sponsorBlockState.video.isConnected) {
                 attachSponsorBlockVideo();
@@ -2152,8 +2150,6 @@
 
     function installTimerNeutralization() {
         const originalSetTimeout = window.setTimeout;
-        state.originals.setTimeout = originalSetTimeout;
-
         const proxiedSetTimeout = new Proxy(originalSetTimeout, {
             apply(target, thisArg, args) {
                 if (!isEnabled() || !state.features.timerNeutralization) {
@@ -3352,12 +3348,26 @@
         searchInput.value = state.settingsQuery;
         searchInput.setAttribute('aria-controls', `${CSS_PREFIX}-content`);
         searchInput.setAttribute('aria-label', 'Find a setting');
-        searchInput.addEventListener('input', () => {
-            state.settingsQuery = searchInput.value;
+        // Debounce the search rebuild: every keystroke triggered a full
+        // panel re-render (buildContent recreates every section DOM).
+        // On a typical query that's a dozen wasted rebuilds in a second,
+        // each producing a perceptible focus wobble. A 120ms gap feels
+        // instant to a human but coalesces fast typing into a single
+        // rebuild. Escape still clears synchronously because it's a
+        // one-shot action, not high-frequency.
+        const SEARCH_DEBOUNCE_MS = 120;
+        let searchDebounceTimer = null;
+        const applySearchRebuild = () => {
+            searchDebounceTimer = null;
             const content = document.getElementById(`${CSS_PREFIX}-content`);
             if (content) content.scrollTop = 0;
             buildContent();
             refreshSettingsUI();
+        };
+        searchInput.addEventListener('input', () => {
+            state.settingsQuery = searchInput.value;
+            if (searchDebounceTimer) clearTimeout(searchDebounceTimer);
+            searchDebounceTimer = setTimeout(applySearchRebuild, SEARCH_DEBOUNCE_MS);
         });
         searchInput.addEventListener('keydown', (event) => {
             if (event.key === 'Escape' && searchInput.value) {
@@ -3365,6 +3375,10 @@
                 event.stopPropagation();
                 searchInput.value = '';
                 state.settingsQuery = '';
+                if (searchDebounceTimer) {
+                    clearTimeout(searchDebounceTimer);
+                    searchDebounceTimer = null;
+                }
                 buildContent();
                 refreshSettingsUI();
             }
@@ -3508,6 +3522,22 @@
             )
         );
 
+        // Live metric tiles. The CSS and the `updateStatsDisplay` updater
+        // both expect these IDs; without the tiles they had no visible
+        // landing spot and the counters silently ran without ever
+        // surfacing in the UI. Keeping the tiles co-located with the
+        // overview hero makes the product feel responsive while the
+        // engines work.
+        const metrics = document.createElement('div');
+        metrics.className = `${CSS_PREFIX}-metric-grid`;
+        metrics.id = `${CSS_PREFIX}-stats`;
+        metrics.append(
+            createMetricTile('Ads Blocked', 'blocked'),
+            createMetricTile('Responses Pruned', 'pruned'),
+            createMetricTile('SSAP Skips', 'ssapSkipped'),
+            createMetricTile('Sponsor Skips', 'sponsorSkipped')
+        );
+
         const actions = document.createElement('nav');
         actions.className = `${CSS_PREFIX}-summary-actions`;
         actions.setAttribute('aria-label', 'Quick actions');
@@ -3529,9 +3559,23 @@
             diagnosticsJump
         );
 
-        surface.append(hero, facts, actions);
+        surface.append(hero, facts, metrics, actions);
         section.appendChild(surface);
         return section;
+    }
+
+    function createMetricTile(label, statKey) {
+        const tile = document.createElement('div');
+        tile.className = `${CSS_PREFIX}-metric`;
+        const labelEl = document.createElement('span');
+        labelEl.className = `${CSS_PREFIX}-metric-label`;
+        labelEl.textContent = label;
+        const valueEl = document.createElement('span');
+        valueEl.className = `${CSS_PREFIX}-metric-value`;
+        valueEl.id = `${CSS_PREFIX}-metric-${statKey}`;
+        valueEl.textContent = formatNumber(state.stats?.[statKey] ?? 0);
+        tile.append(labelEl, valueEl);
+        return tile;
     }
 
     function createFilterSection(query = '') {
@@ -3994,23 +4038,14 @@
     }
 
     function updateStatsDisplay() {
-        const container = document.getElementById(`${CSS_PREFIX}-stats`);
-        if (!container) return;
-        container.textContent = '';
-        const stats = [
-            ['Blocked', state.stats.blocked],
-            ['Pruned', state.stats.pruned],
-            ['SSAP', state.stats.ssapSkipped],
-            ['Sponsor', state.stats.sponsorSkipped]
-        ];
-        for (const [label, value] of stats) {
-            const span = document.createElement('span');
-            span.className = `${CSS_PREFIX}-stat`;
-            span.textContent = `${label} `;
-            const b = document.createElement('b');
-            b.textContent = formatNumber(value);
-            span.appendChild(b);
-            container.appendChild(span);
+        // Live-update each metric tile in-place. Avoids a full tile
+        // rebuild so the number can flip without flashing the
+        // surrounding label or triggering layout. No-op when the
+        // overview isn't rendered (panel closed or mid-rebuild).
+        if (!state.stats) return;
+        for (const key of Object.keys(DEFAULT_STATS)) {
+            const el = document.getElementById(`${CSS_PREFIX}-metric-${key}`);
+            if (el) el.textContent = formatNumber(state.stats[key] || 0);
         }
     }
 
@@ -4113,12 +4148,20 @@
         });
     }
 
+    // Features whose on/off state directly changes the cosmetic stylesheet.
+    // Toggling anything else (e.g. timer neutralization) doesn't require
+    // rewriting the style sheet — skipping that work avoids re-hitting
+    // document.head and prevents unrelated selectors from flashing.
+    const COSMETIC_AFFECTING_FEATURES = new Set(['cosmeticHiding', 'upsellBlock']);
+
     function setFeatureEnabled(key, checked, label) {
         const overrides = getFeatureOverrides();
         overrides[key] = checked;
         setSetting('feature_overrides', overrides);
         state.features[key] = checked;
-        updateCosmeticCSS();
+        if (COSMETIC_AFFECTING_FEATURES.has(key)) {
+            updateCosmeticCSS();
+        }
         refreshSettingsUI(true);
         showToast(`${label} ${checked ? 'enabled' : 'disabled'}.`, checked ? 'success' : 'warn');
     }
