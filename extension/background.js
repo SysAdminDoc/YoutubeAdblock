@@ -139,7 +139,8 @@ function rebuildContextMenu() {
                 documentUrlPatterns: [
                     '*://*.youtube.com/*',
                     '*://www.youtube-nocookie.com/*',
-                    '*://youtubekids.com/*'
+                    '*://youtubekids.com/*',
+                    '*://www.youtubekids.com/*'
                 ]
             });
             chrome.contextMenus.create({

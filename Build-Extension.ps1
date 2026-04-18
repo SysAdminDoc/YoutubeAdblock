@@ -158,6 +158,10 @@ $gmShim = @'
             try {
                 localStorage.setItem(__YTAB_STORAGE_KEY, JSON.stringify(incoming));
             } catch (e) { /* ignore */ }
+        } else {
+            try {
+                localStorage.removeItem(__YTAB_STORAGE_KEY);
+            } catch (e) { /* ignore */ }
         }
     });
 '@

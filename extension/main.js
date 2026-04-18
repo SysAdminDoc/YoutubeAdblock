@@ -114,6 +114,10 @@
             try {
                 localStorage.setItem(__YTAB_STORAGE_KEY, JSON.stringify(incoming));
             } catch (e) { /* ignore */ }
+        } else {
+            try {
+                localStorage.removeItem(__YTAB_STORAGE_KEY);
+            } catch (e) { /* ignore */ }
         }
     });/* =========================================================================
      * CONSTANTS & CONFIG
@@ -121,8 +125,8 @@
 
     const SCRIPT_NAME = 'YoutubeAdblock';
     const SCRIPT_VERSION = '0.3.1';
-const PROJECT_URL = 'https://github.com/SysAdminDoc/YoutubeAdblock';
-const ISSUES_URL = `${PROJECT_URL}/issues`;
+    const PROJECT_URL = 'https://github.com/SysAdminDoc/YoutubeAdblock';
+    const ISSUES_URL = `${PROJECT_URL}/issues`;
     const FILTER_URL_DEFAULT = 'https://raw.githubusercontent.com/SysAdminDoc/YoutubeAdblock/refs/heads/main/youtube-adblock-filters.txt';
     const FILTER_CACHE_TTL = 4 * 60 * 60 * 1000; // 4 hours
     const FILTER_MAX_BYTES = 5 * 1024 * 1024; // 5MB safety cap on remote lists
@@ -348,6 +352,8 @@ const ISSUES_URL = `${PROJECT_URL}/issues`;
         filterSyncing: false,
         filterError: '',
         filterRequestPromise: null,
+        filterRequestId: 0,
+        activeFilterRequestUrl: '',
         proxiesInstalled: false,
         overlayEl: null,
         panelEl: null,
@@ -366,6 +372,13 @@ const ISSUES_URL = `${PROJECT_URL}/issues`;
         // In-flight URL edit not yet committed via Refresh. Survives settings
         // panel rebuilds so feature toggles don't discard unsaved typing.
         pendingFilterUrl: null,
+        // In-panel settings search. Ephemeral UI state only; cleared when the
+        // Control Center closes so a fresh open always starts from the full view.
+        settingsQuery: '',
+        // Collapsed section state for the Control Center. Stored in-memory so
+        // rebuilds preserve the user's browsing context without persisting UI
+        // chrome into settings.
+        openSections: new Set([SECTION_IDS.core]),
         // Interval handles owned by the installed engines. Kept so the
         // INIT path can avoid re-registering on hot reload (e.g. dev
         // scenarios where the userscript is re-evaluated) and future
@@ -407,21 +420,21 @@ const ISSUES_URL = `${PROJECT_URL}/issues`;
         return { ...DEFAULT_FILTERS.features, ...(features || {}) };
     }
 
-    function isValidCachedFilters(value) {
-        return !!(
-            value &&
-            typeof value === 'object' &&
-            Array.isArray(value.pruneKeys) &&
-            Array.isArray(value.setUndefined) &&
-            Array.isArray(value.cosmeticSelectors)
-        );
+    function getFeatureOverrides() {
+        const rawOverrides = getSetting('feature_overrides', {});
+        if (!rawOverrides || typeof rawOverrides !== 'object') return {};
+        const clean = {};
+        for (const [key, value] of Object.entries(rawOverrides)) {
+            if (key in DEFAULT_FILTERS.features) clean[key] = !!value;
+        }
+        return clean;
     }
 
     function loadState() {
-        const cached = getSetting('filters_cache', null);
+        const cached = sanitizeFilterPayload(getSetting('filters_cache', null));
         const cacheTime = getSetting('filters_cache_time', 0);
-        const rawOverrides = getSetting('feature_overrides', {});
-        const featureOverrides = (rawOverrides && typeof rawOverrides === 'object') ? rawOverrides : {};
+        const cacheUrl = getSetting('filters_cache_url', FILTER_URL_DEFAULT);
+        const featureOverrides = getFeatureOverrides();
         const rawStats = getSetting('stats', DEFAULT_STATS);
         // Type-safe stats hydration: silently coerce non-numeric values
         // (including NaN from corrupt older storage) to 0 so no increment
@@ -438,7 +451,7 @@ const ISSUES_URL = `${PROJECT_URL}/issues`;
         state.enabled = getSetting('enabled', true) !== false;
         state.lastFilterUpdate = Number(cacheTime) || 0;
 
-        if (isValidCachedFilters(cached)) {
+        if (cached) {
             // Use cached rules whether or not the TTL has expired. Dropping
             // to built-in defaults on TTL expiry just to then refetch the
             // same remote list in the background was a visible regression
@@ -449,7 +462,8 @@ const ISSUES_URL = `${PROJECT_URL}/issues`;
             // sees a gap; if it fails, the stale copy is still far better
             // than the built-in fallback for a customized setup.
             state.filters = cached;
-            state.filterSource = (Date.now() - state.lastFilterUpdate < FILTER_CACHE_TTL)
+            const cacheMatchesCurrentUrl = String(cacheUrl || '') === String(resolveFilterUrl());
+            state.filterSource = (cacheMatchesCurrentUrl && Date.now() - state.lastFilterUpdate < FILTER_CACHE_TTL)
                 ? 'cached'
                 : 'stale';
         } else {
@@ -457,9 +471,11 @@ const ISSUES_URL = `${PROJECT_URL}/issues`;
             state.filterSource = 'built-in';
             // Discard any malformed cache so a subsequent successful fetch
             // starts clean rather than layering onto corrupt data.
-            if (cached) {
-                try { setSetting('filters_cache', null); } catch (e) { /* ignore */ }
-            }
+            try {
+                setSetting('filters_cache', null);
+                setSetting('filters_cache_time', 0);
+                setSetting('filters_cache_url', FILTER_URL_DEFAULT);
+            } catch (e) { /* ignore */ }
         }
 
         // Merge feature defaults with user overrides
@@ -599,6 +615,27 @@ const ISSUES_URL = `${PROJECT_URL}/issues`;
             : 'Open the Control Center from your userscript manager menu any time.';
     }
 
+    function normalizeSettingsQuery(value) {
+        return String(value || '').trim().toLowerCase();
+    }
+
+    function matchesSettingsQuery(query, ...values) {
+        if (!query) return true;
+        return values.some(value => String(value || '').toLowerCase().includes(query));
+    }
+
+    function isSectionExpanded(sectionId, defaultOpen = false) {
+        if (normalizeSettingsQuery(state.settingsQuery)) return true;
+        if (!sectionId) return defaultOpen;
+        return state.openSections.has(sectionId) || defaultOpen;
+    }
+
+    function setSectionExpanded(sectionId, expanded) {
+        if (!sectionId || normalizeSettingsQuery(state.settingsQuery)) return;
+        if (expanded) state.openSections.add(sectionId);
+        else state.openSections.delete(sectionId);
+    }
+
     function prefersReducedMotion() {
         try {
             return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
@@ -731,6 +768,10 @@ const ISSUES_URL = `${PROJECT_URL}/issues`;
     const FILTER_MAX_PRUNE_KEYS = 500;
     const FILTER_MAX_SET_UNDEFINED = 500;
     const FILTER_MAX_SELECTOR_LENGTH = 400;
+    const FILTER_MAX_INTERCEPT_PATTERNS = 100;
+    const FILTER_MAX_INTERCEPT_PATTERN_LENGTH = 200;
+    const SAFE_DOTTED_PATH_RE = /^[A-Za-z_$][\w$]*(\.[A-Za-z_$][\w$]*)*$/;
+    const SAFE_PLAIN_KEY_RE = /^[A-Za-z_$][\w$]*$/;
 
     // Reject selectors that could carry an inline CSS payload — braces,
     // semicolons, CSS comment terminators, newlines, or characters that
@@ -748,6 +789,93 @@ const ISSUES_URL = `${PROJECT_URL}/issues`;
         if (CSS_SELECTOR_DISALLOWED.test(selector)) return false;
         if (/[\r\n\u2028\u2029]/.test(selector)) return false;
         return true;
+    }
+
+    function sanitizeDottedPathList(values, maxCount) {
+        const clean = [];
+        if (!Array.isArray(values)) return clean;
+        for (const value of values) {
+            if (clean.length >= maxCount) break;
+            if (typeof value !== 'string') continue;
+            const normalized = value.replace(/\[-\]\./g, '').trim();
+            if (!normalized || !SAFE_DOTTED_PATH_RE.test(normalized)) continue;
+            if (['important', 'legacyImportant', 'no_ads'].includes(normalized)) continue;
+            clean.push(normalized);
+        }
+        return [...new Set(clean)];
+    }
+
+    function sanitizeSelectorList(values, maxCount) {
+        const clean = [];
+        if (!Array.isArray(values)) return clean;
+        for (const value of values) {
+            if (clean.length >= maxCount) break;
+            if (!isSafeCosmeticSelector(value)) continue;
+            clean.push(value.trim());
+        }
+        return [...new Set(clean)];
+    }
+
+    function sanitizeInterceptPatterns(values) {
+        const clean = [];
+        if (!Array.isArray(values)) return clean;
+        for (const value of values) {
+            if (clean.length >= FILTER_MAX_INTERCEPT_PATTERNS) break;
+            if (typeof value !== 'string') continue;
+            const normalized = value.trim();
+            if (!normalized || normalized.length > FILTER_MAX_INTERCEPT_PATTERN_LENGTH) continue;
+            clean.push(normalized);
+        }
+        return [...new Set(clean)];
+    }
+
+    function sanitizeReplaceKeys(value) {
+        const clean = {};
+        if (!value || typeof value !== 'object') return clean;
+        for (const [key, replacement] of Object.entries(value)) {
+            if (!SAFE_PLAIN_KEY_RE.test(String(key || ''))) continue;
+            if (typeof replacement !== 'string' || !replacement.trim()) continue;
+            clean[key] = replacement.trim();
+        }
+        return clean;
+    }
+
+    function sanitizeFilterPayload(value) {
+        if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+
+        const pruneKeys = sanitizeDottedPathList(value.pruneKeys, FILTER_MAX_PRUNE_KEYS);
+        const setUndefined = sanitizeDottedPathList(value.setUndefined, FILTER_MAX_SET_UNDEFINED);
+        const cosmeticSelectors = sanitizeSelectorList(value.cosmeticSelectors, FILTER_MAX_COSMETIC_SELECTORS);
+        const upsellSelectors = sanitizeSelectorList(value.upsellSelectors, FILTER_MAX_UPSELL_SELECTORS);
+        const interceptPatterns = sanitizeInterceptPatterns(value.interceptPatterns);
+        const replaceKeys = sanitizeReplaceKeys(value.replaceKeys);
+        const features = normalizeFeatures(
+            value.features && typeof value.features === 'object'
+                ? value.features
+                : {}
+        );
+
+        const filterCountRaw = Number(value.filterCount);
+        const filterCount = Number.isFinite(filterCountRaw) && filterCountRaw >= 0
+            ? Math.floor(filterCountRaw)
+            : pruneKeys.length + setUndefined.length + cosmeticSelectors.length + upsellSelectors.length;
+
+        return {
+            version: (typeof value.version === 'string' && value.version.trim())
+                ? value.version.trim().slice(0, 80)
+                : new Date().toISOString().slice(0, 10),
+            updated: (typeof value.updated === 'string' && value.updated.trim())
+                ? value.updated.trim().slice(0, 80)
+                : new Date().toISOString().slice(0, 10),
+            filterCount,
+            pruneKeys: [...new Set([...DEFAULT_FILTERS.pruneKeys, ...pruneKeys])],
+            setUndefined: [...new Set([...DEFAULT_FILTERS.setUndefined, ...setUndefined])],
+            replaceKeys: { ...DEFAULT_FILTERS.replaceKeys, ...replaceKeys },
+            interceptPatterns: [...new Set([...DEFAULT_FILTERS.interceptPatterns, ...interceptPatterns])],
+            cosmeticSelectors: [...new Set([...DEFAULT_FILTERS.cosmeticSelectors, ...cosmeticSelectors])],
+            upsellSelectors: [...new Set([...DEFAULT_FILTERS.upsellSelectors, ...upsellSelectors])],
+            features
+        };
     }
 
     function parseUBOFilterList(text) {
@@ -790,7 +918,7 @@ const ISSUES_URL = `${PROJECT_URL}/issues`;
                         const path = parts[0];
                         // Only accept identifier.path syntax — reject anything with
                         // brackets, spaces, or characters that suggest code smuggling.
-                        if (/^[A-Za-z_$][\w$]*(\.[A-Za-z_$][\w$]*)*$/.test(path)) {
+                        if (SAFE_DOTTED_PATH_RE.test(path)) {
                             setUndefined.add(path);
                         }
                     }
@@ -805,7 +933,7 @@ const ISSUES_URL = `${PROJECT_URL}/issues`;
                         // Same identifier discipline — refuse anything that looks
                         // like it could be used as a key-path injection vector.
                         if (!clean || ['important', 'legacyImportant', 'no_ads'].includes(clean)) continue;
-                        if (!/^[A-Za-z_$][\w$]*(\.[A-Za-z_$][\w$]*)*$/.test(clean)) continue;
+                        if (!SAFE_DOTTED_PATH_RE.test(clean)) continue;
                         pruneKeys.add(clean);
                     }
                 }
@@ -899,20 +1027,32 @@ const ISSUES_URL = `${PROJECT_URL}/issues`;
         // Fresh cache skips the network call unless forced. Stale cache and
         // built-in defaults both benefit from a refresh attempt on startup.
         if (!force && state.filterSource === 'cached') return Promise.resolve(state.filters);
-        if (state.filterSyncing && state.filterRequestPromise) return state.filterRequestPromise;
+        if (state.filterSyncing && state.filterRequestPromise) {
+            if (state.activeFilterRequestUrl === url) return state.filterRequestPromise;
+            state.filterRequestId++;
+        }
         if (typeof GM_xmlhttpRequest !== 'function') {
             // No network privilege — stay on whatever we have.
             return Promise.resolve(state.filters);
         }
 
+        const requestId = ++state.filterRequestId;
+        state.activeFilterRequestUrl = url;
         const request = new Promise((resolve) => {
             state.filterSyncing = true;
             state.filterError = '';
             refreshSettingsUI();
 
+            const isStaleRequest = () => {
+                return requestId !== state.filterRequestId || url !== resolveFilterUrl();
+            };
+
             const finish = () => {
-                state.filterSyncing = false;
-                state.filterRequestPromise = null;
+                if (requestId === state.filterRequestId) {
+                    state.filterSyncing = false;
+                    state.filterRequestPromise = null;
+                    state.activeFilterRequestUrl = '';
+                }
             };
 
             const cacheBusted = url + (url.includes('?') ? '&' : '?') + '_=' + Date.now();
@@ -934,15 +1074,22 @@ const ISSUES_URL = `${PROJECT_URL}/issues`;
                         let data;
                         // Detect format: JSON starts with { or [, otherwise uBO filter list
                         if (text.trimStart().startsWith('{') || text.trimStart().startsWith('[')) {
-                            data = jsonParseRaw(text);
-                            if (!data || !Array.isArray(data.pruneKeys) || !data.features) {
+                            data = sanitizeFilterPayload(jsonParseRaw(text));
+                            if (!data) {
                                 throw new Error('Invalid JSON filter schema.');
                             }
                         } else {
-                            data = parseUBOFilterList(text);
+                            data = sanitizeFilterPayload(parseUBOFilterList(text));
                         }
 
-                        data.features = normalizeFeatures(data.features);
+                        if (!data) {
+                            throw new Error('The remote list produced no usable rules.');
+                        }
+                        if (isStaleRequest()) {
+                            finish();
+                            resolve(state.filters);
+                            return;
+                        }
                         state.filters = data;
                         state.filterSource = 'remote';
                         state.lastFilterUpdate = Date.now();
@@ -950,12 +1097,13 @@ const ISSUES_URL = `${PROJECT_URL}/issues`;
                         try {
                             setSetting('filters_cache', data);
                             setSetting('filters_cache_time', Date.now());
+                            setSetting('filters_cache_url', url);
                         } catch (e) { /* quota errors are non-fatal */ }
                         // Re-merge features with overrides
-                        const overrides = getSetting('feature_overrides', {});
+                        const overrides = getFeatureOverrides();
                         state.features = normalizeFeatures(data.features);
                         for (const [k, v] of Object.entries(overrides)) {
-                            if (k in state.features) state.features[k] = v;
+                            if (k in state.features) state.features[k] = !!v;
                         }
                         updateCosmeticCSS();
                         // New remote rules may introduce additional setUndefined
@@ -970,6 +1118,11 @@ const ISSUES_URL = `${PROJECT_URL}/issues`;
                         showToast(`Rule refresh complete. ${formatNumber(count)} rules are active (${data.version || '?'}).`, 'success');
                     } catch (e) {
                         console.warn(`[${SCRIPT_NAME}] Filter parse error:`, e);
+                        if (isStaleRequest()) {
+                            finish();
+                            resolve(state.filters);
+                            return;
+                        }
                         const detail = e && e.message ? e.message : '';
                         state.filterError = detail
                             ? `Rule library problem: ${detail} Your current rules stayed active.`
@@ -981,6 +1134,11 @@ const ISSUES_URL = `${PROJECT_URL}/issues`;
                     }
                 },
                 onerror() {
+                    if (isStaleRequest()) {
+                        finish();
+                        resolve(state.filters);
+                        return;
+                    }
                     state.filterError = 'The remote list was unreachable, so YoutubeAdblock stayed on the last known rule set.';
                     finish();
                     resolve(state.filters);
@@ -988,6 +1146,11 @@ const ISSUES_URL = `${PROJECT_URL}/issues`;
                     showToast('The remote list was unreachable. Your current protection stayed active.', 'error');
                 },
                 ontimeout() {
+                    if (isStaleRequest()) {
+                        finish();
+                        resolve(state.filters);
+                        return;
+                    }
                     state.filterError = 'The remote list took too long to respond, so your current rules remained in place.';
                     finish();
                     resolve(state.filters);
@@ -1253,7 +1416,7 @@ const ISSUES_URL = `${PROJECT_URL}/issues`;
                         // the prune keys or replaceKeys targets, skip the JSON
                         // parse and tree walk entirely. On YT this short-circuits
                         // nearly all /browse, /search, /next responses.
-                        if (!responseTextMightContainAds(text)) return response;
+                        if (!responseTextMightContainAds(text, url)) return response;
                         try {
                             const modified = replaceAdKeys(text);
                             // Use the ORIGINAL JSON.parse (captured before our
@@ -1348,6 +1511,9 @@ const ISSUES_URL = `${PROJECT_URL}/issues`;
             function interceptResponse() {
                 if (intercepted) return;
                 if (xhr.readyState !== 4) return;
+                try {
+                    xhr.removeEventListener('readystatechange', interceptResponse, true);
+                } catch (e) { /* ignore */ }
                 if (!isEnabled() || !state.features.xhrIntercept) return;
                 let sourceText = '';
                 const rt = xhr.responseType;
@@ -1370,7 +1536,7 @@ const ISSUES_URL = `${PROJECT_URL}/issues`;
                 if (!sourceText) return;
                 // Same fast reject as fetch: skip the JSON parse + walk when
                 // the body clearly has no ad fields.
-                if (!responseTextMightContainAds(sourceText)) return;
+                if (!responseTextMightContainAds(sourceText, xhr._ytab_url)) return;
                 try {
                     const modified = replaceAdKeys(sourceText);
                     const parse = state.originals.jsonParse || JSON.parse;
@@ -2322,14 +2488,12 @@ const ISSUES_URL = `${PROJECT_URL}/issues`;
                     max(14px, env(safe-area-inset-right))
                     max(14px, env(safe-area-inset-bottom))
                     max(14px, env(safe-area-inset-left));
-                background:
-                    radial-gradient(circle at top, rgba(255, 106, 77, 0.18), transparent 32%),
-                    linear-gradient(180deg, rgba(7, 10, 18, 0.76), rgba(7, 10, 18, 0.86));
-                backdrop-filter: blur(20px) saturate(150%);
-                -webkit-backdrop-filter: blur(20px) saturate(150%);
+                background: rgba(7, 10, 18, 0.76);
+                backdrop-filter: blur(16px) saturate(120%);
+                -webkit-backdrop-filter: blur(16px) saturate(120%);
                 opacity: 0;
                 pointer-events: none;
-                transition: opacity 0.24s ease;
+                transition: opacity 0.18s ease;
                 font-family: "Aptos", "Segoe UI Variable Text", "SF Pro Display", "Helvetica Neue", system-ui, sans-serif;
             }
             .${CSS_PREFIX}-overlay.${CSS_PREFIX}-active {
@@ -2348,47 +2512,42 @@ const ISSUES_URL = `${PROJECT_URL}/issues`;
                 --text: #f7f8fb;
                 --text-2: #c3cbda;
                 --text-3: #8893a7;
-                width: min(880px, calc(100vw - 24px));
+                width: min(760px, calc(100vw - 24px));
                 max-height: min(920px, calc(100vh - 24px));
                 display: flex;
                 flex-direction: column;
                 overflow: hidden;
-                border-radius: 28px;
+                border-radius: 22px;
                 border: 1px solid var(--panel-border);
-                background:
-                    radial-gradient(circle at top right, rgba(255, 106, 77, 0.12), transparent 26%),
-                    linear-gradient(180deg, rgba(18, 24, 35, 0.98), rgba(8, 12, 20, 0.98));
+                background: rgba(16, 20, 29, 0.98);
                 color: var(--text);
                 color-scheme: dark;
-                box-shadow:
-                    0 36px 110px rgba(0, 0, 0, 0.55),
-                    0 0 0 1px rgba(255, 255, 255, 0.03),
-                    inset 0 1px 0 rgba(255, 255, 255, 0.04);
-                transform: translateY(12px) scale(0.985);
-                transition: transform 0.24s ease;
+                box-shadow: 0 24px 56px rgba(0, 0, 0, 0.45);
+                transform: translateY(8px);
+                transition: transform 0.18s ease;
                 outline: none;
             }
             .${CSS_PREFIX}-overlay.${CSS_PREFIX}-active .${CSS_PREFIX}-panel {
-                transform: translateY(0) scale(1);
+                transform: translateY(0);
             }
             .${CSS_PREFIX}-header,
             .${CSS_PREFIX}-footer {
-                padding-left: 28px;
-                padding-right: 28px;
+                padding-left: 24px;
+                padding-right: 24px;
             }
             .${CSS_PREFIX}-header {
                 display: flex;
                 justify-content: space-between;
-                gap: 20px;
+                gap: 16px;
                 align-items: flex-start;
-                padding-top: 24px;
-                padding-bottom: 20px;
+                padding-top: 20px;
+                padding-bottom: 16px;
                 border-bottom: 1px solid var(--panel-border);
-                background: linear-gradient(180deg, rgba(255, 255, 255, 0.025), transparent);
+                background: rgba(255, 255, 255, 0.015);
             }
             .${CSS_PREFIX}-header-left {
-                display: flex;
-                gap: 16px;
+                display: grid;
+                gap: 8px;
                 min-width: 0;
             }
             .${CSS_PREFIX}-logo {
@@ -2410,43 +2569,54 @@ const ISSUES_URL = `${PROJECT_URL}/issues`;
                 min-width: 0;
             }
             .${CSS_PREFIX}-eyebrow {
-                margin: 0 0 7px;
-                font-size: 11px;
+                margin: 0;
+                font-size: 10px;
                 text-transform: uppercase;
-                letter-spacing: 0.14em;
+                letter-spacing: 0.12em;
                 font-weight: 700;
                 color: var(--text-3);
             }
             .${CSS_PREFIX}-title-row {
                 display: flex;
-                gap: 10px;
+                gap: 8px;
                 flex-wrap: wrap;
                 align-items: center;
-                margin-bottom: 7px;
+                margin-bottom: 4px;
             }
             .${CSS_PREFIX}-title {
                 margin: 0;
-                font-size: 23px;
-                line-height: 1.05;
-                font-weight: 780;
-                letter-spacing: -0.04em;
+                font-size: 21px;
+                line-height: 1.1;
+                font-weight: 760;
+                letter-spacing: -0.03em;
                 text-wrap: balance;
             }
             .${CSS_PREFIX}-version {
-                padding: 5px 9px;
+                padding: 4px 8px;
                 border-radius: 999px;
                 border: 1px solid var(--panel-border);
-                background: rgba(255, 255, 255, 0.05);
-                font-size: 11px;
-                font-weight: 700;
-                color: var(--text-2);
+                background: rgba(255, 255, 255, 0.03);
+                font-size: 10px;
+                font-weight: 650;
+                color: var(--text-3);
             }
             .${CSS_PREFIX}-header-desc {
                 margin: 0;
-                max-width: 500px;
+                max-width: 520px;
                 font-size: 13px;
-                line-height: 1.55;
+                line-height: 1.5;
                 color: var(--text-2);
+            }
+            .${CSS_PREFIX}-header-search {
+                margin-top: 10px;
+                max-width: 320px;
+            }
+            .${CSS_PREFIX}-search-input {
+                width: 100%;
+                min-height: 38px;
+                padding-block: 10px;
+                font-family: inherit;
+                font-size: 13px;
             }
             .${CSS_PREFIX}-header-right {
                 display: flex;
@@ -2475,8 +2645,8 @@ const ISSUES_URL = `${PROJECT_URL}/issues`;
             .${CSS_PREFIX}-layout {
                 display: grid;
                 grid-template-columns: minmax(0, 1fr);
-                gap: 18px;
-                padding: 14px 28px 28px;
+                gap: 16px;
+                padding: 16px 24px 24px;
             }
             .${CSS_PREFIX}-section {
                 min-width: 0;
@@ -2490,17 +2660,61 @@ const ISSUES_URL = `${PROJECT_URL}/issues`;
                 justify-content: space-between;
                 gap: 16px;
                 align-items: flex-start;
-                margin-bottom: 12px;
+                margin-bottom: 10px;
             }
             .${CSS_PREFIX}-section-head > div {
                 min-width: 0;
             }
-            .${CSS_PREFIX}-section-title {
-                margin: 0 0 4px;
+            .${CSS_PREFIX}-section-disclosure {
+                display: grid;
+                gap: 10px;
+            }
+            .${CSS_PREFIX}-section-toggle {
+                margin-bottom: 0;
+                list-style: none;
+                cursor: pointer;
+            }
+            .${CSS_PREFIX}-section-toggle::-webkit-details-marker {
+                display: none;
+            }
+            .${CSS_PREFIX}-section-toggle::marker {
+                content: '';
+            }
+            .${CSS_PREFIX}-section-toggle-meta {
+                display: inline-flex;
+                align-items: center;
+                gap: 8px;
+                flex-shrink: 0;
+            }
+            .${CSS_PREFIX}-section-toggle:hover .${CSS_PREFIX}-section-title {
+                color: var(--text);
+            }
+            .${CSS_PREFIX}-section-toggle:focus-visible {
+                outline: none;
+                border-radius: 12px;
+                box-shadow: 0 0 0 3px rgba(255, 106, 77, 0.16);
+            }
+            .${CSS_PREFIX}-section-chevron {
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                width: 18px;
+                height: 18px;
+                color: var(--text-3);
                 font-size: 15px;
+                line-height: 1;
+                transition: transform 0.16s ease, color 0.16s ease;
+            }
+            .${CSS_PREFIX}-section-disclosure[open] .${CSS_PREFIX}-section-chevron {
+                transform: rotate(90deg);
+                color: var(--text-2);
+            }
+            .${CSS_PREFIX}-section-title {
+                margin: 0 0 3px;
+                font-size: 14px;
                 line-height: 1.2;
-                font-weight: 740;
-                letter-spacing: -0.02em;
+                font-weight: 720;
+                letter-spacing: -0.01em;
                 text-wrap: balance;
             }
             .${CSS_PREFIX}-section-desc,
@@ -2519,24 +2733,20 @@ const ISSUES_URL = `${PROJECT_URL}/issues`;
             }
             .${CSS_PREFIX}-surface {
                 display: grid;
-                gap: 16px;
+                gap: 14px;
                 height: 100%;
-                padding: 20px;
-                border-radius: 20px;
+                padding: 18px;
+                border-radius: 16px;
                 border: 1px solid var(--panel-border);
-                background: linear-gradient(180deg, rgba(255, 255, 255, 0.03), rgba(255, 255, 255, 0.015));
-                box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+                background: rgba(255, 255, 255, 0.025);
             }
             .${CSS_PREFIX}-summary {
-                gap: 18px;
-                background:
-                    radial-gradient(circle at top right, rgba(255, 106, 77, 0.14), transparent 34%),
-                    linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.02));
+                gap: 16px;
             }
             .${CSS_PREFIX}-summary-hero {
                 display: grid;
                 grid-template-columns: minmax(0, 1fr) auto;
-                gap: 18px;
+                gap: 16px;
                 align-items: start;
             }
             .${CSS_PREFIX}-summary-copy {
@@ -2546,32 +2756,36 @@ const ISSUES_URL = `${PROJECT_URL}/issues`;
             }
             .${CSS_PREFIX}-summary-title {
                 margin: 0;
-                font-size: 29px;
-                line-height: 0.98;
-                font-weight: 790;
-                letter-spacing: -0.05em;
+                font-size: 24px;
+                line-height: 1;
+                font-weight: 770;
+                letter-spacing: -0.04em;
                 text-wrap: balance;
             }
             .${CSS_PREFIX}-chip-row,
             .${CSS_PREFIX}-btn-row,
             .${CSS_PREFIX}-url-group,
-            .${CSS_PREFIX}-stats,
-            .${CSS_PREFIX}-jump-nav {
+            .${CSS_PREFIX}-jump-nav,
+            .${CSS_PREFIX}-summary-actions {
                 display: flex;
                 flex-wrap: wrap;
                 gap: 8px;
             }
+            .${CSS_PREFIX}-summary-facts {
+                display: grid;
+                grid-template-columns: repeat(3, minmax(0, 1fr));
+                gap: 10px;
+            }
             .${CSS_PREFIX}-summary-control {
                 display: flex;
-                gap: 14px;
+                gap: 12px;
                 align-items: center;
                 justify-content: space-between;
-                min-width: 248px;
-                padding: 16px 18px;
-                border-radius: 18px;
-                background: rgba(255, 255, 255, 0.05);
-                border: 1px solid var(--panel-border-strong);
-                box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+                min-width: 220px;
+                padding: 14px 16px;
+                border-radius: 14px;
+                background: rgba(255, 255, 255, 0.02);
+                border: 1px solid rgba(255, 255, 255, 0.08);
             }
             .${CSS_PREFIX}-summary-control-copy {
                 min-width: 0;
@@ -2595,37 +2809,52 @@ const ISSUES_URL = `${PROJECT_URL}/issues`;
             }
             .${CSS_PREFIX}-glance {
                 display: grid;
-                gap: 6px;
-                padding: 15px 16px;
-                border-radius: 16px;
-                border: 1px solid rgba(255, 255, 255, 0.08);
-                background: rgba(255, 255, 255, 0.04);
+                gap: 4px;
+                padding: 12px 14px;
+                border-radius: 14px;
+                border: 1px solid rgba(255, 255, 255, 0.06);
+                background: rgba(255, 255, 255, 0.015);
             }
             .${CSS_PREFIX}-glance[data-tone="success"] {
                 border-color: rgba(102, 217, 149, 0.24);
-                background: rgba(102, 217, 149, 0.08);
             }
             .${CSS_PREFIX}-glance[data-tone="info"] {
                 border-color: rgba(122, 191, 255, 0.22);
-                background: rgba(122, 191, 255, 0.08);
             }
             .${CSS_PREFIX}-glance[data-tone="warn"] {
                 border-color: rgba(255, 196, 107, 0.24);
-                background: rgba(255, 196, 107, 0.08);
             }
             .${CSS_PREFIX}-glance-label {
-                font-size: 11px;
+                font-size: 10px;
                 text-transform: uppercase;
-                letter-spacing: 0.09em;
+                letter-spacing: 0.08em;
                 font-weight: 700;
                 color: var(--text-3);
             }
             .${CSS_PREFIX}-glance-value {
-                font-size: 15px;
+                font-size: 14px;
                 line-height: 1.2;
-                font-weight: 740;
+                font-weight: 720;
                 letter-spacing: -0.02em;
                 text-wrap: balance;
+            }
+            .${CSS_PREFIX}-action-groups {
+                display: grid;
+                gap: 14px;
+            }
+            .${CSS_PREFIX}-action-group {
+                display: grid;
+                gap: 12px;
+            }
+            .${CSS_PREFIX}-action-group + .${CSS_PREFIX}-action-group {
+                padding-top: 16px;
+                border-top: 1px solid rgba(255, 255, 255, 0.08);
+            }
+            .${CSS_PREFIX}-action-group-title {
+                margin: 0;
+                font-size: 13px;
+                font-weight: 720;
+                letter-spacing: -0.01em;
             }
             .${CSS_PREFIX}-summary-support {
                 display: grid;
@@ -2678,20 +2907,15 @@ const ISSUES_URL = `${PROJECT_URL}/issues`;
             .${CSS_PREFIX}-pill {
                 display: inline-flex;
                 align-items: center;
-                gap: 6px;
-                padding: 6px 10px;
+                gap: 0;
+                padding: 5px 9px;
                 border-radius: 999px;
                 border: 1px solid transparent;
-                font-size: 11px;
-                font-weight: 700;
+                font-size: 10px;
+                font-weight: 650;
             }
             .${CSS_PREFIX}-pill::before {
-                content: '';
-                width: 7px;
-                height: 7px;
-                border-radius: 50%;
-                background: currentColor;
-                opacity: 0.9;
+                display: none;
             }
             .${CSS_PREFIX}-pill[data-tone="success"] {
                 color: var(--success);
@@ -2733,10 +2957,10 @@ const ISSUES_URL = `${PROJECT_URL}/issues`;
                 flex: 1 1 320px;
                 min-width: 0;
                 min-height: 44px;
-                padding: 13px 15px;
-                border-radius: 14px;
+                padding: 12px 14px;
+                border-radius: 12px;
                 border: 1px solid var(--panel-border);
-                background: rgba(255, 255, 255, 0.045);
+                background: rgba(255, 255, 255, 0.025);
                 color: var(--text);
                 font-size: 12px;
                 line-height: 1.45;
@@ -2747,16 +2971,16 @@ const ISSUES_URL = `${PROJECT_URL}/issues`;
                 transition: border-color 0.16s ease, background 0.16s ease, box-shadow 0.16s ease;
             }
             .${CSS_PREFIX}-input:hover {
-                background: rgba(255, 255, 255, 0.06);
+                background: rgba(255, 255, 255, 0.04);
             }
             .${CSS_PREFIX}-input:focus-visible {
                 border-color: rgba(255, 106, 77, 0.48);
-                box-shadow: 0 0 0 4px rgba(255, 106, 77, 0.14);
-                background: rgba(255, 255, 255, 0.065);
+                box-shadow: 0 0 0 3px rgba(255, 106, 77, 0.14);
+                background: rgba(255, 255, 255, 0.045);
             }
             .${CSS_PREFIX}-input[aria-invalid="true"] {
                 border-color: rgba(255, 142, 151, 0.58);
-                box-shadow: 0 0 0 4px rgba(255, 142, 151, 0.14);
+                box-shadow: 0 0 0 3px rgba(255, 142, 151, 0.14);
             }
             .${CSS_PREFIX}-input::placeholder {
                 color: var(--text-3);
@@ -2771,45 +2995,40 @@ const ISSUES_URL = `${PROJECT_URL}/issues`;
                     box-shadow 0.16s ease;
             }
             .${CSS_PREFIX}-btn {
-                min-height: 44px;
-                padding: 10px 16px;
-                border-radius: 14px;
+                min-height: 40px;
+                padding: 9px 14px;
+                border-radius: 12px;
                 border: 1px solid transparent;
                 display: inline-flex;
                 align-items: center;
                 justify-content: center;
                 gap: 8px;
                 font-size: 12px;
-                font-weight: 720;
+                font-weight: 700;
                 cursor: pointer;
                 white-space: nowrap;
                 text-decoration: none;
                 touch-action: manipulation;
                 -webkit-tap-highlight-color: rgba(255, 106, 77, 0.14);
             }
-            .${CSS_PREFIX}-btn:hover {
-                transform: translateY(-1px);
-            }
             .${CSS_PREFIX}-btn:disabled {
                 cursor: default;
                 opacity: 0.74;
-                transform: none;
             }
             .${CSS_PREFIX}-btn-primary {
-                background: linear-gradient(135deg, var(--accent), var(--accent-strong));
-                color: #200d08;
-                box-shadow: 0 14px 30px rgba(255, 106, 77, 0.24);
+                background: var(--accent);
+                color: #fff;
             }
             .${CSS_PREFIX}-btn-primary:hover {
-                box-shadow: 0 18px 34px rgba(255, 106, 77, 0.28);
+                background: var(--accent-strong);
             }
             .${CSS_PREFIX}-btn-secondary {
-                background: rgba(255, 255, 255, 0.06);
+                background: rgba(255, 255, 255, 0.04);
                 color: var(--text);
                 border-color: var(--panel-border);
             }
             .${CSS_PREFIX}-btn-secondary:hover {
-                background: rgba(255, 255, 255, 0.08);
+                background: rgba(255, 255, 255, 0.06);
                 border-color: var(--panel-border-strong);
             }
             .${CSS_PREFIX}-btn-ghost {
@@ -2819,16 +3038,16 @@ const ISSUES_URL = `${PROJECT_URL}/issues`;
             }
             .${CSS_PREFIX}-btn-ghost:hover {
                 color: var(--text);
-                background: rgba(255, 255, 255, 0.04);
+                background: rgba(255, 255, 255, 0.03);
                 border-color: rgba(255, 255, 255, 0.14);
             }
             .${CSS_PREFIX}-btn-danger {
-                background: rgba(255, 142, 151, 0.14);
+                background: rgba(255, 142, 151, 0.12);
                 color: #ffd8dc;
                 border-color: rgba(255, 142, 151, 0.24);
             }
             .${CSS_PREFIX}-btn-danger:hover {
-                background: rgba(255, 142, 151, 0.2);
+                background: rgba(255, 142, 151, 0.16);
             }
             .${CSS_PREFIX}-btn[data-armed="true"] {
                 background: rgba(255, 196, 107, 0.16);
@@ -2838,14 +3057,14 @@ const ISSUES_URL = `${PROJECT_URL}/issues`;
             }
             .${CSS_PREFIX}-btn-small {
                 min-height: 36px;
-                padding-inline: 13px;
-                border-radius: 12px;
+                padding-inline: 12px;
+                border-radius: 10px;
                 font-size: 11px;
             }
             .${CSS_PREFIX}-close {
-                width: 40px;
-                height: 40px;
-                border-radius: 14px;
+                width: 36px;
+                height: 36px;
+                border-radius: 12px;
                 background: transparent;
                 border: 1px solid rgba(255, 255, 255, 0.08);
                 color: var(--text-2);
@@ -2864,26 +3083,25 @@ const ISSUES_URL = `${PROJECT_URL}/issues`;
             }
             .${CSS_PREFIX}-toggle-list {
                 display: grid;
-                gap: 10px;
+                gap: 8px;
             }
             .${CSS_PREFIX}-row {
                 display: grid;
                 grid-template-columns: minmax(0, 1fr) auto;
                 gap: 16px;
                 align-items: center;
-                padding: 15px 16px;
-                border-radius: 17px;
-                border: 1px solid rgba(255, 255, 255, 0.08);
-                background: rgba(255, 255, 255, 0.035);
-                transition: border-color 0.16s ease, background 0.16s ease, transform 0.16s ease, box-shadow 0.16s ease;
+                padding: 13px 14px;
+                border-radius: 14px;
+                border: 1px solid rgba(255, 255, 255, 0.07);
+                background: rgba(255, 255, 255, 0.015);
+                transition: border-color 0.16s ease, background 0.16s ease, box-shadow 0.16s ease;
                 cursor: pointer;
                 touch-action: manipulation;
                 -webkit-tap-highlight-color: rgba(255, 106, 77, 0.12);
             }
             .${CSS_PREFIX}-row:hover {
-                background: rgba(255, 255, 255, 0.055);
-                border-color: rgba(255, 255, 255, 0.13);
-                transform: translateY(-1px);
+                background: rgba(255, 255, 255, 0.028);
+                border-color: rgba(255, 255, 255, 0.1);
             }
             .${CSS_PREFIX}-row:focus-within {
                 border-color: rgba(255, 106, 77, 0.38);
@@ -2898,11 +3116,11 @@ const ISSUES_URL = `${PROJECT_URL}/issues`;
             }
             .${CSS_PREFIX}-row-label {
                 font-size: 13px;
-                font-weight: 720;
+                font-weight: 700;
                 letter-spacing: -0.01em;
             }
             .${CSS_PREFIX}-row[data-enabled="false"] {
-                background: rgba(255, 255, 255, 0.02);
+                background: rgba(255, 255, 255, 0.008);
             }
             .${CSS_PREFIX}-toggle {
                 position: relative;
@@ -2939,36 +3157,36 @@ const ISSUES_URL = `${PROJECT_URL}/issues`;
                 transition: transform 0.2s ease;
             }
             .${CSS_PREFIX}-toggle input:checked + .${CSS_PREFIX}-toggle-track {
-                background: linear-gradient(135deg, var(--accent), var(--accent-strong));
+                background: var(--accent);
                 border-color: transparent;
-                box-shadow: 0 10px 24px rgba(255, 106, 77, 0.24);
             }
             .${CSS_PREFIX}-toggle input:checked + .${CSS_PREFIX}-toggle-track::after {
                 transform: translateX(20px);
             }
             .${CSS_PREFIX}-note {
                 display: grid;
-                gap: 6px;
-                padding: 14px 16px;
-                border-radius: 16px;
-                border: 1px solid rgba(255, 255, 255, 0.1);
-                background: rgba(255, 255, 255, 0.04);
+                gap: 4px;
+                padding: 12px 14px;
+                border-radius: 12px;
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                border-left-width: 3px;
+                background: rgba(255, 255, 255, 0.02);
             }
             .${CSS_PREFIX}-note[data-tone="success"] {
                 border-color: rgba(102, 217, 149, 0.24);
-                background: rgba(102, 217, 149, 0.08);
+                background: rgba(102, 217, 149, 0.05);
             }
             .${CSS_PREFIX}-note[data-tone="info"] {
                 border-color: rgba(122, 191, 255, 0.22);
-                background: rgba(122, 191, 255, 0.08);
+                background: rgba(122, 191, 255, 0.05);
             }
             .${CSS_PREFIX}-note[data-tone="warn"] {
                 border-color: rgba(255, 196, 107, 0.24);
-                background: rgba(255, 196, 107, 0.09);
+                background: rgba(255, 196, 107, 0.05);
             }
             .${CSS_PREFIX}-note[data-tone="danger"] {
                 border-color: rgba(255, 142, 151, 0.24);
-                background: rgba(255, 142, 151, 0.08);
+                background: rgba(255, 142, 151, 0.05);
             }
             .${CSS_PREFIX}-note-title {
                 margin: 0;
@@ -2978,37 +3196,25 @@ const ISSUES_URL = `${PROJECT_URL}/issues`;
             .${CSS_PREFIX}-footer {
                 display: flex;
                 justify-content: space-between;
-                gap: 18px;
+                gap: 12px;
                 flex-wrap: wrap;
                 align-items: center;
-                padding-top: 16px;
-                padding-bottom: 18px;
+                padding-top: 14px;
+                padding-bottom: 16px;
                 border-top: 1px solid var(--panel-border);
-                background: linear-gradient(180deg, rgba(255, 255, 255, 0.015), transparent);
+                background: rgba(255, 255, 255, 0.015);
             }
             .${CSS_PREFIX}-footer-meta {
                 display: grid;
                 gap: 5px;
                 min-width: 0;
             }
-            .${CSS_PREFIX}-footer-aside {
-                display: flex;
-                justify-content: flex-end;
-                align-items: center;
-            }
-            .${CSS_PREFIX}-footer-hint,
-            .${CSS_PREFIX}-stat {
+            .${CSS_PREFIX}-footer-hint {
                 font-size: 11px;
                 color: var(--text-3);
             }
             .${CSS_PREFIX}-footer-hint {
                 text-wrap: balance;
-            }
-            .${CSS_PREFIX}-stat b {
-                color: var(--text);
-                margin-left: 4px;
-                font-weight: 760;
-                font-variant-numeric: tabular-nums;
             }
             .${CSS_PREFIX}-toast-region {
                 position: fixed;
@@ -3025,11 +3231,11 @@ const ISSUES_URL = `${PROJECT_URL}/issues`;
                 grid-template-columns: auto minmax(0, 1fr);
                 gap: 12px;
                 align-items: start;
-                padding: 14px 16px;
-                border-radius: 16px;
+                padding: 12px 14px;
+                border-radius: 12px;
                 border: 1px solid rgba(255, 255, 255, 0.08);
                 background: rgba(15, 20, 31, 0.96);
-                box-shadow: 0 20px 40px rgba(0, 0, 0, 0.36);
+                box-shadow: 0 18px 36px rgba(0, 0, 0, 0.34);
                 backdrop-filter: blur(18px);
                 -webkit-backdrop-filter: blur(18px);
                 opacity: 0;
@@ -3041,24 +3247,20 @@ const ISSUES_URL = `${PROJECT_URL}/issues`;
                 transform: translateY(0);
             }
             .${CSS_PREFIX}-toast-tone {
-                width: 10px;
-                height: 10px;
+                width: 8px;
+                height: 8px;
                 margin-top: 5px;
                 border-radius: 50%;
                 background: var(--info);
-                box-shadow: 0 0 0 6px rgba(122, 191, 255, 0.12);
             }
             .${CSS_PREFIX}-toast-success .${CSS_PREFIX}-toast-tone {
                 background: var(--success);
-                box-shadow: 0 0 0 6px rgba(102, 217, 149, 0.12);
             }
             .${CSS_PREFIX}-toast-error .${CSS_PREFIX}-toast-tone {
                 background: var(--danger);
-                box-shadow: 0 0 0 6px rgba(255, 142, 151, 0.14);
             }
             .${CSS_PREFIX}-toast-warn .${CSS_PREFIX}-toast-tone {
                 background: var(--warning);
-                box-shadow: 0 0 0 6px rgba(255, 196, 107, 0.14);
             }
             .${CSS_PREFIX}-toast-title {
                 margin-bottom: 4px;
@@ -3082,12 +3284,7 @@ const ISSUES_URL = `${PROJECT_URL}/issues`;
             .${CSS_PREFIX}-toggle input:focus-visible + .${CSS_PREFIX}-toggle-track,
             .${CSS_PREFIX}-input:focus-visible {
                 outline: none;
-                box-shadow: 0 0 0 4px rgba(255, 106, 77, 0.16);
-            }
-            @media (min-width: 760px) {
-                .${CSS_PREFIX}-layout {
-                    grid-template-columns: repeat(2, minmax(0, 1fr));
-                }
+                box-shadow: 0 0 0 3px rgba(255, 106, 77, 0.16);
             }
             @media (max-width: 820px) {
                 .${CSS_PREFIX}-overlay {
@@ -3117,17 +3314,8 @@ const ISSUES_URL = `${PROJECT_URL}/issues`;
                     min-width: 0;
                     width: 100%;
                 }
-                .${CSS_PREFIX}-glance-grid {
+                .${CSS_PREFIX}-summary-facts {
                     grid-template-columns: repeat(2, minmax(0, 1fr));
-                }
-                .${CSS_PREFIX}-summary-support {
-                    grid-template-columns: 1fr;
-                }
-                .${CSS_PREFIX}-metric-grid {
-                    grid-template-columns: repeat(2, minmax(0, 1fr));
-                }
-                .${CSS_PREFIX}-row {
-                    grid-template-columns: 1fr;
                 }
             }
             @media (max-width: 560px) {
@@ -3138,16 +3326,19 @@ const ISSUES_URL = `${PROJECT_URL}/issues`;
                     width: 100%;
                     justify-content: space-between;
                 }
+                .${CSS_PREFIX}-header-search {
+                    max-width: none;
+                }
                 .${CSS_PREFIX}-layout {
                     padding: 12px 16px 20px;
                 }
-                .${CSS_PREFIX}-glance-grid,
-                .${CSS_PREFIX}-metric-grid {
+                .${CSS_PREFIX}-summary-facts {
                     grid-template-columns: 1fr;
                 }
                 .${CSS_PREFIX}-btn-row,
                 .${CSS_PREFIX}-url-group,
-                .${CSS_PREFIX}-jump-nav {
+                .${CSS_PREFIX}-jump-nav,
+                .${CSS_PREFIX}-summary-actions {
                     display: grid;
                 }
                 .${CSS_PREFIX}-btn {
@@ -3155,6 +3346,9 @@ const ISSUES_URL = `${PROJECT_URL}/issues`;
                 }
                 .${CSS_PREFIX}-footer {
                     align-items: flex-start;
+                }
+                .${CSS_PREFIX}-row {
+                    grid-template-columns: 1fr;
                 }
             }
             @media (prefers-reduced-motion: reduce) {
@@ -3164,7 +3358,8 @@ const ISSUES_URL = `${PROJECT_URL}/issues`;
                 .${CSS_PREFIX}-row,
                 .${CSS_PREFIX}-toast,
                 .${CSS_PREFIX}-toggle-track,
-                .${CSS_PREFIX}-toggle-track::after {
+                .${CSS_PREFIX}-toggle-track::after,
+                .${CSS_PREFIX}-section-chevron {
                     transition: none !important;
                 }
                 .${CSS_PREFIX}-spinner {
@@ -3201,17 +3396,12 @@ const ISSUES_URL = `${PROJECT_URL}/issues`;
         const headerLeft = document.createElement('div');
         headerLeft.className = `${CSS_PREFIX}-header-left`;
 
-        const logo = document.createElement('div');
-        logo.className = `${CSS_PREFIX}-logo`;
-        logo.textContent = 'YT';
-        logo.setAttribute('aria-hidden', 'true');
-
         const brand = document.createElement('div');
         brand.className = `${CSS_PREFIX}-brand`;
 
         const eyebrow = document.createElement('div');
         eyebrow.className = `${CSS_PREFIX}-eyebrow`;
-        eyebrow.textContent = 'Protection Workspace';
+        eyebrow.textContent = 'Control Center';
 
         const titleRow = document.createElement('div');
         titleRow.className = `${CSS_PREFIX}-title-row`;
@@ -3230,10 +3420,46 @@ const ISSUES_URL = `${PROJECT_URL}/issues`;
         const description = document.createElement('p');
         description.className = `${CSS_PREFIX}-header-desc`;
         description.id = `${CSS_PREFIX}-dialog-desc`;
-        description.textContent = 'Check live coverage, refresh your rule library, and tune blocking behavior without leaving YouTube.';
+        description.textContent = 'Pause protection, refresh the rule library, and adjust modules without leaving YouTube.';
 
-        brand.append(eyebrow, titleRow, description);
-        headerLeft.append(logo, brand);
+        const searchWrap = document.createElement('div');
+        searchWrap.className = `${CSS_PREFIX}-header-search`;
+        const searchLabel = document.createElement('label');
+        searchLabel.className = `${CSS_PREFIX}-sr-only`;
+        searchLabel.setAttribute('for', `${CSS_PREFIX}-settings-search`);
+        searchLabel.textContent = 'Find a setting';
+        const searchInput = document.createElement('input');
+        searchInput.className = `${CSS_PREFIX}-input ${CSS_PREFIX}-search-input`;
+        searchInput.id = `${CSS_PREFIX}-settings-search`;
+        searchInput.type = 'search';
+        searchInput.name = 'settings_search';
+        searchInput.autocomplete = 'off';
+        searchInput.spellcheck = false;
+        searchInput.placeholder = 'Find a setting…';
+        searchInput.value = state.settingsQuery;
+        searchInput.setAttribute('aria-controls', `${CSS_PREFIX}-content`);
+        searchInput.setAttribute('aria-label', 'Find a setting');
+        searchInput.addEventListener('input', () => {
+            state.settingsQuery = searchInput.value;
+            const content = document.getElementById(`${CSS_PREFIX}-content`);
+            if (content) content.scrollTop = 0;
+            buildContent();
+            refreshSettingsUI();
+        });
+        searchInput.addEventListener('keydown', (event) => {
+            if (event.key === 'Escape' && searchInput.value) {
+                event.preventDefault();
+                event.stopPropagation();
+                searchInput.value = '';
+                state.settingsQuery = '';
+                buildContent();
+                refreshSettingsUI();
+            }
+        });
+        searchWrap.append(searchLabel, searchInput);
+
+        brand.append(eyebrow, titleRow, description, searchWrap);
+        headerLeft.append(brand);
 
         const headerRight = document.createElement('div');
         headerRight.className = `${CSS_PREFIX}-header-right`;
@@ -3268,19 +3494,10 @@ const ISSUES_URL = `${PROJECT_URL}/issues`;
 
         const footerHint = document.createElement('div');
         footerHint.className = `${CSS_PREFIX}-footer-hint`;
-        footerHint.textContent = `Changes save instantly. ${getControlCenterAccessHint()} Press Esc to close the panel.`;
+        footerHint.textContent = 'Search or scroll. Changes save instantly. Press Esc to close.';
 
         footerMeta.append(footerStatus, footerHint);
-
-        const footerAside = document.createElement('div');
-        footerAside.className = `${CSS_PREFIX}-footer-aside`;
-
-        const statsEl = document.createElement('div');
-        statsEl.className = `${CSS_PREFIX}-stats`;
-        statsEl.id = `${CSS_PREFIX}-stats`;
-
-        footerAside.append(statsEl);
-        footer.append(footerMeta, footerAside);
+        footer.append(footerMeta);
 
         panel.append(header, contentEl, footer);
 
@@ -3300,18 +3517,30 @@ const ISSUES_URL = `${PROJECT_URL}/issues`;
         const content = document.getElementById(`${CSS_PREFIX}-content`);
         if (!content) return;
         content.textContent = '';
+        const query = normalizeSettingsQuery(state.settingsQuery);
         const layout = document.createElement('div');
         layout.className = `${CSS_PREFIX}-layout`;
-        layout.append(
-            createOverviewSection(),
-            createFilterSection(),
-            ...FEATURE_GROUPS.map(group => createFeatureSection(group)),
-            createDiagnosticsSection()
-        );
+        const sections = [
+            createOverviewSection(query),
+            createFilterSection(query),
+            ...FEATURE_GROUPS.map(group => createFeatureSection(group, query)),
+            createDiagnosticsSection(query)
+        ].filter(Boolean);
+        if (!sections.length && query) {
+            sections.push(createSearchEmptyState(query));
+        }
+        layout.append(...sections);
         content.appendChild(layout);
     }
 
-    function createOverviewSection() {
+    function createOverviewSection(query = '') {
+        if (query && !matchesSettingsQuery(
+            query,
+            'overview protection paused refresh project page diagnostics master switch rule library',
+            getProtectionSummary().description
+        )) {
+            return null;
+        }
         const section = document.createElement('section');
         section.className = `${CSS_PREFIX}-section ${CSS_PREFIX}-section-span`;
         section.id = SECTION_IDS.overview;
@@ -3323,19 +3552,11 @@ const ISSUES_URL = `${PROJECT_URL}/issues`;
         copy.className = `${CSS_PREFIX}-summary-copy`;
         const title = document.createElement('h2');
         title.className = `${CSS_PREFIX}-summary-title`;
-        title.textContent = isEnabled() ? 'Protection Is Live' : 'Protection Is Paused';
+        title.textContent = isEnabled() ? 'Protection On' : 'Protection Paused';
         const body = document.createElement('p');
         body.className = `${CSS_PREFIX}-summary-text`;
         body.textContent = summary.description;
-        const chips = document.createElement('div');
-        chips.className = `${CSS_PREFIX}-chip-row`;
-        chips.append(
-            createPill(getFilterSourceLabel(), getFilterSourceTone()),
-            createPill(`${formatNumber(getRuleCount())} Rules`, 'neutral'),
-            createPill(`Synced ${formatTimestamp(state.lastFilterUpdate)}`, 'neutral'),
-            createPill(`${getEnabledFeatureCount()}/${getFeatureCount()} Modules On`, 'neutral')
-        );
-        copy.append(title, body, chips);
+        copy.append(title, body);
 
         const control = document.createElement('div');
         control.className = `${CSS_PREFIX}-summary-control`;
@@ -3356,43 +3577,27 @@ const ISSUES_URL = `${PROJECT_URL}/issues`;
         control.append(controlCopy, toggle);
         hero.append(copy, control);
 
-        const glanceGrid = document.createElement('div');
-        glanceGrid.className = `${CSS_PREFIX}-glance-grid`;
-        glanceGrid.append(
-            createGlanceItem('Current Surface', getSiteLabel(), getSurfaceLabel(), 'info'),
+        const facts = document.createElement('div');
+        facts.className = `${CSS_PREFIX}-summary-facts`;
+        facts.append(
+            createGlanceItem('Current Page', `${getSiteLabel()} · ${getSurfaceLabel()}`, 'Context for this tab.'),
             createGlanceItem(
                 'Rule Library',
-                isDefaultFilterUrl() ? 'Recommended Source' : 'Custom Source',
                 getFilterSourceLabel(),
+                isDefaultFilterUrl() ? 'Recommended source active.' : 'Custom source active.',
                 getFilterSourceTone()
             ),
             createGlanceItem(
                 'Last Sync',
                 formatTimestamp(state.lastFilterUpdate),
-                state.filterSource === 'remote'
-                    ? 'Latest remote rules are active.'
-                    : 'Refresh any time to look for a newer rule list.',
-                getFilterSourceTone()
-            ),
-            createGlanceItem(
-                IS_EXTENSION_BUILD ? 'Quick Shortcut' : 'Open From',
-                getControlCenterAccessLabel(),
-                IS_EXTENSION_BUILD
-                    ? 'Reopen the Control Center from any YouTube tab.'
-                    : 'The userscript menu stays available whenever you need it.',
+                `${formatNumber(getRuleCount())} active rules.`,
                 'neutral'
             )
         );
 
-        const supportGrid = document.createElement('div');
-        supportGrid.className = `${CSS_PREFIX}-summary-support`;
-
-        const actionsCard = createDetailCard(
-            'Quick Actions',
-            'Refresh the active source or jump to the project page when you need release notes, issues, or updates.'
-        );
-        const actions = document.createElement('div');
-        actions.className = `${CSS_PREFIX}-btn-row`;
+        const actions = document.createElement('nav');
+        actions.className = `${CSS_PREFIX}-summary-actions`;
+        actions.setAttribute('aria-label', 'Quick actions');
         const quickRefresh = document.createElement('button');
         quickRefresh.className = `${CSS_PREFIX}-btn ${CSS_PREFIX}-btn-primary`;
         quickRefresh.id = `${CSS_PREFIX}-quick-refresh`;
@@ -3403,44 +3608,29 @@ const ISSUES_URL = `${PROJECT_URL}/issues`;
             await fetchFilters(true);
             setButtonBusy(quickRefresh, false, 'Refreshing…', 'Refresh Rules');
         });
-        const sourceBtn = createExternalLinkButton(PROJECT_URL, 'Project Page', `${CSS_PREFIX}-btn-ghost`);
-        sourceBtn.id = `${CSS_PREFIX}-open-source`;
-        actions.append(quickRefresh, sourceBtn);
-        actionsCard.card.append(actions);
+        const libraryJump = createJumpButton('Rule Library', SECTION_IDS.rules);
+        const diagnosticsJump = createJumpButton('Diagnostics', SECTION_IDS.diagnostics);
+        actions.append(
+            quickRefresh,
+            libraryJump,
+            diagnosticsJump
+        );
 
-        const jumpCard = createDetailCard(
-            'Jump To',
-            'Move straight to the rule library, module groups, or recovery tools without hunting through the panel.'
-        );
-        const nav = document.createElement('nav');
-        nav.className = `${CSS_PREFIX}-jump-nav`;
-        nav.setAttribute('aria-label', 'Jump to a Control Center section');
-        nav.append(
-            createJumpButton('Rule Library', SECTION_IDS.rules),
-            createJumpButton('Core Blocking', SECTION_IDS.core),
-            createJumpButton('Anti-Detection', SECTION_IDS.anti),
-            createJumpButton('Cleanup', SECTION_IDS.cleanup),
-            createJumpButton('SponsorBlock', SECTION_IDS.sponsor),
-            createJumpButton('Recovery', SECTION_IDS.diagnostics)
-        );
-        jumpCard.card.append(nav);
-        supportGrid.append(actionsCard.card, jumpCard.card);
-
-        const metrics = document.createElement('div');
-        metrics.className = `${CSS_PREFIX}-metric-grid`;
-        metrics.append(
-            createMetric('Ads Blocked', `${CSS_PREFIX}-metric-blocked`),
-            createMetric('Responses Pruned', `${CSS_PREFIX}-metric-pruned`),
-            createMetric('SSAP Skips', `${CSS_PREFIX}-metric-ssap`),
-            createMetric('Sponsor Skips', `${CSS_PREFIX}-metric-sponsor`),
-            createMetric('Modules Enabled', `${CSS_PREFIX}-metric-features`)
-        );
-        surface.append(hero, glanceGrid, supportGrid, metrics);
+        surface.append(hero, facts, actions);
         section.appendChild(surface);
         return section;
     }
 
-    function createFilterSection() {
+    function createFilterSection(query = '') {
+        if (query && !matchesSettingsQuery(
+            query,
+            'rule library source url filter list refresh recommended custom remote cached fallback',
+            resolveFilterUrl(),
+            getFilterSourceLabel(),
+            state.filterError
+        )) {
+            return null;
+        }
         const section = createSection(
             'Rule Library',
             'Choose the source that feeds cosmetic selectors and remote rule updates. YoutubeAdblock keeps your last working rules or the built-in fallback ready if a refresh fails.',
@@ -3449,24 +3639,18 @@ const ISSUES_URL = `${PROJECT_URL}/issues`;
             true
         );
         const surface = createSurface();
-        const chips = document.createElement('div');
-        chips.className = `${CSS_PREFIX}-chip-row`;
-        chips.append(
-            createPill(`Version ${state.filters?.version || '?'}`, 'neutral'),
-            createPill(`Last Sync ${formatTimestamp(state.lastFilterUpdate)}`, 'neutral'),
-            createPill(`${formatNumber(getRuleCount())} Active Rules`, 'neutral')
-        );
-
         const field = document.createElement('div');
         field.className = `${CSS_PREFIX}-field`;
         const label = document.createElement('label');
         label.className = `${CSS_PREFIX}-field-label`;
         label.setAttribute('for', `${CSS_PREFIX}-url-input`);
-        label.textContent = 'Rule List URL';
+        label.textContent = 'Source URL';
         const help = document.createElement('p');
         help.className = `${CSS_PREFIX}-field-help`;
         help.id = `${CSS_PREFIX}-url-help`;
-        help.textContent = 'Point this at a raw EasyList or uBO-style source. Refreshing applies new rules without dropping your current protection.';
+        help.textContent = IS_EXTENSION_BUILD
+            ? 'Point this at a raw EasyList or uBO-style source. Extension installs work best with hosts that allow direct browser fetches from YouTube pages.'
+            : 'Point this at a raw EasyList or uBO-style source. Refreshing applies new rules without dropping your current protection.';
         const row = document.createElement('div');
         row.className = `${CSS_PREFIX}-url-group`;
         const input = document.createElement('input');
@@ -3532,6 +3716,13 @@ const ISSUES_URL = `${PROJECT_URL}/issues`;
             refreshSettingsUI(true);
             showToast('The recommended Rule Library is active again.', 'success');
         });
+        const details = document.createElement('div');
+        details.className = `${CSS_PREFIX}-chip-row`;
+        details.append(
+            createPill(`Version ${state.filters?.version || '?'}`, 'neutral'),
+            createPill(`Synced ${formatTimestamp(state.lastFilterUpdate)}`, 'neutral'),
+            createPill(`${formatNumber(getRuleCount())} Rules`, 'neutral')
+        );
         actions.appendChild(reset);
         field.append(label, help, row, actions);
 
@@ -3541,7 +3732,9 @@ const ISSUES_URL = `${PROJECT_URL}/issues`;
         } else if (!isDefaultFilterUrl()) {
             note = createNote(
                 'Custom Source Active',
-                'You are using a custom list. Keep it raw text and refresh after you edit it so the new rules load.',
+                IS_EXTENSION_BUILD
+                    ? 'Keep the source raw text, refresh after edits, and use a host that allows direct browser fetches from YouTube pages.'
+                    : 'Keep the source raw text and refresh after edits so the new rules load.',
                 'info'
             );
         } else if (state.filterSource === 'remote') {
@@ -3553,34 +3746,49 @@ const ISSUES_URL = `${PROJECT_URL}/issues`;
         } else {
             note = createNote(
                 'Fallback Ready',
-                'Protection is still running with cached or built-in rules. Refresh when you want a fresher remote copy.',
+                'Protection is still running with cached or built-in rules. Refresh when you want a newer remote copy.',
                 'info'
             );
         }
 
-        surface.append(chips, field, note);
+        surface.append(details, field, note);
         section.appendChild(surface);
         return section;
     }
 
-    function createFeatureSection(group) {
-        const enabledCount = group.features.filter(feat => state.features[feat.key] !== false).length;
+    function createFeatureSection(group, query = '') {
+        const visibleFeatures = group.features.filter(feat => matchesSettingsQuery(
+            query,
+            group.title,
+            group.description,
+            feat.key,
+            feat.label,
+            feat.desc
+        ));
+        if (!visibleFeatures.length) return null;
+        const enabledCount = visibleFeatures.filter(feat => state.features[feat.key] !== false).length;
         const section = createSection(
             group.title,
             group.description,
-            createPill(`${enabledCount}/${group.features.length} On`, getFeatureGroupTone(enabledCount, group.features.length)),
+            createPill(`${enabledCount}/${visibleFeatures.length} On`, getFeatureGroupTone(enabledCount, visibleFeatures.length)),
             group.sectionId
         );
         const surface = createSurface();
         const list = document.createElement('div');
         list.className = `${CSS_PREFIX}-toggle-list`;
-        for (const feat of group.features) list.appendChild(createToggleRow(feat));
+        for (const feat of visibleFeatures) list.appendChild(createToggleRow(feat));
         surface.appendChild(list);
-        section.appendChild(surface);
-        return section;
+        return createCollapsibleSection(section, surface, group.sectionId);
     }
 
-    function createDiagnosticsSection() {
+    function createDiagnosticsSection(query = '') {
+        if (query && !matchesSettingsQuery(
+            query,
+            'diagnostics recovery reset defaults reset counters copy diagnostics issues local only',
+            state.filterError
+        )) {
+            return null;
+        }
         const section = createSection(
             'Diagnostics & Recovery',
             'Copy a clean snapshot for bug reports or reset local state without reinstalling the script.',
@@ -3589,12 +3797,12 @@ const ISSUES_URL = `${PROJECT_URL}/issues`;
             true
         );
         const surface = createSurface();
-        const grid = document.createElement('div');
-        grid.className = `${CSS_PREFIX}-summary-support`;
+        const groups = document.createElement('div');
+        groups.className = `${CSS_PREFIX}-action-groups`;
 
-        const diagnosticsCard = createDetailCard(
+        const diagnosticsGroup = createActionGroup(
             'Share a Snapshot',
-            'Copy the active Rule Library, module states, counters, and environment details, then jump straight to the repo issue tracker with clean context.'
+            'Copy the active Rule Library, module states, counters, and environment details, then open the repo issue tracker with clean context.'
         );
         const diagnosticsActions = document.createElement('div');
         diagnosticsActions.className = `${CSS_PREFIX}-btn-row`;
@@ -3606,19 +3814,19 @@ const ISSUES_URL = `${PROJECT_URL}/issues`;
         copyBtn.addEventListener('click', copyDiagnosticsToClipboard);
         const issuesLink = createExternalLinkButton(ISSUES_URL, 'Open Issues', `${CSS_PREFIX}-btn-ghost`);
         diagnosticsActions.append(copyBtn, issuesLink);
-        diagnosticsCard.card.append(diagnosticsActions);
+        diagnosticsGroup.appendChild(diagnosticsActions);
 
-        const recoveryCard = createDetailCard(
+        const recoveryGroup = createActionGroup(
             'Reset Local State',
-            'Reset counters or restore the recommended defaults without uninstalling the script. Your cached rule library stays ready.'
+            'Reset counters or restore the recommended defaults without reinstalling. Your cached rule library stays ready.'
         );
-        recoveryCard.card.append(createNote(
+        recoveryGroup.appendChild(createNote(
             'Local Only',
             'These actions change only local settings and counters. They do not remove the script or erase your current cached rules.',
             'info'
         ));
-        const actions = document.createElement('div');
-        actions.className = `${CSS_PREFIX}-btn-row`;
+        const recoveryActions = document.createElement('div');
+        recoveryActions.className = `${CSS_PREFIX}-btn-row`;
         const resetStats = document.createElement('button');
         resetStats.className = `${CSS_PREFIX}-btn ${CSS_PREFIX}-btn-secondary`;
         resetStats.id = `${CSS_PREFIX}-reset-counters`;
@@ -3655,11 +3863,23 @@ const ISSUES_URL = `${PROJECT_URL}/issues`;
                 showToast('Recommended defaults restored. Your current rules stayed in place.', 'success');
             }
         });
-        actions.append(resetStats, restore);
-        recoveryCard.card.append(actions);
+        recoveryActions.append(resetStats, restore);
+        recoveryGroup.appendChild(recoveryActions);
 
-        grid.append(diagnosticsCard.card, recoveryCard.card);
-        surface.append(grid);
+        groups.append(diagnosticsGroup, recoveryGroup);
+        surface.appendChild(groups);
+        return createCollapsibleSection(section, surface, SECTION_IDS.diagnostics);
+    }
+
+    function createSearchEmptyState(query) {
+        const section = document.createElement('section');
+        section.className = `${CSS_PREFIX}-section ${CSS_PREFIX}-section-span`;
+        const surface = createSurface();
+        surface.appendChild(createNote(
+            'No Matching Settings',
+            `Nothing matches "${query}". Try terms like "rule", "shorts", "sponsor", or "reset".`,
+            'info'
+        ));
         section.appendChild(surface);
         return section;
     }
@@ -3687,24 +3907,52 @@ const ISSUES_URL = `${PROJECT_URL}/issues`;
         return section;
     }
 
+    function createCollapsibleSection(section, surface, sectionId, defaultOpen = false) {
+        if (!section || !surface) return section;
+        const head = section.firstElementChild;
+        if (!head) {
+            section.appendChild(surface);
+            return section;
+        }
+        const details = document.createElement('details');
+        details.className = `${CSS_PREFIX}-section-disclosure`;
+        details.open = isSectionExpanded(sectionId, defaultOpen);
+        details.addEventListener('toggle', () => {
+            if (normalizeSettingsQuery(state.settingsQuery)) {
+                if (!details.open) {
+                    requestAnimationFrame(() => { details.open = true; });
+                }
+                return;
+            }
+            setSectionExpanded(sectionId, details.open);
+        });
+
+        const summary = document.createElement('summary');
+        summary.className = `${CSS_PREFIX}-section-head ${CSS_PREFIX}-section-toggle`;
+        while (head.firstChild) summary.appendChild(head.firstChild);
+        const metaWrap = document.createElement('div');
+        metaWrap.className = `${CSS_PREFIX}-section-toggle-meta`;
+        const existingMeta = summary.lastElementChild;
+        if (existingMeta && existingMeta !== summary.firstElementChild && !existingMeta.classList.contains(`${CSS_PREFIX}-section-toggle-meta`)) {
+            metaWrap.appendChild(existingMeta);
+        }
+        const chevron = document.createElement('span');
+        chevron.className = `${CSS_PREFIX}-section-chevron`;
+        chevron.setAttribute('aria-hidden', 'true');
+        chevron.textContent = '›';
+        metaWrap.appendChild(chevron);
+        summary.appendChild(metaWrap);
+
+        details.append(summary, surface);
+        section.textContent = '';
+        section.appendChild(details);
+        return section;
+    }
+
     function createSurface(extraClass = '') {
         const surface = document.createElement('div');
         surface.className = `${CSS_PREFIX}-surface${extraClass ? ` ${extraClass}` : ''}`;
         return surface;
-    }
-
-    function createMetric(label, id) {
-        const metric = document.createElement('div');
-        metric.className = `${CSS_PREFIX}-metric`;
-        const labelEl = document.createElement('span');
-        labelEl.className = `${CSS_PREFIX}-metric-label`;
-        labelEl.textContent = label;
-        const valueEl = document.createElement('span');
-        valueEl.className = `${CSS_PREFIX}-metric-value`;
-        valueEl.id = id;
-        valueEl.textContent = '0';
-        metric.append(labelEl, valueEl);
-        return metric;
     }
 
     function createGlanceItem(label, value, detail, tone = 'neutral') {
@@ -3724,11 +3972,11 @@ const ISSUES_URL = `${PROJECT_URL}/issues`;
         return item;
     }
 
-    function createDetailCard(title, description) {
+    function createActionGroup(title, description) {
         const card = document.createElement('div');
-        card.className = `${CSS_PREFIX}-detail-card`;
+        card.className = `${CSS_PREFIX}-action-group`;
         const titleEl = document.createElement('h3');
-        titleEl.className = `${CSS_PREFIX}-detail-title`;
+        titleEl.className = `${CSS_PREFIX}-action-group-title`;
         titleEl.textContent = title;
         card.appendChild(titleEl);
         if (description) {
@@ -3737,7 +3985,7 @@ const ISSUES_URL = `${PROJECT_URL}/issues`;
             descEl.textContent = description;
             card.appendChild(descEl);
         }
-        return { card, titleEl };
+        return card;
     }
 
     function createJumpButton(label, targetId) {
@@ -3817,7 +4065,7 @@ const ISSUES_URL = `${PROJECT_URL}/issues`;
         const label = document.createElement('span');
         label.className = `${CSS_PREFIX}-row-label`;
         label.textContent = feature.label;
-        line.append(label, createPill(state.features[feature.key] !== false ? 'On' : 'Off', state.features[feature.key] !== false ? 'success' : 'neutral'));
+        line.appendChild(label);
         const desc = document.createElement('p');
         desc.className = `${CSS_PREFIX}-row-desc`;
         const descId = `${CSS_PREFIX}-desc-${feature.key}`;
@@ -3833,18 +4081,6 @@ const ISSUES_URL = `${PROJECT_URL}/issues`;
     }
 
     function updateStatsDisplay() {
-        const liveValues = {
-            [`${CSS_PREFIX}-metric-blocked`]: formatNumber(state.stats.blocked),
-            [`${CSS_PREFIX}-metric-pruned`]: formatNumber(state.stats.pruned),
-            [`${CSS_PREFIX}-metric-ssap`]: formatNumber(state.stats.ssapSkipped),
-            [`${CSS_PREFIX}-metric-sponsor`]: formatNumber(state.stats.sponsorSkipped),
-            [`${CSS_PREFIX}-metric-features`]: `${getEnabledFeatureCount()}/${getFeatureCount()}`
-        };
-        for (const [id, value] of Object.entries(liveValues)) {
-            const el = document.getElementById(id);
-            if (el) el.textContent = value;
-        }
-
         const container = document.getElementById(`${CSS_PREFIX}-stats`);
         if (!container) return;
         container.textContent = '';
@@ -3965,7 +4201,7 @@ const ISSUES_URL = `${PROJECT_URL}/issues`;
     }
 
     function setFeatureEnabled(key, checked, label) {
-        const overrides = getSetting('feature_overrides', {});
+        const overrides = getFeatureOverrides();
         overrides[key] = checked;
         setSetting('feature_overrides', overrides);
         state.features[key] = checked;
@@ -4045,6 +4281,11 @@ const ISSUES_URL = `${PROJECT_URL}/issues`;
     function scrollSectionIntoView(sectionId) {
         const section = document.getElementById(sectionId);
         if (!section) return;
+        const disclosure = section.querySelector(`.${CSS_PREFIX}-section-disclosure`);
+        if (disclosure && !disclosure.open) {
+            disclosure.open = true;
+            setSectionExpanded(sectionId, true);
+        }
         try {
             section.scrollIntoView({
                 behavior: prefersReducedMotion() ? 'auto' : 'smooth',
@@ -4091,6 +4332,42 @@ const ISSUES_URL = `${PROJECT_URL}/issues`;
             `Enabled features: ${enabledFeatures}`,
             `Disabled features: ${disabledFeatures}`
         ].join('\n');
+    }
+
+    function handleExtensionSettingsSync(event) {
+        if (!IS_EXTENSION_BUILD || typeof __YTAB_STORAGE_KEY === 'undefined') return;
+        const detail = event && event.detail;
+        if (!detail || typeof detail !== 'object' || !(__YTAB_STORAGE_KEY in detail)) return;
+
+        const previousFilterUrl = resolveFilterUrl();
+        const previousSettingsSignature = JSON.stringify({
+            enabled: isEnabled(),
+            filterUrl: previousFilterUrl,
+            filterSource: state.filterSource,
+            lastFilterUpdate: state.lastFilterUpdate,
+            ruleCount: getRuleCount(),
+            features: state.features
+        });
+        loadState();
+        const currentFilterUrl = resolveFilterUrl();
+        const settingsChanged = previousSettingsSignature !== JSON.stringify({
+            enabled: isEnabled(),
+            filterUrl: currentFilterUrl,
+            filterSource: state.filterSource,
+            lastFilterUpdate: state.lastFilterUpdate,
+            ruleCount: getRuleCount(),
+            features: state.features
+        });
+        if (settingsChanged) {
+            updateCosmeticCSS();
+            try { installPropertyTraps(); } catch (e) { /* ignore */ }
+            try { registerMenuCommands(); } catch (e) { /* ignore */ }
+        }
+        refreshSettingsUI(settingsChanged);
+
+        if (currentFilterUrl !== previousFilterUrl || state.filterSource === 'stale' || state.filterSource === 'built-in') {
+            fetchFilters();
+        }
     }
 
     // Remember which nodes WE set aria-hidden/inert on so we can restore them
@@ -4164,6 +4441,9 @@ const ISSUES_URL = `${PROJECT_URL}/issues`;
             // Drop uncommitted URL edits when the panel closes so the next
             // open shows the committed value rather than stale scratch text.
             state.pendingFilterUrl = null;
+            state.settingsQuery = '';
+            const searchInput = document.getElementById(`${CSS_PREFIX}-settings-search`);
+            if (searchInput) searchInput.value = '';
             state.lastFocusedEl?.focus?.();
         }
     }
@@ -4171,6 +4451,10 @@ const ISSUES_URL = `${PROJECT_URL}/issues`;
     /* =========================================================================
      * INIT
      * ===================================================================== */
+
+    if (IS_EXTENSION_BUILD && typeof document !== 'undefined') {
+        document.addEventListener('ytab:settings-changed', handleExtensionSettingsSync);
+    }
 
     // Phase 1: Load config and install proxies ASAP (document-start)
     loadState();

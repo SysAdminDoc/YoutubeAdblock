@@ -72,6 +72,21 @@
         pendingTimer = setTimeout(flushPendingWrite, WRITE_DEBOUNCE_MS);
     }
 
+    function pushSettingsSnapshot(value) {
+        try {
+            if (typeof localStorage !== 'undefined') {
+                if (value && typeof value === 'object') {
+                    localStorage.setItem(ALLOWED_STORAGE_KEY, JSON.stringify(value));
+                } else {
+                    localStorage.removeItem(ALLOWED_STORAGE_KEY);
+                }
+            }
+        } catch (e) { /* ignore */ }
+        document.dispatchEvent(new CustomEvent(EVT_SETTINGS_CHANGED, {
+            detail: { [ALLOWED_STORAGE_KEY]: value }
+        }));
+    }
+
     function serializedSize(value) {
         try { return JSON.stringify(value).length; } catch (e) { return Infinity; }
     }
@@ -146,8 +161,23 @@
         chrome.storage.onChanged.addListener((changes, area) => {
             if (area !== 'local') return;
             if (!changes || !(ALLOWED_STORAGE_KEY in changes)) return;
-            const payload = { [ALLOWED_STORAGE_KEY]: changes[ALLOWED_STORAGE_KEY].newValue };
-            document.dispatchEvent(new CustomEvent(EVT_SETTINGS_CHANGED, { detail: payload }));
+            pushSettingsSnapshot(changes[ALLOWED_STORAGE_KEY].newValue);
         });
+    } catch (e) { /* ignore */ }
+
+    // Best-effort early hydration on each load. The main-world script uses
+    // localStorage as its synchronous read path, so we copy the mirrored
+    // settings into localStorage and broadcast the same snapshot back into
+    // the page-world as soon as extension storage answers.
+    try {
+        chrome.storage.local.get([ALLOWED_STORAGE_KEY], (items) => {
+            const err = chrome.runtime && chrome.runtime.lastError;
+            if (err || !items || typeof items[ALLOWED_STORAGE_KEY] !== 'object') return;
+            pushSettingsSnapshot(items[ALLOWED_STORAGE_KEY]);
+        });
+    } catch (e) { /* ignore */ }
+
+    try {
+        window.addEventListener('pagehide', flushPendingWrite, { capture: true });
     } catch (e) { /* ignore */ }
 })();

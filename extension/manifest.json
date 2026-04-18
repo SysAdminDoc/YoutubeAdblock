@@ -34,6 +34,7 @@
     "*://*.youtube.com/*",
     "*://www.youtube-nocookie.com/*",
     "*://youtubekids.com/*",
+    "*://www.youtubekids.com/*",
     "https://raw.githubusercontent.com/*",
     "https://sponsor.ajay.app/*"
   ],
@@ -42,7 +43,8 @@
       "matches": [
         "*://*.youtube.com/*",
         "*://www.youtube-nocookie.com/*",
-        "*://youtubekids.com/*"
+        "*://youtubekids.com/*",
+        "*://www.youtubekids.com/*"
       ],
       "js": ["main.js"],
       "run_at": "document_start",
@@ -53,7 +55,8 @@
       "matches": [
         "*://*.youtube.com/*",
         "*://www.youtube-nocookie.com/*",
-        "*://youtubekids.com/*"
+        "*://youtubekids.com/*",
+        "*://www.youtubekids.com/*"
       ],
       "js": ["bridge.js"],
       "run_at": "document_start",

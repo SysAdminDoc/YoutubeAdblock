@@ -47,8 +47,15 @@ Settings persistence is two-tier:
 - `localStorage[__ytab_ext_settings__]` is the sync read path used by
   the engine at document-start.
 - `chrome.storage.local` mirrors the same key for cross-subdomain
-  propagation. Changes on `www.youtube.com` sync to `m.youtube.com`
-  and `music.youtube.com` on the next load.
+  propagation. The bridge pushes an early snapshot into each fresh load,
+  so changes on `www.youtube.com` rehydrate on `m.youtube.com`,
+  `music.youtube.com`, and `www.youtubekids.com` as soon as extension
+  storage answers.
+
+Custom Rule Library URLs still use page-world fetches in this build, so
+the safest sources are hosts that allow direct browser fetches from
+YouTube pages. The recommended GitHub-hosted list is the default because
+it works cleanly without adding broader extension fetch permissions.
 
 ## Install — Chrome / Edge / Brave (Chromium 121+)
 
@@ -82,7 +89,10 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\Build-CRX.ps1
 
 That writes `YoutubeAdblock-extension-v<version>.crx` plus a reusable private
 key to `dist/`. Keep the generated `.pem` private and reuse it for future
-builds so the packaged extension keeps the same Chromium extension ID.
+builds so the packaged extension keeps the same Chromium extension ID. For
+most desktop Chrome/Edge users, the unpacked install path is still the
+friendliest option because local `.crx` installs are typically restricted
+outside developer-mode or managed-policy flows.
 
 ## Install — Firefox
 
@@ -108,6 +118,7 @@ Re-bind from `chrome://extensions/shortcuts` or
 `.github/workflows/build.yml` regenerates `main.js`, zips the
 `extension/` folder, and uploads the zip + userscript to the matching
 GitHub release on `v*` tag push. Run it manually via the **Actions**
-tab for pre-release packages. The `.crx` asset is built from the preserved
-local signing key via `Build-CRX.ps1` and uploaded to the release alongside
-the CI-generated zip/userscript assets.
+tab for pre-release packages. When `CHROMIUM_EXTENSION_KEY_B64` is configured
+as a GitHub Actions secret, the workflow also packages and uploads a `.crx`
+asset. Without that secret, maintainers can run `Build-CRX.ps1` locally and
+attach the signed `.crx` manually.
