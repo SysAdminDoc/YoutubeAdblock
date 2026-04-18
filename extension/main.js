@@ -121,6 +121,8 @@
 
     const SCRIPT_NAME = 'YoutubeAdblock';
     const SCRIPT_VERSION = '0.3.1';
+const PROJECT_URL = 'https://github.com/SysAdminDoc/YoutubeAdblock';
+const ISSUES_URL = `${PROJECT_URL}/issues`;
     const FILTER_URL_DEFAULT = 'https://raw.githubusercontent.com/SysAdminDoc/YoutubeAdblock/refs/heads/main/youtube-adblock-filters.txt';
     const FILTER_CACHE_TTL = 4 * 60 * 60 * 1000; // 4 hours
     const FILTER_MAX_BYTES = 5 * 1024 * 1024; // 5MB safety cap on remote lists
@@ -129,6 +131,7 @@
     const STATS_PERSIST_INTERVAL_MS = 2000;
     const STATS_UI_REFRESH_MS = 5000;
     const CSS_PREFIX = 'ytab';
+    const IS_EXTENSION_BUILD = typeof __YTAB_STORAGE_KEY !== 'undefined';
     const DEFAULT_STATS = { blocked: 0, pruned: 0, ssapSkipped: 0, sponsorSkipped: 0 };
     const SPONSORBLOCK_API = 'https://sponsor.ajay.app/api/skipSegments';
     const SPONSORBLOCK_CATEGORIES = [
@@ -137,6 +140,15 @@
         'music_offtopic', 'filler'
     ];
     const SPONSORBLOCK_TIMEOUT_MS = 10000;
+    const SECTION_IDS = {
+        overview: `${CSS_PREFIX}-section-overview`,
+        rules: `${CSS_PREFIX}-section-rules`,
+        core: `${CSS_PREFIX}-section-core`,
+        anti: `${CSS_PREFIX}-section-anti`,
+        cleanup: `${CSS_PREFIX}-section-cleanup`,
+        sponsor: `${CSS_PREFIX}-section-sponsor`,
+        diagnostics: `${CSS_PREFIX}-section-diagnostics`
+    };
 
     /* =========================================================================
      * DEFAULT FILTERS (fallback when remote unavailable)
@@ -212,7 +224,8 @@
 
     const FEATURE_GROUPS = [
         {
-            title: 'Core blocking',
+            sectionId: SECTION_IDS.core,
+            title: 'Core Blocking',
             description: 'Intercept the network and data paths that carry ad payloads before YouTube can render them.',
             features: [
                 {
@@ -243,7 +256,8 @@
             ]
         },
         {
-            title: 'Anti-detection',
+            sectionId: SECTION_IDS.anti,
+            title: 'Anti-Detection',
             description: 'Reduce the odds of YouTube detecting, rehydrating, or bypassing the protections already in place.',
             features: [
                 {
@@ -284,7 +298,8 @@
             ]
         },
         {
-            title: 'Interface cleanup',
+            sectionId: SECTION_IDS.cleanup,
+            title: 'Interface Cleanup',
             description: 'Remove the visible clutter that remains after payload blocking has already done the heavy lifting.',
             features: [
                 {
@@ -305,7 +320,8 @@
             ]
         },
         {
-            title: 'Community sponsor segments',
+            sectionId: SECTION_IDS.sponsor,
+            title: 'Community Sponsor Segments',
             description: 'Silently jump past sponsor reads, self-promotion, intros, outros, and other crowd-marked segments.',
             features: [
                 {
@@ -538,6 +554,59 @@
         }
     }
 
+    function getSiteLabel() {
+        const host = (location.hostname || '').toLowerCase();
+        if (host === 'music.youtube.com') return 'YouTube Music';
+        if (host === 'tv.youtube.com') return 'YouTube TV';
+        if (host === 'm.youtube.com') return 'YouTube Mobile';
+        if (host === 'www.youtube-nocookie.com') return 'YouTube No-Cookie';
+        if (host === 'youtubekids.com' || host === 'www.youtubekids.com') return 'YouTube Kids';
+        return 'YouTube';
+    }
+
+    function getSurfaceLabel() {
+        try {
+            const pathname = location.pathname || '/';
+            if (pathname === '/watch') return 'Watch Page';
+            if (pathname.startsWith('/shorts')) return 'Shorts Feed';
+            if (pathname.startsWith('/results')) return 'Search Results';
+            if (pathname.startsWith('/playlist')) return 'Playlist';
+            if (pathname.startsWith('/feed/subscriptions')) return 'Subscriptions';
+            if (pathname.startsWith('/feed/history')) return 'History';
+            if (pathname.startsWith('/feed/library')) return 'Library';
+            if (pathname.startsWith('/channel') || pathname.startsWith('/@') || pathname.startsWith('/c/')) return 'Channel';
+            if (pathname.startsWith('/live')) return 'Live Stream';
+            if (pathname.startsWith('/browse')) return 'Browse';
+            if (pathname === '/' || pathname === '') return 'Home';
+        } catch (e) { /* ignore */ }
+        return 'Current Page';
+    }
+
+    function getOpenShortcutLabel() {
+        const platform = typeof navigator !== 'undefined' ? (navigator.platform || navigator.userAgent || '') : '';
+        return /(Mac|iPhone|iPad|iPod)/i.test(platform)
+            ? 'Cmd + Shift + Y'
+            : 'Ctrl + Shift + Y';
+    }
+
+    function getControlCenterAccessLabel() {
+        return IS_EXTENSION_BUILD ? getOpenShortcutLabel() : 'Userscript Menu';
+    }
+
+    function getControlCenterAccessHint() {
+        return IS_EXTENSION_BUILD
+            ? `Click the toolbar button or press ${getOpenShortcutLabel()} from any YouTube tab.`
+            : 'Open the Control Center from your userscript manager menu any time.';
+    }
+
+    function prefersReducedMotion() {
+        try {
+            return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+        } catch (e) {
+            return false;
+        }
+    }
+
     function getRuleCount() {
         return state.filters?.filterCount
             || (state.filters?.cosmeticSelectors?.length || 0) + (state.filters?.upsellSelectors?.length || 0);
@@ -551,6 +620,23 @@
             'built-in': 'Built-in fallback'
         };
         return labels[source] || 'Custom source';
+    }
+
+    function getFilterSourceTone(source = state.filterSource) {
+        if (state.filterError) return 'warn';
+        switch (source) {
+            case 'remote':
+                return 'success';
+            case 'cached':
+            case 'stale':
+                return 'info';
+            default:
+                return 'neutral';
+        }
+    }
+
+    function isDefaultFilterUrl(value = resolveFilterUrl()) {
+        return String(value || '').trim() === FILTER_URL_DEFAULT;
     }
 
     // Use the canonical feature set (DEFAULT_FILTERS.features) so counts stay
@@ -569,6 +655,12 @@
         return count;
     }
 
+    function getFeatureGroupTone(enabledCount, total) {
+        if (enabledCount <= 0) return 'warn';
+        if (enabledCount >= total) return 'success';
+        return 'info';
+    }
+
     function getProtectionSummary() {
         if (!isEnabled()) {
             return {
@@ -580,7 +672,7 @@
 
         if (state.filterSyncing) {
             return {
-                label: 'Refreshing',
+                label: 'Refreshing…',
                 tone: 'info',
                 description: 'Pulling the latest rule set while keeping your current protection active.'
             };
@@ -880,7 +972,7 @@
                         console.warn(`[${SCRIPT_NAME}] Filter parse error:`, e);
                         const detail = e && e.message ? e.message : '';
                         state.filterError = detail
-                            ? `Rule source problem: ${detail} Your current rules stayed active.`
+                            ? `Rule library problem: ${detail} Your current rules stayed active.`
                             : 'The remote list could not be parsed. Your current rules stayed active.';
                         finish();
                         resolve(state.filters);
@@ -2144,10 +2236,10 @@
             return;
         }
         const labels = {
-            info: 'Heads up',
+            info: 'Heads Up',
             success: 'Updated',
-            error: 'Needs attention',
-            warn: 'Check this'
+            error: 'Needs Attention',
+            warn: 'Check This'
         };
         const region = ensureToastRegion();
         if (!region) return;
@@ -2207,31 +2299,879 @@
 
     function injectSettingsCSS() {
         const css = `
-            body:not(.${CSS_PREFIX}-ready) .${CSS_PREFIX}-overlay{display:none!important}
-            .${CSS_PREFIX}-sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
-            .${CSS_PREFIX}-overlay{position:fixed;inset:0;z-index:2147483646;display:grid;place-items:center;padding:18px;background:radial-gradient(circle at top,rgba(255,97,95,.18),transparent 34%),rgba(6,9,15,.74);backdrop-filter:blur(18px) saturate(140%);-webkit-backdrop-filter:blur(18px) saturate(140%);opacity:0;transition:opacity .24s ease;pointer-events:none;font-family:"Segoe UI Variable Text","SF Pro Display",Inter,ui-sans-serif,system-ui,sans-serif}
-            .${CSS_PREFIX}-overlay.${CSS_PREFIX}-active{opacity:1;pointer-events:auto}
-            .${CSS_PREFIX}-panel{--panel-border:rgba(255,255,255,.08);--accent:#ff615f;--success:#63d48c;--info:#69b7ff;--warning:#ffbf66;--danger:#ff7d86;--text:#f5f7fb;--text-2:#b4bdcc;--text-3:#7a8496;--surface:rgba(255,255,255,.04);width:min(720px,calc(100vw - 24px));max-height:min(860px,calc(100vh - 24px));display:flex;flex-direction:column;overflow:hidden;border-radius:24px;border:1px solid var(--panel-border);background:linear-gradient(180deg,rgba(19,24,35,.98),rgba(9,13,21,.97));color:var(--text);box-shadow:0 32px 90px rgba(0,0,0,.56),0 0 0 1px rgba(255,255,255,.03),inset 0 1px 0 rgba(255,255,255,.04);transform:translateY(12px) scale(.985);transition:transform .24s ease;outline:none}
-            .${CSS_PREFIX}-overlay.${CSS_PREFIX}-active .${CSS_PREFIX}-panel{transform:translateY(0) scale(1)}
-            .${CSS_PREFIX}-header,.${CSS_PREFIX}-footer,.${CSS_PREFIX}-section{padding-left:24px;padding-right:24px}
-            .${CSS_PREFIX}-header{display:flex;justify-content:space-between;gap:18px;align-items:flex-start;padding-top:22px;padding-bottom:18px;border-bottom:1px solid var(--panel-border);background:linear-gradient(180deg,rgba(255,255,255,.02),transparent)}
-            .${CSS_PREFIX}-header-left{display:flex;gap:14px;min-width:0}.${CSS_PREFIX}-logo{width:40px;height:40px;border-radius:14px;display:flex;align-items:center;justify-content:center;background:linear-gradient(135deg,var(--accent),#ff8c68);color:#fff;font-size:14px;font-weight:800;box-shadow:0 12px 28px rgba(255,97,95,.3);flex-shrink:0}
-            .${CSS_PREFIX}-brand{min-width:0}.${CSS_PREFIX}-eyebrow{margin:0 0 6px;font-size:11px;text-transform:uppercase;letter-spacing:.12em;font-weight:700;color:var(--text-3)}.${CSS_PREFIX}-title-row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:6px}.${CSS_PREFIX}-title{margin:0;font-size:21px;line-height:1.1;font-weight:760;letter-spacing:-.03em}.${CSS_PREFIX}-version{padding:4px 8px;border-radius:999px;border:1px solid var(--panel-border);background:rgba(255,255,255,.06);font-size:11px;font-weight:700;color:var(--text-2)}.${CSS_PREFIX}-header-desc{margin:0;max-width:440px;font-size:13px;line-height:1.5;color:var(--text-2)}.${CSS_PREFIX}-header-right{display:flex;gap:10px;align-items:center;flex-shrink:0}
-            .${CSS_PREFIX}-content{flex:1;overflow:auto;padding:10px 0 20px;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.14) transparent}.${CSS_PREFIX}-content::-webkit-scrollbar{width:8px}.${CSS_PREFIX}-content::-webkit-scrollbar-thumb{background:rgba(255,255,255,.12);border-radius:999px}
-            .${CSS_PREFIX}-section{padding-top:0;padding-bottom:18px}.${CSS_PREFIX}-section-head{display:flex;justify-content:space-between;gap:16px;align-items:flex-start;margin-bottom:12px}.${CSS_PREFIX}-section-title{margin:0 0 4px;font-size:14px;font-weight:700;letter-spacing:-.02em}.${CSS_PREFIX}-section-desc,.${CSS_PREFIX}-field-help,.${CSS_PREFIX}-row-desc,.${CSS_PREFIX}-summary-text,.${CSS_PREFIX}-footer-status{margin:0;font-size:12px;line-height:1.5;color:var(--text-2)}.${CSS_PREFIX}-surface{background:linear-gradient(180deg,rgba(255,255,255,.03),rgba(255,255,255,.015));border:1px solid var(--panel-border);border-radius:18px;padding:18px;box-shadow:inset 0 1px 0 rgba(255,255,255,.03)}
-            .${CSS_PREFIX}-summary{background:radial-gradient(circle at top right,rgba(255,97,95,.14),transparent 38%),linear-gradient(180deg,rgba(255,255,255,.04),rgba(255,255,255,.02))}.${CSS_PREFIX}-summary-head{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:18px;align-items:start;margin-bottom:18px}.${CSS_PREFIX}-summary-title{margin:0 0 8px;font-size:24px;line-height:1.05;font-weight:760;letter-spacing:-.04em}.${CSS_PREFIX}-summary-control{display:flex;gap:14px;align-items:center;justify-content:flex-end;min-width:220px;padding:14px 16px;border-radius:16px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.08)}.${CSS_PREFIX}-summary-control-label{margin:0 0 4px;font-size:12px;font-weight:700}.${CSS_PREFIX}-summary-control-text{margin:0;font-size:11px;line-height:1.45;color:var(--text-2)}.${CSS_PREFIX}-chip-row,.${CSS_PREFIX}-btn-row,.${CSS_PREFIX}-url-group,.${CSS_PREFIX}-footer-actions,.${CSS_PREFIX}-footer-aside,.${CSS_PREFIX}-stats{display:flex;flex-wrap:wrap;gap:8px}.${CSS_PREFIX}-metric-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-top:14px}.${CSS_PREFIX}-metric{padding:14px;border-radius:16px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08)}.${CSS_PREFIX}-metric-label{display:block;margin-bottom:8px;color:var(--text-3);font-size:11px;text-transform:uppercase;letter-spacing:.09em;font-weight:700}.${CSS_PREFIX}-metric-value{display:block;font-size:22px;line-height:1;font-weight:760;letter-spacing:-.04em;font-variant-numeric:tabular-nums}
-            .${CSS_PREFIX}-pill{display:inline-flex;align-items:center;gap:6px;padding:6px 10px;border-radius:999px;border:1px solid transparent;font-size:11px;font-weight:700}.${CSS_PREFIX}-pill::before{content:'';width:7px;height:7px;border-radius:50%;background:currentColor;opacity:.9}.${CSS_PREFIX}-pill[data-tone="success"]{color:var(--success);background:rgba(99,212,140,.15);border-color:rgba(99,212,140,.2)}.${CSS_PREFIX}-pill[data-tone="info"]{color:var(--info);background:rgba(105,183,255,.15);border-color:rgba(105,183,255,.22)}.${CSS_PREFIX}-pill[data-tone="warn"]{color:var(--warning);background:rgba(255,191,102,.16);border-color:rgba(255,191,102,.22)}.${CSS_PREFIX}-pill[data-tone="danger"]{color:var(--danger);background:rgba(255,125,134,.15);border-color:rgba(255,125,134,.22)}.${CSS_PREFIX}-pill[data-tone="neutral"]{color:var(--text-2);background:rgba(255,255,255,.06);border-color:var(--panel-border)}
-            .${CSS_PREFIX}-field{display:grid;gap:8px}.${CSS_PREFIX}-field-label{display:flex;justify-content:space-between;gap:12px;font-size:12px;font-weight:700}.${CSS_PREFIX}-input{flex:1 1 320px;min-width:0;padding:12px 14px;border-radius:14px;border:1px solid var(--panel-border);background:rgba(255,255,255,.04);color:var(--text);font-size:12px;line-height:1.4;font-family:"Cascadia Code","SF Mono",Consolas,monospace;outline:none;transition:border-color .16s ease,background .16s ease,box-shadow .16s ease}.${CSS_PREFIX}-input:hover{background:rgba(255,255,255,.055)}.${CSS_PREFIX}-input:focus{border-color:rgba(255,97,95,.48);box-shadow:0 0 0 4px rgba(255,97,95,.12);background:rgba(255,255,255,.06)}.${CSS_PREFIX}-input[aria-invalid="true"]{border-color:rgba(255,125,134,.6);box-shadow:0 0 0 4px rgba(255,125,134,.12)}.${CSS_PREFIX}-input::placeholder{color:var(--text-3)}
-            .${CSS_PREFIX}-btn,.${CSS_PREFIX}-close{transition:background .16s ease,border-color .16s ease,color .16s ease,transform .16s ease,box-shadow .16s ease}.${CSS_PREFIX}-btn{min-height:42px;padding:10px 16px;border-radius:14px;border:1px solid transparent;display:inline-flex;align-items:center;justify-content:center;gap:8px;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap}.${CSS_PREFIX}-btn:hover{transform:translateY(-1px)}.${CSS_PREFIX}-btn:disabled{cursor:default;opacity:.72;transform:none}.${CSS_PREFIX}-btn-primary{background:linear-gradient(135deg,var(--accent),#ff8c68);color:#190b08;box-shadow:0 14px 28px rgba(255,97,95,.22)}.${CSS_PREFIX}-btn-secondary{background:rgba(255,255,255,.06);color:var(--text);border-color:var(--panel-border)}.${CSS_PREFIX}-btn-ghost{background:transparent;color:var(--text-2);border-color:rgba(255,255,255,.05)}.${CSS_PREFIX}-btn-danger{background:rgba(255,125,134,.15);color:#ffd2d6;border-color:rgba(255,125,134,.24)}.${CSS_PREFIX}-btn[data-armed="true"]{background:rgba(255,191,102,.16);color:#ffe0ab;border-color:rgba(255,191,102,.28);box-shadow:0 0 0 3px rgba(255,191,102,.08)}.${CSS_PREFIX}-btn-small{min-height:36px;padding-inline:13px;border-radius:12px;font-size:11px}.${CSS_PREFIX}-close{width:38px;height:38px;border-radius:14px;background:transparent;border:1px solid rgba(255,255,255,.06);color:var(--text-2);display:flex;align-items:center;justify-content:center;font-size:18px;cursor:pointer}
-            .${CSS_PREFIX}-toggle-list{display:grid;gap:8px}.${CSS_PREFIX}-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:14px;align-items:center;padding:14px 16px;border-radius:16px;border:1px solid rgba(255,255,255,.06);background:rgba(255,255,255,.03);transition:border-color .16s ease,background .16s ease,transform .16s ease;cursor:pointer}.${CSS_PREFIX}-row:hover{background:rgba(255,255,255,.05);border-color:rgba(255,255,255,.11);transform:translateY(-1px)}.${CSS_PREFIX}-row-label-line{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:4px}.${CSS_PREFIX}-row-label{font-size:13px;font-weight:700}.${CSS_PREFIX}-row[data-enabled="false"]{background:rgba(255,255,255,.02)}
-            .${CSS_PREFIX}-toggle{position:relative;width:48px;height:28px;display:inline-flex;flex-shrink:0}.${CSS_PREFIX}-toggle input{position:absolute;opacity:0;inset:0;margin:0;cursor:pointer}.${CSS_PREFIX}-toggle-track{position:absolute;inset:0;border-radius:999px;background:rgba(255,255,255,.16);border:1px solid rgba(255,255,255,.08);transition:background .2s ease,border-color .2s ease,box-shadow .2s ease}.${CSS_PREFIX}-toggle-track::after{content:'';position:absolute;top:3px;left:3px;width:20px;height:20px;border-radius:50%;background:#fff;box-shadow:0 4px 12px rgba(0,0,0,.24);transition:transform .2s ease}.${CSS_PREFIX}-toggle input:checked + .${CSS_PREFIX}-toggle-track{background:linear-gradient(135deg,var(--accent),#ff8c68);border-color:transparent;box-shadow:0 10px 24px rgba(255,97,95,.24)}.${CSS_PREFIX}-toggle input:checked + .${CSS_PREFIX}-toggle-track::after{transform:translateX(20px)}
-            .${CSS_PREFIX}-note{margin-top:12px;padding:12px 14px;border-radius:14px;border:1px solid rgba(255,191,102,.24);background:rgba(255,191,102,.08);color:#ffe0ab;font-size:12px;line-height:1.5}
-            .${CSS_PREFIX}-footer{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;align-items:center;padding-top:16px;padding-bottom:18px;border-top:1px solid var(--panel-border);background:linear-gradient(180deg,rgba(255,255,255,.015),transparent)}.${CSS_PREFIX}-footer-meta{display:grid;gap:4px}.${CSS_PREFIX}-footer-hint,.${CSS_PREFIX}-stat{font-size:11px;color:var(--text-3)}.${CSS_PREFIX}-stat b{color:var(--text);margin-left:4px;font-weight:760;font-variant-numeric:tabular-nums}
-            .${CSS_PREFIX}-toast-region{position:fixed;right:18px;bottom:18px;z-index:2147483647;display:grid;gap:10px;width:min(360px,calc(100vw - 28px));pointer-events:none}.${CSS_PREFIX}-toast{display:grid;grid-template-columns:auto minmax(0,1fr);gap:12px;align-items:start;padding:14px 16px;border-radius:16px;border:1px solid rgba(255,255,255,.08);background:rgba(15,20,31,.96);box-shadow:0 20px 40px rgba(0,0,0,.36);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);opacity:0;transform:translateY(10px);transition:opacity .2s ease,transform .2s ease}.${CSS_PREFIX}-toast-visible{opacity:1;transform:translateY(0)}.${CSS_PREFIX}-toast-tone{width:10px;height:10px;margin-top:5px;border-radius:50%;background:var(--info);box-shadow:0 0 0 6px rgba(105,183,255,.12)}.${CSS_PREFIX}-toast-success .${CSS_PREFIX}-toast-tone{background:var(--success);box-shadow:0 0 0 6px rgba(99,212,140,.12)}.${CSS_PREFIX}-toast-error .${CSS_PREFIX}-toast-tone{background:var(--danger);box-shadow:0 0 0 6px rgba(255,125,134,.14)}.${CSS_PREFIX}-toast-warn .${CSS_PREFIX}-toast-tone{background:var(--warning);box-shadow:0 0 0 6px rgba(255,191,102,.14)}.${CSS_PREFIX}-toast-title{margin-bottom:4px;font-size:12px;font-weight:760}.${CSS_PREFIX}-toast-message{font-size:12px;line-height:1.5;color:var(--text-2)}
-            .${CSS_PREFIX}-spinner{width:14px;height:14px;border:2px solid transparent;border-top-color:currentColor;border-radius:50%;animation:${CSS_PREFIX}-spin .6s linear infinite;display:inline-block}@keyframes ${CSS_PREFIX}-spin{to{transform:rotate(360deg)}}
-            .${CSS_PREFIX}-btn:focus-visible,.${CSS_PREFIX}-close:focus-visible,.${CSS_PREFIX}-toggle input:focus-visible + .${CSS_PREFIX}-toggle-track,.${CSS_PREFIX}-input:focus-visible{outline:none;box-shadow:0 0 0 4px rgba(255,97,95,.16)}
-            @media (max-width:720px){.${CSS_PREFIX}-overlay{padding:12px}.${CSS_PREFIX}-panel{width:min(100vw - 8px,100%);max-height:min(100vh - 8px,100%);border-radius:20px}.${CSS_PREFIX}-header,.${CSS_PREFIX}-footer,.${CSS_PREFIX}-section{padding-left:18px;padding-right:18px}.${CSS_PREFIX}-summary-head{grid-template-columns:1fr}.${CSS_PREFIX}-summary-control{justify-content:space-between;width:100%}.${CSS_PREFIX}-metric-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.${CSS_PREFIX}-row{grid-template-columns:1fr}}
-            @media (prefers-reduced-motion:reduce){.${CSS_PREFIX}-overlay,.${CSS_PREFIX}-panel,.${CSS_PREFIX}-btn,.${CSS_PREFIX}-row,.${CSS_PREFIX}-toast,.${CSS_PREFIX}-toggle-track,.${CSS_PREFIX}-toggle-track::after{transition:none!important}.${CSS_PREFIX}-spinner{animation-duration:.01ms;animation-iteration-count:1}}
+            body:not(.${CSS_PREFIX}-ready) .${CSS_PREFIX}-overlay { display: none !important; }
+            .${CSS_PREFIX}-sr-only {
+                position: absolute;
+                width: 1px;
+                height: 1px;
+                padding: 0;
+                margin: -1px;
+                overflow: hidden;
+                clip: rect(0, 0, 0, 0);
+                white-space: nowrap;
+                border: 0;
+            }
+            .${CSS_PREFIX}-overlay {
+                position: fixed;
+                inset: 0;
+                z-index: 2147483646;
+                display: grid;
+                place-items: center;
+                padding:
+                    max(14px, env(safe-area-inset-top))
+                    max(14px, env(safe-area-inset-right))
+                    max(14px, env(safe-area-inset-bottom))
+                    max(14px, env(safe-area-inset-left));
+                background:
+                    radial-gradient(circle at top, rgba(255, 106, 77, 0.18), transparent 32%),
+                    linear-gradient(180deg, rgba(7, 10, 18, 0.76), rgba(7, 10, 18, 0.86));
+                backdrop-filter: blur(20px) saturate(150%);
+                -webkit-backdrop-filter: blur(20px) saturate(150%);
+                opacity: 0;
+                pointer-events: none;
+                transition: opacity 0.24s ease;
+                font-family: "Aptos", "Segoe UI Variable Text", "SF Pro Display", "Helvetica Neue", system-ui, sans-serif;
+            }
+            .${CSS_PREFIX}-overlay.${CSS_PREFIX}-active {
+                opacity: 1;
+                pointer-events: auto;
+            }
+            .${CSS_PREFIX}-panel {
+                --panel-border: rgba(255, 255, 255, 0.08);
+                --panel-border-strong: rgba(255, 255, 255, 0.14);
+                --accent: #ff6a4d;
+                --accent-strong: #ff8a5c;
+                --success: #66d995;
+                --info: #7abfff;
+                --warning: #ffc46b;
+                --danger: #ff8e97;
+                --text: #f7f8fb;
+                --text-2: #c3cbda;
+                --text-3: #8893a7;
+                width: min(880px, calc(100vw - 24px));
+                max-height: min(920px, calc(100vh - 24px));
+                display: flex;
+                flex-direction: column;
+                overflow: hidden;
+                border-radius: 28px;
+                border: 1px solid var(--panel-border);
+                background:
+                    radial-gradient(circle at top right, rgba(255, 106, 77, 0.12), transparent 26%),
+                    linear-gradient(180deg, rgba(18, 24, 35, 0.98), rgba(8, 12, 20, 0.98));
+                color: var(--text);
+                color-scheme: dark;
+                box-shadow:
+                    0 36px 110px rgba(0, 0, 0, 0.55),
+                    0 0 0 1px rgba(255, 255, 255, 0.03),
+                    inset 0 1px 0 rgba(255, 255, 255, 0.04);
+                transform: translateY(12px) scale(0.985);
+                transition: transform 0.24s ease;
+                outline: none;
+            }
+            .${CSS_PREFIX}-overlay.${CSS_PREFIX}-active .${CSS_PREFIX}-panel {
+                transform: translateY(0) scale(1);
+            }
+            .${CSS_PREFIX}-header,
+            .${CSS_PREFIX}-footer {
+                padding-left: 28px;
+                padding-right: 28px;
+            }
+            .${CSS_PREFIX}-header {
+                display: flex;
+                justify-content: space-between;
+                gap: 20px;
+                align-items: flex-start;
+                padding-top: 24px;
+                padding-bottom: 20px;
+                border-bottom: 1px solid var(--panel-border);
+                background: linear-gradient(180deg, rgba(255, 255, 255, 0.025), transparent);
+            }
+            .${CSS_PREFIX}-header-left {
+                display: flex;
+                gap: 16px;
+                min-width: 0;
+            }
+            .${CSS_PREFIX}-logo {
+                width: 46px;
+                height: 46px;
+                border-radius: 16px;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                background: linear-gradient(135deg, var(--accent), var(--accent-strong));
+                color: #fff;
+                font-size: 14px;
+                font-weight: 800;
+                letter-spacing: 0.08em;
+                box-shadow: 0 14px 34px rgba(255, 106, 77, 0.28);
+                flex-shrink: 0;
+            }
+            .${CSS_PREFIX}-brand {
+                min-width: 0;
+            }
+            .${CSS_PREFIX}-eyebrow {
+                margin: 0 0 7px;
+                font-size: 11px;
+                text-transform: uppercase;
+                letter-spacing: 0.14em;
+                font-weight: 700;
+                color: var(--text-3);
+            }
+            .${CSS_PREFIX}-title-row {
+                display: flex;
+                gap: 10px;
+                flex-wrap: wrap;
+                align-items: center;
+                margin-bottom: 7px;
+            }
+            .${CSS_PREFIX}-title {
+                margin: 0;
+                font-size: 23px;
+                line-height: 1.05;
+                font-weight: 780;
+                letter-spacing: -0.04em;
+                text-wrap: balance;
+            }
+            .${CSS_PREFIX}-version {
+                padding: 5px 9px;
+                border-radius: 999px;
+                border: 1px solid var(--panel-border);
+                background: rgba(255, 255, 255, 0.05);
+                font-size: 11px;
+                font-weight: 700;
+                color: var(--text-2);
+            }
+            .${CSS_PREFIX}-header-desc {
+                margin: 0;
+                max-width: 500px;
+                font-size: 13px;
+                line-height: 1.55;
+                color: var(--text-2);
+            }
+            .${CSS_PREFIX}-header-right {
+                display: flex;
+                gap: 10px;
+                align-items: center;
+                flex-shrink: 0;
+            }
+            .${CSS_PREFIX}-content {
+                flex: 1;
+                min-height: 0;
+                overflow: auto;
+                overflow-x: hidden;
+                padding: 0;
+                overscroll-behavior: contain;
+                scrollbar-gutter: stable both-edges;
+                scrollbar-width: thin;
+                scrollbar-color: rgba(255, 255, 255, 0.14) transparent;
+            }
+            .${CSS_PREFIX}-content::-webkit-scrollbar {
+                width: 8px;
+            }
+            .${CSS_PREFIX}-content::-webkit-scrollbar-thumb {
+                background: rgba(255, 255, 255, 0.12);
+                border-radius: 999px;
+            }
+            .${CSS_PREFIX}-layout {
+                display: grid;
+                grid-template-columns: minmax(0, 1fr);
+                gap: 18px;
+                padding: 14px 28px 28px;
+            }
+            .${CSS_PREFIX}-section {
+                min-width: 0;
+                scroll-margin-top: 18px;
+            }
+            .${CSS_PREFIX}-section-span {
+                grid-column: 1 / -1;
+            }
+            .${CSS_PREFIX}-section-head {
+                display: flex;
+                justify-content: space-between;
+                gap: 16px;
+                align-items: flex-start;
+                margin-bottom: 12px;
+            }
+            .${CSS_PREFIX}-section-head > div {
+                min-width: 0;
+            }
+            .${CSS_PREFIX}-section-title {
+                margin: 0 0 4px;
+                font-size: 15px;
+                line-height: 1.2;
+                font-weight: 740;
+                letter-spacing: -0.02em;
+                text-wrap: balance;
+            }
+            .${CSS_PREFIX}-section-desc,
+            .${CSS_PREFIX}-field-help,
+            .${CSS_PREFIX}-row-desc,
+            .${CSS_PREFIX}-summary-text,
+            .${CSS_PREFIX}-footer-status,
+            .${CSS_PREFIX}-detail-text,
+            .${CSS_PREFIX}-glance-detail,
+            .${CSS_PREFIX}-note-text,
+            .${CSS_PREFIX}-toast-message {
+                margin: 0;
+                font-size: 12px;
+                line-height: 1.55;
+                color: var(--text-2);
+            }
+            .${CSS_PREFIX}-surface {
+                display: grid;
+                gap: 16px;
+                height: 100%;
+                padding: 20px;
+                border-radius: 20px;
+                border: 1px solid var(--panel-border);
+                background: linear-gradient(180deg, rgba(255, 255, 255, 0.03), rgba(255, 255, 255, 0.015));
+                box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+            }
+            .${CSS_PREFIX}-summary {
+                gap: 18px;
+                background:
+                    radial-gradient(circle at top right, rgba(255, 106, 77, 0.14), transparent 34%),
+                    linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.02));
+            }
+            .${CSS_PREFIX}-summary-hero {
+                display: grid;
+                grid-template-columns: minmax(0, 1fr) auto;
+                gap: 18px;
+                align-items: start;
+            }
+            .${CSS_PREFIX}-summary-copy {
+                display: grid;
+                gap: 12px;
+                min-width: 0;
+            }
+            .${CSS_PREFIX}-summary-title {
+                margin: 0;
+                font-size: 29px;
+                line-height: 0.98;
+                font-weight: 790;
+                letter-spacing: -0.05em;
+                text-wrap: balance;
+            }
+            .${CSS_PREFIX}-chip-row,
+            .${CSS_PREFIX}-btn-row,
+            .${CSS_PREFIX}-url-group,
+            .${CSS_PREFIX}-stats,
+            .${CSS_PREFIX}-jump-nav {
+                display: flex;
+                flex-wrap: wrap;
+                gap: 8px;
+            }
+            .${CSS_PREFIX}-summary-control {
+                display: flex;
+                gap: 14px;
+                align-items: center;
+                justify-content: space-between;
+                min-width: 248px;
+                padding: 16px 18px;
+                border-radius: 18px;
+                background: rgba(255, 255, 255, 0.05);
+                border: 1px solid var(--panel-border-strong);
+                box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+            }
+            .${CSS_PREFIX}-summary-control-copy {
+                min-width: 0;
+            }
+            .${CSS_PREFIX}-summary-control-label {
+                margin: 0 0 4px;
+                font-size: 12px;
+                font-weight: 720;
+                color: var(--text);
+            }
+            .${CSS_PREFIX}-summary-control-text {
+                margin: 0;
+                font-size: 11px;
+                line-height: 1.5;
+                color: var(--text-2);
+            }
+            .${CSS_PREFIX}-glance-grid {
+                display: grid;
+                grid-template-columns: repeat(4, minmax(0, 1fr));
+                gap: 10px;
+            }
+            .${CSS_PREFIX}-glance {
+                display: grid;
+                gap: 6px;
+                padding: 15px 16px;
+                border-radius: 16px;
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                background: rgba(255, 255, 255, 0.04);
+            }
+            .${CSS_PREFIX}-glance[data-tone="success"] {
+                border-color: rgba(102, 217, 149, 0.24);
+                background: rgba(102, 217, 149, 0.08);
+            }
+            .${CSS_PREFIX}-glance[data-tone="info"] {
+                border-color: rgba(122, 191, 255, 0.22);
+                background: rgba(122, 191, 255, 0.08);
+            }
+            .${CSS_PREFIX}-glance[data-tone="warn"] {
+                border-color: rgba(255, 196, 107, 0.24);
+                background: rgba(255, 196, 107, 0.08);
+            }
+            .${CSS_PREFIX}-glance-label {
+                font-size: 11px;
+                text-transform: uppercase;
+                letter-spacing: 0.09em;
+                font-weight: 700;
+                color: var(--text-3);
+            }
+            .${CSS_PREFIX}-glance-value {
+                font-size: 15px;
+                line-height: 1.2;
+                font-weight: 740;
+                letter-spacing: -0.02em;
+                text-wrap: balance;
+            }
+            .${CSS_PREFIX}-summary-support {
+                display: grid;
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+                gap: 12px;
+            }
+            .${CSS_PREFIX}-detail-card {
+                display: grid;
+                gap: 12px;
+                min-width: 0;
+                padding: 16px;
+                border-radius: 16px;
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                background: rgba(255, 255, 255, 0.04);
+            }
+            .${CSS_PREFIX}-detail-title {
+                margin: 0;
+                font-size: 13px;
+                font-weight: 720;
+                letter-spacing: -0.01em;
+            }
+            .${CSS_PREFIX}-metric-grid {
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+                gap: 10px;
+            }
+            .${CSS_PREFIX}-metric {
+                padding: 15px 16px;
+                border-radius: 16px;
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                background: rgba(255, 255, 255, 0.04);
+            }
+            .${CSS_PREFIX}-metric-label {
+                display: block;
+                margin-bottom: 8px;
+                color: var(--text-3);
+                font-size: 11px;
+                text-transform: uppercase;
+                letter-spacing: 0.09em;
+                font-weight: 700;
+            }
+            .${CSS_PREFIX}-metric-value {
+                display: block;
+                font-size: 23px;
+                line-height: 1;
+                font-weight: 780;
+                letter-spacing: -0.05em;
+                font-variant-numeric: tabular-nums;
+            }
+            .${CSS_PREFIX}-pill {
+                display: inline-flex;
+                align-items: center;
+                gap: 6px;
+                padding: 6px 10px;
+                border-radius: 999px;
+                border: 1px solid transparent;
+                font-size: 11px;
+                font-weight: 700;
+            }
+            .${CSS_PREFIX}-pill::before {
+                content: '';
+                width: 7px;
+                height: 7px;
+                border-radius: 50%;
+                background: currentColor;
+                opacity: 0.9;
+            }
+            .${CSS_PREFIX}-pill[data-tone="success"] {
+                color: var(--success);
+                background: rgba(102, 217, 149, 0.14);
+                border-color: rgba(102, 217, 149, 0.22);
+            }
+            .${CSS_PREFIX}-pill[data-tone="info"] {
+                color: var(--info);
+                background: rgba(122, 191, 255, 0.14);
+                border-color: rgba(122, 191, 255, 0.22);
+            }
+            .${CSS_PREFIX}-pill[data-tone="warn"] {
+                color: var(--warning);
+                background: rgba(255, 196, 107, 0.15);
+                border-color: rgba(255, 196, 107, 0.22);
+            }
+            .${CSS_PREFIX}-pill[data-tone="danger"] {
+                color: var(--danger);
+                background: rgba(255, 142, 151, 0.15);
+                border-color: rgba(255, 142, 151, 0.22);
+            }
+            .${CSS_PREFIX}-pill[data-tone="neutral"] {
+                color: var(--text-2);
+                background: rgba(255, 255, 255, 0.06);
+                border-color: var(--panel-border);
+            }
+            .${CSS_PREFIX}-field {
+                display: grid;
+                gap: 10px;
+            }
+            .${CSS_PREFIX}-field-label {
+                display: flex;
+                justify-content: space-between;
+                gap: 12px;
+                font-size: 12px;
+                font-weight: 720;
+            }
+            .${CSS_PREFIX}-input {
+                flex: 1 1 320px;
+                min-width: 0;
+                min-height: 44px;
+                padding: 13px 15px;
+                border-radius: 14px;
+                border: 1px solid var(--panel-border);
+                background: rgba(255, 255, 255, 0.045);
+                color: var(--text);
+                font-size: 12px;
+                line-height: 1.45;
+                font-family: "Cascadia Code", "SF Mono", Consolas, monospace;
+                touch-action: manipulation;
+                -webkit-tap-highlight-color: rgba(255, 106, 77, 0.14);
+                outline: none;
+                transition: border-color 0.16s ease, background 0.16s ease, box-shadow 0.16s ease;
+            }
+            .${CSS_PREFIX}-input:hover {
+                background: rgba(255, 255, 255, 0.06);
+            }
+            .${CSS_PREFIX}-input:focus-visible {
+                border-color: rgba(255, 106, 77, 0.48);
+                box-shadow: 0 0 0 4px rgba(255, 106, 77, 0.14);
+                background: rgba(255, 255, 255, 0.065);
+            }
+            .${CSS_PREFIX}-input[aria-invalid="true"] {
+                border-color: rgba(255, 142, 151, 0.58);
+                box-shadow: 0 0 0 4px rgba(255, 142, 151, 0.14);
+            }
+            .${CSS_PREFIX}-input::placeholder {
+                color: var(--text-3);
+            }
+            .${CSS_PREFIX}-btn,
+            .${CSS_PREFIX}-close {
+                transition:
+                    background 0.16s ease,
+                    border-color 0.16s ease,
+                    color 0.16s ease,
+                    transform 0.16s ease,
+                    box-shadow 0.16s ease;
+            }
+            .${CSS_PREFIX}-btn {
+                min-height: 44px;
+                padding: 10px 16px;
+                border-radius: 14px;
+                border: 1px solid transparent;
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                gap: 8px;
+                font-size: 12px;
+                font-weight: 720;
+                cursor: pointer;
+                white-space: nowrap;
+                text-decoration: none;
+                touch-action: manipulation;
+                -webkit-tap-highlight-color: rgba(255, 106, 77, 0.14);
+            }
+            .${CSS_PREFIX}-btn:hover {
+                transform: translateY(-1px);
+            }
+            .${CSS_PREFIX}-btn:disabled {
+                cursor: default;
+                opacity: 0.74;
+                transform: none;
+            }
+            .${CSS_PREFIX}-btn-primary {
+                background: linear-gradient(135deg, var(--accent), var(--accent-strong));
+                color: #200d08;
+                box-shadow: 0 14px 30px rgba(255, 106, 77, 0.24);
+            }
+            .${CSS_PREFIX}-btn-primary:hover {
+                box-shadow: 0 18px 34px rgba(255, 106, 77, 0.28);
+            }
+            .${CSS_PREFIX}-btn-secondary {
+                background: rgba(255, 255, 255, 0.06);
+                color: var(--text);
+                border-color: var(--panel-border);
+            }
+            .${CSS_PREFIX}-btn-secondary:hover {
+                background: rgba(255, 255, 255, 0.08);
+                border-color: var(--panel-border-strong);
+            }
+            .${CSS_PREFIX}-btn-ghost {
+                background: transparent;
+                color: var(--text-2);
+                border-color: rgba(255, 255, 255, 0.08);
+            }
+            .${CSS_PREFIX}-btn-ghost:hover {
+                color: var(--text);
+                background: rgba(255, 255, 255, 0.04);
+                border-color: rgba(255, 255, 255, 0.14);
+            }
+            .${CSS_PREFIX}-btn-danger {
+                background: rgba(255, 142, 151, 0.14);
+                color: #ffd8dc;
+                border-color: rgba(255, 142, 151, 0.24);
+            }
+            .${CSS_PREFIX}-btn-danger:hover {
+                background: rgba(255, 142, 151, 0.2);
+            }
+            .${CSS_PREFIX}-btn[data-armed="true"] {
+                background: rgba(255, 196, 107, 0.16);
+                color: #ffe7b6;
+                border-color: rgba(255, 196, 107, 0.3);
+                box-shadow: 0 0 0 3px rgba(255, 196, 107, 0.08);
+            }
+            .${CSS_PREFIX}-btn-small {
+                min-height: 36px;
+                padding-inline: 13px;
+                border-radius: 12px;
+                font-size: 11px;
+            }
+            .${CSS_PREFIX}-close {
+                width: 40px;
+                height: 40px;
+                border-radius: 14px;
+                background: transparent;
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                color: var(--text-2);
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                font-size: 18px;
+                cursor: pointer;
+                touch-action: manipulation;
+                -webkit-tap-highlight-color: rgba(255, 106, 77, 0.14);
+            }
+            .${CSS_PREFIX}-close:hover {
+                color: var(--text);
+                background: rgba(255, 255, 255, 0.05);
+                border-color: rgba(255, 255, 255, 0.14);
+            }
+            .${CSS_PREFIX}-toggle-list {
+                display: grid;
+                gap: 10px;
+            }
+            .${CSS_PREFIX}-row {
+                display: grid;
+                grid-template-columns: minmax(0, 1fr) auto;
+                gap: 16px;
+                align-items: center;
+                padding: 15px 16px;
+                border-radius: 17px;
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                background: rgba(255, 255, 255, 0.035);
+                transition: border-color 0.16s ease, background 0.16s ease, transform 0.16s ease, box-shadow 0.16s ease;
+                cursor: pointer;
+                touch-action: manipulation;
+                -webkit-tap-highlight-color: rgba(255, 106, 77, 0.12);
+            }
+            .${CSS_PREFIX}-row:hover {
+                background: rgba(255, 255, 255, 0.055);
+                border-color: rgba(255, 255, 255, 0.13);
+                transform: translateY(-1px);
+            }
+            .${CSS_PREFIX}-row:focus-within {
+                border-color: rgba(255, 106, 77, 0.38);
+                box-shadow: 0 0 0 3px rgba(255, 106, 77, 0.1);
+            }
+            .${CSS_PREFIX}-row-label-line {
+                display: flex;
+                gap: 8px;
+                flex-wrap: wrap;
+                align-items: center;
+                margin-bottom: 5px;
+            }
+            .${CSS_PREFIX}-row-label {
+                font-size: 13px;
+                font-weight: 720;
+                letter-spacing: -0.01em;
+            }
+            .${CSS_PREFIX}-row[data-enabled="false"] {
+                background: rgba(255, 255, 255, 0.02);
+            }
+            .${CSS_PREFIX}-toggle {
+                position: relative;
+                width: 50px;
+                height: 30px;
+                display: inline-flex;
+                flex-shrink: 0;
+            }
+            .${CSS_PREFIX}-toggle input {
+                position: absolute;
+                opacity: 0;
+                inset: 0;
+                margin: 0;
+                cursor: pointer;
+            }
+            .${CSS_PREFIX}-toggle-track {
+                position: absolute;
+                inset: 0;
+                border-radius: 999px;
+                background: rgba(255, 255, 255, 0.17);
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                transition: background 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+            }
+            .${CSS_PREFIX}-toggle-track::after {
+                content: '';
+                position: absolute;
+                top: 3px;
+                left: 3px;
+                width: 22px;
+                height: 22px;
+                border-radius: 50%;
+                background: #fff;
+                box-shadow: 0 4px 12px rgba(0, 0, 0, 0.24);
+                transition: transform 0.2s ease;
+            }
+            .${CSS_PREFIX}-toggle input:checked + .${CSS_PREFIX}-toggle-track {
+                background: linear-gradient(135deg, var(--accent), var(--accent-strong));
+                border-color: transparent;
+                box-shadow: 0 10px 24px rgba(255, 106, 77, 0.24);
+            }
+            .${CSS_PREFIX}-toggle input:checked + .${CSS_PREFIX}-toggle-track::after {
+                transform: translateX(20px);
+            }
+            .${CSS_PREFIX}-note {
+                display: grid;
+                gap: 6px;
+                padding: 14px 16px;
+                border-radius: 16px;
+                border: 1px solid rgba(255, 255, 255, 0.1);
+                background: rgba(255, 255, 255, 0.04);
+            }
+            .${CSS_PREFIX}-note[data-tone="success"] {
+                border-color: rgba(102, 217, 149, 0.24);
+                background: rgba(102, 217, 149, 0.08);
+            }
+            .${CSS_PREFIX}-note[data-tone="info"] {
+                border-color: rgba(122, 191, 255, 0.22);
+                background: rgba(122, 191, 255, 0.08);
+            }
+            .${CSS_PREFIX}-note[data-tone="warn"] {
+                border-color: rgba(255, 196, 107, 0.24);
+                background: rgba(255, 196, 107, 0.09);
+            }
+            .${CSS_PREFIX}-note[data-tone="danger"] {
+                border-color: rgba(255, 142, 151, 0.24);
+                background: rgba(255, 142, 151, 0.08);
+            }
+            .${CSS_PREFIX}-note-title {
+                margin: 0;
+                font-size: 12px;
+                font-weight: 760;
+            }
+            .${CSS_PREFIX}-footer {
+                display: flex;
+                justify-content: space-between;
+                gap: 18px;
+                flex-wrap: wrap;
+                align-items: center;
+                padding-top: 16px;
+                padding-bottom: 18px;
+                border-top: 1px solid var(--panel-border);
+                background: linear-gradient(180deg, rgba(255, 255, 255, 0.015), transparent);
+            }
+            .${CSS_PREFIX}-footer-meta {
+                display: grid;
+                gap: 5px;
+                min-width: 0;
+            }
+            .${CSS_PREFIX}-footer-aside {
+                display: flex;
+                justify-content: flex-end;
+                align-items: center;
+            }
+            .${CSS_PREFIX}-footer-hint,
+            .${CSS_PREFIX}-stat {
+                font-size: 11px;
+                color: var(--text-3);
+            }
+            .${CSS_PREFIX}-footer-hint {
+                text-wrap: balance;
+            }
+            .${CSS_PREFIX}-stat b {
+                color: var(--text);
+                margin-left: 4px;
+                font-weight: 760;
+                font-variant-numeric: tabular-nums;
+            }
+            .${CSS_PREFIX}-toast-region {
+                position: fixed;
+                right: max(18px, env(safe-area-inset-right));
+                bottom: max(18px, env(safe-area-inset-bottom));
+                z-index: 2147483647;
+                display: grid;
+                gap: 10px;
+                width: min(360px, calc(100vw - 30px));
+                pointer-events: none;
+            }
+            .${CSS_PREFIX}-toast {
+                display: grid;
+                grid-template-columns: auto minmax(0, 1fr);
+                gap: 12px;
+                align-items: start;
+                padding: 14px 16px;
+                border-radius: 16px;
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                background: rgba(15, 20, 31, 0.96);
+                box-shadow: 0 20px 40px rgba(0, 0, 0, 0.36);
+                backdrop-filter: blur(18px);
+                -webkit-backdrop-filter: blur(18px);
+                opacity: 0;
+                transform: translateY(10px);
+                transition: opacity 0.2s ease, transform 0.2s ease;
+            }
+            .${CSS_PREFIX}-toast-visible {
+                opacity: 1;
+                transform: translateY(0);
+            }
+            .${CSS_PREFIX}-toast-tone {
+                width: 10px;
+                height: 10px;
+                margin-top: 5px;
+                border-radius: 50%;
+                background: var(--info);
+                box-shadow: 0 0 0 6px rgba(122, 191, 255, 0.12);
+            }
+            .${CSS_PREFIX}-toast-success .${CSS_PREFIX}-toast-tone {
+                background: var(--success);
+                box-shadow: 0 0 0 6px rgba(102, 217, 149, 0.12);
+            }
+            .${CSS_PREFIX}-toast-error .${CSS_PREFIX}-toast-tone {
+                background: var(--danger);
+                box-shadow: 0 0 0 6px rgba(255, 142, 151, 0.14);
+            }
+            .${CSS_PREFIX}-toast-warn .${CSS_PREFIX}-toast-tone {
+                background: var(--warning);
+                box-shadow: 0 0 0 6px rgba(255, 196, 107, 0.14);
+            }
+            .${CSS_PREFIX}-toast-title {
+                margin-bottom: 4px;
+                font-size: 12px;
+                font-weight: 760;
+            }
+            .${CSS_PREFIX}-spinner {
+                width: 14px;
+                height: 14px;
+                border: 2px solid transparent;
+                border-top-color: currentColor;
+                border-radius: 50%;
+                animation: ${CSS_PREFIX}-spin 0.6s linear infinite;
+                display: inline-block;
+            }
+            @keyframes ${CSS_PREFIX}-spin {
+                to { transform: rotate(360deg); }
+            }
+            .${CSS_PREFIX}-btn:focus-visible,
+            .${CSS_PREFIX}-close:focus-visible,
+            .${CSS_PREFIX}-toggle input:focus-visible + .${CSS_PREFIX}-toggle-track,
+            .${CSS_PREFIX}-input:focus-visible {
+                outline: none;
+                box-shadow: 0 0 0 4px rgba(255, 106, 77, 0.16);
+            }
+            @media (min-width: 760px) {
+                .${CSS_PREFIX}-layout {
+                    grid-template-columns: repeat(2, minmax(0, 1fr));
+                }
+            }
+            @media (max-width: 820px) {
+                .${CSS_PREFIX}-overlay {
+                    padding:
+                        max(10px, env(safe-area-inset-top))
+                        max(10px, env(safe-area-inset-right))
+                        max(10px, env(safe-area-inset-bottom))
+                        max(10px, env(safe-area-inset-left));
+                }
+                .${CSS_PREFIX}-panel {
+                    width: min(100vw - 8px, 100%);
+                    max-height: min(100vh - 8px, 100%);
+                    border-radius: 22px;
+                }
+                .${CSS_PREFIX}-header,
+                .${CSS_PREFIX}-footer {
+                    padding-left: 20px;
+                    padding-right: 20px;
+                }
+                .${CSS_PREFIX}-layout {
+                    padding: 12px 20px 22px;
+                }
+                .${CSS_PREFIX}-summary-hero {
+                    grid-template-columns: 1fr;
+                }
+                .${CSS_PREFIX}-summary-control {
+                    min-width: 0;
+                    width: 100%;
+                }
+                .${CSS_PREFIX}-glance-grid {
+                    grid-template-columns: repeat(2, minmax(0, 1fr));
+                }
+                .${CSS_PREFIX}-summary-support {
+                    grid-template-columns: 1fr;
+                }
+                .${CSS_PREFIX}-metric-grid {
+                    grid-template-columns: repeat(2, minmax(0, 1fr));
+                }
+                .${CSS_PREFIX}-row {
+                    grid-template-columns: 1fr;
+                }
+            }
+            @media (max-width: 560px) {
+                .${CSS_PREFIX}-header {
+                    flex-direction: column;
+                }
+                .${CSS_PREFIX}-header-right {
+                    width: 100%;
+                    justify-content: space-between;
+                }
+                .${CSS_PREFIX}-layout {
+                    padding: 12px 16px 20px;
+                }
+                .${CSS_PREFIX}-glance-grid,
+                .${CSS_PREFIX}-metric-grid {
+                    grid-template-columns: 1fr;
+                }
+                .${CSS_PREFIX}-btn-row,
+                .${CSS_PREFIX}-url-group,
+                .${CSS_PREFIX}-jump-nav {
+                    display: grid;
+                }
+                .${CSS_PREFIX}-btn {
+                    width: 100%;
+                }
+                .${CSS_PREFIX}-footer {
+                    align-items: flex-start;
+                }
+            }
+            @media (prefers-reduced-motion: reduce) {
+                .${CSS_PREFIX}-overlay,
+                .${CSS_PREFIX}-panel,
+                .${CSS_PREFIX}-btn,
+                .${CSS_PREFIX}-row,
+                .${CSS_PREFIX}-toast,
+                .${CSS_PREFIX}-toggle-track,
+                .${CSS_PREFIX}-toggle-track::after {
+                    transition: none !important;
+                }
+                .${CSS_PREFIX}-spinner {
+                    animation-duration: 0.01ms;
+                    animation-iteration-count: 1;
+                }
+            }
         `;
         ensureStyleElement(`${CSS_PREFIX}-ui`).textContent = css;
     }
@@ -2264,13 +3204,14 @@
         const logo = document.createElement('div');
         logo.className = `${CSS_PREFIX}-logo`;
         logo.textContent = 'YT';
+        logo.setAttribute('aria-hidden', 'true');
 
         const brand = document.createElement('div');
         brand.className = `${CSS_PREFIX}-brand`;
 
         const eyebrow = document.createElement('div');
         eyebrow.className = `${CSS_PREFIX}-eyebrow`;
-        eyebrow.textContent = 'Control center';
+        eyebrow.textContent = 'Protection Workspace';
 
         const titleRow = document.createElement('div');
         titleRow.className = `${CSS_PREFIX}-title-row`;
@@ -2289,7 +3230,7 @@
         const description = document.createElement('p');
         description.className = `${CSS_PREFIX}-header-desc`;
         description.id = `${CSS_PREFIX}-dialog-desc`;
-        description.textContent = 'Review protection status, refresh rule sources, and tune blocking behavior without leaving YouTube.';
+        description.textContent = 'Check live coverage, refresh your rule library, and tune blocking behavior without leaving YouTube.';
 
         brand.append(eyebrow, titleRow, description);
         headerLeft.append(logo, brand);
@@ -2304,7 +3245,7 @@
         closeBtn.className = `${CSS_PREFIX}-close`;
         closeBtn.id = `${CSS_PREFIX}-close-btn`;
         closeBtn.type = 'button';
-        closeBtn.setAttribute('aria-label', 'Close YoutubeAdblock settings');
+        closeBtn.setAttribute('aria-label', 'Close the YoutubeAdblock Control Center');
         closeBtn.textContent = '\u00D7';
 
         headerRight.append(statusPill, closeBtn);
@@ -2323,10 +3264,11 @@
         const footerStatus = document.createElement('div');
         footerStatus.className = `${CSS_PREFIX}-footer-status`;
         footerStatus.id = `${CSS_PREFIX}-footer-status`;
+        footerStatus.setAttribute('aria-live', 'polite');
 
         const footerHint = document.createElement('div');
         footerHint.className = `${CSS_PREFIX}-footer-hint`;
-        footerHint.textContent = 'Settings stay local to your userscript manager, and the built-in fallback remains ready.';
+        footerHint.textContent = `Changes save instantly. ${getControlCenterAccessHint()} Press Esc to close the panel.`;
 
         footerMeta.append(footerStatus, footerHint);
 
@@ -2337,23 +3279,7 @@
         statsEl.className = `${CSS_PREFIX}-stats`;
         statsEl.id = `${CSS_PREFIX}-stats`;
 
-        const footerActions = document.createElement('div');
-        footerActions.className = `${CSS_PREFIX}-footer-actions`;
-
-        const copyBtn = document.createElement('button');
-        copyBtn.className = `${CSS_PREFIX}-btn ${CSS_PREFIX}-btn-secondary ${CSS_PREFIX}-btn-small`;
-        copyBtn.id = `${CSS_PREFIX}-copy-btn`;
-        copyBtn.type = 'button';
-        copyBtn.textContent = 'Copy diagnostics';
-
-        const githubBtn = document.createElement('button');
-        githubBtn.className = `${CSS_PREFIX}-btn ${CSS_PREFIX}-btn-ghost ${CSS_PREFIX}-btn-small`;
-        githubBtn.id = `${CSS_PREFIX}-github-btn`;
-        githubBtn.type = 'button';
-        githubBtn.textContent = 'GitHub';
-
-        footerActions.append(copyBtn, githubBtn);
-        footerAside.append(statsEl, footerActions);
+        footerAside.append(statsEl);
         footer.append(footerMeta, footerAside);
 
         panel.append(header, contentEl, footer);
@@ -2363,21 +3289,6 @@
         document.body.classList.add(`${CSS_PREFIX}-ready`);
 
         panel.querySelector(`#${CSS_PREFIX}-close-btn`).addEventListener('click', () => toggleSettings(false));
-
-        panel.querySelector(`#${CSS_PREFIX}-copy-btn`).addEventListener('click', async () => {
-            const success = await copyTextToClipboard(buildDiagnosticsReport());
-            showToast(
-                success
-                    ? 'Diagnostics copied. You can paste them into a bug report or note.'
-                    : 'Clipboard access was unavailable, so diagnostics could not be copied.',
-                success ? 'success' : 'error'
-            );
-        });
-
-        panel.querySelector(`#${CSS_PREFIX}-github-btn`).addEventListener('click', () => {
-            const newWindow = window.open('https://github.com/SysAdminDoc/youtubeadblock', '_blank', 'noopener');
-            if (newWindow) newWindow.opener = null;
-        });
 
         buildContent();
         state.overlayEl = overlay;
@@ -2389,87 +3300,185 @@
         const content = document.getElementById(`${CSS_PREFIX}-content`);
         if (!content) return;
         content.textContent = '';
-        content.append(createOverviewSection(), createFilterSection(), ...FEATURE_GROUPS.map(group => createFeatureSection(group)), createDiagnosticsSection());
+        const layout = document.createElement('div');
+        layout.className = `${CSS_PREFIX}-layout`;
+        layout.append(
+            createOverviewSection(),
+            createFilterSection(),
+            ...FEATURE_GROUPS.map(group => createFeatureSection(group)),
+            createDiagnosticsSection()
+        );
+        content.appendChild(layout);
     }
 
     function createOverviewSection() {
         const section = document.createElement('section');
-        section.className = `${CSS_PREFIX}-section`;
+        section.className = `${CSS_PREFIX}-section ${CSS_PREFIX}-section-span`;
+        section.id = SECTION_IDS.overview;
         const surface = createSurface(`${CSS_PREFIX}-summary`);
         const summary = getProtectionSummary();
-        const head = document.createElement('div');
-        head.className = `${CSS_PREFIX}-summary-head`;
+        const hero = document.createElement('div');
+        hero.className = `${CSS_PREFIX}-summary-hero`;
         const copy = document.createElement('div');
+        copy.className = `${CSS_PREFIX}-summary-copy`;
         const title = document.createElement('h2');
         title.className = `${CSS_PREFIX}-summary-title`;
-        title.textContent = isEnabled() ? 'Protection is live' : 'Protection is paused';
+        title.textContent = isEnabled() ? 'Protection Is Live' : 'Protection Is Paused';
         const body = document.createElement('p');
         body.className = `${CSS_PREFIX}-summary-text`;
         body.textContent = summary.description;
         const chips = document.createElement('div');
         chips.className = `${CSS_PREFIX}-chip-row`;
         chips.append(
-            createPill(getFilterSourceLabel(), state.filterSource === 'remote' ? 'success' : 'info'),
-            createPill(`${formatNumber(getRuleCount())} rules`, 'neutral'),
+            createPill(getFilterSourceLabel(), getFilterSourceTone()),
+            createPill(`${formatNumber(getRuleCount())} Rules`, 'neutral'),
             createPill(`Synced ${formatTimestamp(state.lastFilterUpdate)}`, 'neutral'),
-            createPill(`${getEnabledFeatureCount()}/${getFeatureCount()} modules on`, 'neutral')
+            createPill(`${getEnabledFeatureCount()}/${getFeatureCount()} Modules On`, 'neutral')
         );
         copy.append(title, body, chips);
 
         const control = document.createElement('div');
         control.className = `${CSS_PREFIX}-summary-control`;
         const controlCopy = document.createElement('div');
+        controlCopy.className = `${CSS_PREFIX}-summary-control-copy`;
         const controlLabel = document.createElement('p');
         controlLabel.className = `${CSS_PREFIX}-summary-control-label`;
-        controlLabel.textContent = 'Master switch';
+        controlLabel.textContent = 'Master Switch';
         const controlText = document.createElement('p');
         controlText.className = `${CSS_PREFIX}-summary-control-text`;
+        controlText.id = `${CSS_PREFIX}-master-toggle-help`;
         controlText.textContent = isEnabled()
             ? 'Pause every blocking engine without uninstalling the script.'
             : 'Resume blocking instantly with your saved settings intact.';
         controlCopy.append(controlLabel, controlText);
-        const { toggle } = createToggleControl(`${CSS_PREFIX}-master-toggle`, isEnabled(), checked => setScriptEnabled(checked), 'Toggle YoutubeAdblock protection');
+        const { toggle, input } = createToggleControl(`${CSS_PREFIX}-master-toggle`, isEnabled(), checked => setScriptEnabled(checked), 'Toggle YoutubeAdblock protection');
+        input.setAttribute('aria-describedby', controlText.id);
         control.append(controlCopy, toggle);
-        head.append(copy, control);
+        hero.append(copy, control);
+
+        const glanceGrid = document.createElement('div');
+        glanceGrid.className = `${CSS_PREFIX}-glance-grid`;
+        glanceGrid.append(
+            createGlanceItem('Current Surface', getSiteLabel(), getSurfaceLabel(), 'info'),
+            createGlanceItem(
+                'Rule Library',
+                isDefaultFilterUrl() ? 'Recommended Source' : 'Custom Source',
+                getFilterSourceLabel(),
+                getFilterSourceTone()
+            ),
+            createGlanceItem(
+                'Last Sync',
+                formatTimestamp(state.lastFilterUpdate),
+                state.filterSource === 'remote'
+                    ? 'Latest remote rules are active.'
+                    : 'Refresh any time to look for a newer rule list.',
+                getFilterSourceTone()
+            ),
+            createGlanceItem(
+                IS_EXTENSION_BUILD ? 'Quick Shortcut' : 'Open From',
+                getControlCenterAccessLabel(),
+                IS_EXTENSION_BUILD
+                    ? 'Reopen the Control Center from any YouTube tab.'
+                    : 'The userscript menu stays available whenever you need it.',
+                'neutral'
+            )
+        );
+
+        const supportGrid = document.createElement('div');
+        supportGrid.className = `${CSS_PREFIX}-summary-support`;
+
+        const actionsCard = createDetailCard(
+            'Quick Actions',
+            'Refresh the active source or jump to the project page when you need release notes, issues, or updates.'
+        );
+        const actions = document.createElement('div');
+        actions.className = `${CSS_PREFIX}-btn-row`;
+        const quickRefresh = document.createElement('button');
+        quickRefresh.className = `${CSS_PREFIX}-btn ${CSS_PREFIX}-btn-primary`;
+        quickRefresh.id = `${CSS_PREFIX}-quick-refresh`;
+        quickRefresh.type = 'button';
+        setButtonBusy(quickRefresh, state.filterSyncing, 'Refreshing…', 'Refresh Rules');
+        quickRefresh.addEventListener('click', async () => {
+            setButtonBusy(quickRefresh, true, 'Refreshing…', 'Refresh Rules');
+            await fetchFilters(true);
+            setButtonBusy(quickRefresh, false, 'Refreshing…', 'Refresh Rules');
+        });
+        const sourceBtn = createExternalLinkButton(PROJECT_URL, 'Project Page', `${CSS_PREFIX}-btn-ghost`);
+        sourceBtn.id = `${CSS_PREFIX}-open-source`;
+        actions.append(quickRefresh, sourceBtn);
+        actionsCard.card.append(actions);
+
+        const jumpCard = createDetailCard(
+            'Jump To',
+            'Move straight to the rule library, module groups, or recovery tools without hunting through the panel.'
+        );
+        const nav = document.createElement('nav');
+        nav.className = `${CSS_PREFIX}-jump-nav`;
+        nav.setAttribute('aria-label', 'Jump to a Control Center section');
+        nav.append(
+            createJumpButton('Rule Library', SECTION_IDS.rules),
+            createJumpButton('Core Blocking', SECTION_IDS.core),
+            createJumpButton('Anti-Detection', SECTION_IDS.anti),
+            createJumpButton('Cleanup', SECTION_IDS.cleanup),
+            createJumpButton('SponsorBlock', SECTION_IDS.sponsor),
+            createJumpButton('Recovery', SECTION_IDS.diagnostics)
+        );
+        jumpCard.card.append(nav);
+        supportGrid.append(actionsCard.card, jumpCard.card);
 
         const metrics = document.createElement('div');
         metrics.className = `${CSS_PREFIX}-metric-grid`;
         metrics.append(
-            createMetric('Ads blocked', `${CSS_PREFIX}-metric-blocked`),
-            createMetric('Responses pruned', `${CSS_PREFIX}-metric-pruned`),
-            createMetric('SSAP skips', `${CSS_PREFIX}-metric-ssap`),
-            createMetric('Sponsor skips', `${CSS_PREFIX}-metric-sponsor`),
-            createMetric('Modules enabled', `${CSS_PREFIX}-metric-features`)
+            createMetric('Ads Blocked', `${CSS_PREFIX}-metric-blocked`),
+            createMetric('Responses Pruned', `${CSS_PREFIX}-metric-pruned`),
+            createMetric('SSAP Skips', `${CSS_PREFIX}-metric-ssap`),
+            createMetric('Sponsor Skips', `${CSS_PREFIX}-metric-sponsor`),
+            createMetric('Modules Enabled', `${CSS_PREFIX}-metric-features`)
         );
-        surface.append(head, metrics);
+        surface.append(hero, glanceGrid, supportGrid, metrics);
         section.appendChild(surface);
         return section;
     }
 
     function createFilterSection() {
-        const section = createSection('Rule source', 'Use a remote uBO-compatible list when you want extra coverage. YoutubeAdblock keeps your last working rules or the built-in fallback ready if a refresh fails.', createPill(getFilterSourceLabel(), state.filterSource === 'remote' ? 'success' : 'info'));
+        const section = createSection(
+            'Rule Library',
+            'Choose the source that feeds cosmetic selectors and remote rule updates. YoutubeAdblock keeps your last working rules or the built-in fallback ready if a refresh fails.',
+            createPill(getFilterSourceLabel(), getFilterSourceTone()),
+            SECTION_IDS.rules,
+            true
+        );
         const surface = createSurface();
         const chips = document.createElement('div');
         chips.className = `${CSS_PREFIX}-chip-row`;
-        chips.append(createPill(`Version ${state.filters?.version || '?'}`, 'neutral'), createPill(`Last sync ${formatTimestamp(state.lastFilterUpdate)}`, 'neutral'), createPill(`${formatNumber(getRuleCount())} active rules`, 'neutral'));
+        chips.append(
+            createPill(`Version ${state.filters?.version || '?'}`, 'neutral'),
+            createPill(`Last Sync ${formatTimestamp(state.lastFilterUpdate)}`, 'neutral'),
+            createPill(`${formatNumber(getRuleCount())} Active Rules`, 'neutral')
+        );
 
         const field = document.createElement('div');
         field.className = `${CSS_PREFIX}-field`;
         const label = document.createElement('label');
         label.className = `${CSS_PREFIX}-field-label`;
         label.setAttribute('for', `${CSS_PREFIX}-url-input`);
-        label.textContent = 'Remote filter list URL';
+        label.textContent = 'Rule List URL';
         const help = document.createElement('p');
         help.className = `${CSS_PREFIX}-field-help`;
-        help.textContent = 'Point this at a raw EasyList or uBO-style source. Refreshing applies new rules without losing your current protection.';
+        help.id = `${CSS_PREFIX}-url-help`;
+        help.textContent = 'Point this at a raw EasyList or uBO-style source. Refreshing applies new rules without dropping your current protection.';
         const row = document.createElement('div');
         row.className = `${CSS_PREFIX}-url-group`;
         const input = document.createElement('input');
         input.className = `${CSS_PREFIX}-input`;
         input.id = `${CSS_PREFIX}-url-input`;
         input.type = 'url';
+        input.name = 'filter_source_url';
+        input.autocomplete = 'off';
+        input.inputMode = 'url';
         input.spellcheck = false;
-        input.placeholder = 'https://example.com/filters.txt';
+        input.placeholder = 'https://example.com/youtube-filters.txt…';
+        input.setAttribute('aria-describedby', help.id);
         // Prefer an in-flight edit the user hasn't committed yet, otherwise
         // fall back to the persisted value. Settings rebuilds trigger on
         // every feature toggle; without this preservation the user's typed
@@ -2489,29 +3498,31 @@
         });
         const refresh = document.createElement('button');
         refresh.className = `${CSS_PREFIX}-btn ${CSS_PREFIX}-btn-primary`;
+        refresh.id = `${CSS_PREFIX}-refresh-btn`;
         refresh.type = 'button';
-        setButtonBusy(refresh, state.filterSyncing, 'Refreshing', 'Refresh now');
+        setButtonBusy(refresh, state.filterSyncing, 'Refreshing…', 'Refresh Rules');
         refresh.addEventListener('click', async () => {
             const value = input.value.trim();
             if (!isValidHttpUrl(value)) {
                 input.setAttribute('aria-invalid', 'true');
                 input.focus();
-                showToast('Enter a valid http or https URL before refreshing the rule source.', 'warn');
+                showToast('Enter a valid http or https URL before refreshing the Rule Library.', 'warn');
                 return;
             }
             setSetting('filter_url', value);
             state.pendingFilterUrl = null; // committed
-            setButtonBusy(refresh, true, 'Refreshing', 'Refresh now');
+            setButtonBusy(refresh, true, 'Refreshing…', 'Refresh Rules');
             await fetchFilters(true);
-            setButtonBusy(refresh, false, 'Refreshing', 'Refresh now');
+            setButtonBusy(refresh, false, 'Refreshing…', 'Refresh Rules');
         });
         row.append(input, refresh);
         const actions = document.createElement('div');
         actions.className = `${CSS_PREFIX}-btn-row`;
         const reset = document.createElement('button');
         reset.className = `${CSS_PREFIX}-btn ${CSS_PREFIX}-btn-secondary ${CSS_PREFIX}-btn-small`;
+        reset.id = `${CSS_PREFIX}-use-default-source`;
         reset.type = 'button';
-        reset.textContent = 'Restore default URL';
+        reset.textContent = 'Use Recommended Source';
         reset.addEventListener('click', () => {
             setSetting('filter_url', FILTER_URL_DEFAULT);
             state.pendingFilterUrl = null;
@@ -2519,24 +3530,47 @@
             input.removeAttribute('aria-invalid');
             state.filterError = '';
             refreshSettingsUI(true);
-            showToast('The default filter source has been restored.', 'info');
+            showToast('The recommended Rule Library is active again.', 'success');
         });
         actions.appendChild(reset);
         field.append(label, help, row, actions);
-        surface.append(chips, field);
+
+        let note;
         if (state.filterError) {
-            const note = document.createElement('div');
-            note.className = `${CSS_PREFIX}-note`;
-            note.textContent = state.filterError;
-            surface.appendChild(note);
+            note = createNote('Refresh Problem', state.filterError, 'warn');
+        } else if (!isDefaultFilterUrl()) {
+            note = createNote(
+                'Custom Source Active',
+                'You are using a custom list. Keep it raw text and refresh after you edit it so the new rules load.',
+                'info'
+            );
+        } else if (state.filterSource === 'remote') {
+            note = createNote(
+                'Recommended Source Active',
+                'The recommended remote list is live, and the built-in fallback stays ready if the source ever goes offline.',
+                'success'
+            );
+        } else {
+            note = createNote(
+                'Fallback Ready',
+                'Protection is still running with cached or built-in rules. Refresh when you want a fresher remote copy.',
+                'info'
+            );
         }
+
+        surface.append(chips, field, note);
         section.appendChild(surface);
         return section;
     }
 
     function createFeatureSection(group) {
         const enabledCount = group.features.filter(feat => state.features[feat.key] !== false).length;
-        const section = createSection(group.title, group.description, createPill(`${enabledCount}/${group.features.length} on`, 'neutral'));
+        const section = createSection(
+            group.title,
+            group.description,
+            createPill(`${enabledCount}/${group.features.length} On`, getFeatureGroupTone(enabledCount, group.features.length)),
+            group.sectionId
+        );
         const surface = createSurface();
         const list = document.createElement('div');
         list.className = `${CSS_PREFIX}-toggle-list`;
@@ -2547,55 +3581,93 @@
     }
 
     function createDiagnosticsSection() {
-        const section = createSection('Diagnostics and reset', 'Use these tools when you are troubleshooting, sharing a bug report, or cleaning up local state without reinstalling the script.');
+        const section = createSection(
+            'Diagnostics & Recovery',
+            'Copy a clean snapshot for bug reports or reset local state without reinstalling the script.',
+            null,
+            SECTION_IDS.diagnostics,
+            true
+        );
         const surface = createSurface();
-        const copy = document.createElement('p');
-        copy.className = `${CSS_PREFIX}-field-help`;
-        copy.textContent = 'Resetting counters clears only local telemetry. Restoring defaults returns the controls to their recommended starting values without uninstalling the script.';
+        const grid = document.createElement('div');
+        grid.className = `${CSS_PREFIX}-summary-support`;
+
+        const diagnosticsCard = createDetailCard(
+            'Share a Snapshot',
+            'Copy the active Rule Library, module states, counters, and environment details, then jump straight to the repo issue tracker with clean context.'
+        );
+        const diagnosticsActions = document.createElement('div');
+        diagnosticsActions.className = `${CSS_PREFIX}-btn-row`;
+        const copyBtn = document.createElement('button');
+        copyBtn.className = `${CSS_PREFIX}-btn ${CSS_PREFIX}-btn-secondary`;
+        copyBtn.id = `${CSS_PREFIX}-copy-btn`;
+        copyBtn.type = 'button';
+        copyBtn.textContent = 'Copy Diagnostics';
+        copyBtn.addEventListener('click', copyDiagnosticsToClipboard);
+        const issuesLink = createExternalLinkButton(ISSUES_URL, 'Open Issues', `${CSS_PREFIX}-btn-ghost`);
+        diagnosticsActions.append(copyBtn, issuesLink);
+        diagnosticsCard.card.append(diagnosticsActions);
+
+        const recoveryCard = createDetailCard(
+            'Reset Local State',
+            'Reset counters or restore the recommended defaults without uninstalling the script. Your cached rule library stays ready.'
+        );
+        recoveryCard.card.append(createNote(
+            'Local Only',
+            'These actions change only local settings and counters. They do not remove the script or erase your current cached rules.',
+            'info'
+        ));
         const actions = document.createElement('div');
         actions.className = `${CSS_PREFIX}-btn-row`;
         const resetStats = document.createElement('button');
         resetStats.className = `${CSS_PREFIX}-btn ${CSS_PREFIX}-btn-secondary`;
+        resetStats.id = `${CSS_PREFIX}-reset-counters`;
         resetStats.type = 'button';
-        resetStats.textContent = 'Reset counters';
+        resetStats.textContent = 'Reset Counters';
         attachArmedAction(resetStats, {
-            idleLabel: 'Reset counters',
-            armedLabel: 'Click again to reset',
+            idleLabel: 'Reset Counters',
+            armedLabel: 'Confirm Reset',
             onConfirm() {
-            state.stats = { ...DEFAULT_STATS };
-            saveStats();
-            refreshSettingsUI();
-            showToast('Local counters reset.', 'info');
+                state.stats = { ...DEFAULT_STATS };
+                saveStats();
+                refreshSettingsUI();
+                showToast('Session counters reset.', 'info');
             }
         });
         const restore = document.createElement('button');
         restore.className = `${CSS_PREFIX}-btn ${CSS_PREFIX}-btn-danger`;
+        restore.id = `${CSS_PREFIX}-restore-defaults`;
         restore.type = 'button';
-        restore.textContent = 'Restore defaults';
+        restore.textContent = 'Restore Defaults';
         attachArmedAction(restore, {
-            idleLabel: 'Restore defaults',
-            armedLabel: 'Click again to restore',
+            idleLabel: 'Restore Defaults',
+            armedLabel: 'Confirm Restore',
             onConfirm() {
-            setSetting('feature_overrides', {});
-            setSetting('filter_url', FILTER_URL_DEFAULT);
-            setSetting('enabled', true);
-            state.enabled = true;
-            state.features = normalizeFeatures(state.filters?.features);
-            state.filterError = '';
-            updateCosmeticCSS();
-            refreshSettingsUI(true);
-            showToast('Recommended defaults restored. Your current rules stayed in place.', 'success');
+                setSetting('feature_overrides', {});
+                setSetting('filter_url', FILTER_URL_DEFAULT);
+                setSetting('enabled', true);
+                state.enabled = true;
+                state.pendingFilterUrl = null;
+                state.features = normalizeFeatures(state.filters?.features);
+                state.filterError = '';
+                updateCosmeticCSS();
+                refreshSettingsUI(true);
+                showToast('Recommended defaults restored. Your current rules stayed in place.', 'success');
             }
         });
         actions.append(resetStats, restore);
-        surface.append(copy, actions);
+        recoveryCard.card.append(actions);
+
+        grid.append(diagnosticsCard.card, recoveryCard.card);
+        surface.append(grid);
         section.appendChild(surface);
         return section;
     }
 
-    function createSection(title, description, metaEl) {
+    function createSection(title, description, metaEl, sectionId, fullSpan = false) {
         const section = document.createElement('section');
-        section.className = `${CSS_PREFIX}-section`;
+        section.className = `${CSS_PREFIX}-section${fullSpan ? ` ${CSS_PREFIX}-section-span` : ''}`;
+        if (sectionId) section.id = sectionId;
         const head = document.createElement('div');
         head.className = `${CSS_PREFIX}-section-head`;
         const copy = document.createElement('div');
@@ -2635,6 +3707,75 @@
         return metric;
     }
 
+    function createGlanceItem(label, value, detail, tone = 'neutral') {
+        const item = document.createElement('div');
+        item.className = `${CSS_PREFIX}-glance`;
+        item.dataset.tone = tone;
+        const labelEl = document.createElement('span');
+        labelEl.className = `${CSS_PREFIX}-glance-label`;
+        labelEl.textContent = label;
+        const valueEl = document.createElement('span');
+        valueEl.className = `${CSS_PREFIX}-glance-value`;
+        valueEl.textContent = value;
+        const detailEl = document.createElement('p');
+        detailEl.className = `${CSS_PREFIX}-glance-detail`;
+        detailEl.textContent = detail;
+        item.append(labelEl, valueEl, detailEl);
+        return item;
+    }
+
+    function createDetailCard(title, description) {
+        const card = document.createElement('div');
+        card.className = `${CSS_PREFIX}-detail-card`;
+        const titleEl = document.createElement('h3');
+        titleEl.className = `${CSS_PREFIX}-detail-title`;
+        titleEl.textContent = title;
+        card.appendChild(titleEl);
+        if (description) {
+            const descEl = document.createElement('p');
+            descEl.className = `${CSS_PREFIX}-detail-text`;
+            descEl.textContent = description;
+            card.appendChild(descEl);
+        }
+        return { card, titleEl };
+    }
+
+    function createJumpButton(label, targetId) {
+        const button = document.createElement('button');
+        button.className = `${CSS_PREFIX}-btn ${CSS_PREFIX}-btn-ghost ${CSS_PREFIX}-btn-small`;
+        button.type = 'button';
+        button.textContent = label;
+        button.addEventListener('click', () => scrollSectionIntoView(targetId));
+        return button;
+    }
+
+    function createExternalLinkButton(href, label, variantClass = `${CSS_PREFIX}-btn-ghost`) {
+        const link = document.createElement('a');
+        link.className = `${CSS_PREFIX}-btn ${variantClass}`;
+        link.href = href;
+        link.target = '_blank';
+        link.rel = 'noopener noreferrer';
+        link.textContent = label;
+        return link;
+    }
+
+    function createNote(title, body, tone = 'neutral') {
+        const note = document.createElement('div');
+        note.className = `${CSS_PREFIX}-note`;
+        note.dataset.tone = tone;
+        if (title) {
+            const titleEl = document.createElement('div');
+            titleEl.className = `${CSS_PREFIX}-note-title`;
+            titleEl.textContent = title;
+            note.appendChild(titleEl);
+        }
+        const bodyEl = document.createElement('p');
+        bodyEl.className = `${CSS_PREFIX}-note-text`;
+        bodyEl.textContent = body;
+        note.appendChild(bodyEl);
+        return note;
+    }
+
     function createPill(text, tone = 'neutral') {
         const pill = document.createElement('span');
         pill.className = `${CSS_PREFIX}-pill`;
@@ -2644,7 +3785,7 @@
     }
 
     function createToggleControl(id, checked, onChange, ariaLabel) {
-        const toggle = document.createElement('label');
+        const toggle = document.createElement('span');
         toggle.className = `${CSS_PREFIX}-toggle`;
         const input = document.createElement('input');
         input.type = 'checkbox';
@@ -2667,7 +3808,7 @@
     }
 
     function createToggleRow(feature) {
-        const row = document.createElement('div');
+        const row = document.createElement('label');
         row.className = `${CSS_PREFIX}-row`;
         row.dataset.enabled = String(state.features[feature.key] !== false);
         const copy = document.createElement('div');
@@ -2688,11 +3829,6 @@
         // hear what the toggle does, not just its short label.
         input.setAttribute('aria-describedby', descId);
         row.append(copy, toggle);
-        row.addEventListener('click', (event) => {
-            if (event.target instanceof HTMLElement && event.target.closest('input, label, button, a')) return;
-            input.checked = !input.checked;
-            input.dispatchEvent(new Event('change', { bubbles: true }));
-        });
         return row;
     }
 
@@ -2818,7 +3954,7 @@
                 armed = true;
                 button.dataset.armed = 'true';
                 button.textContent = armedLabel;
-                showToast('Click once more to confirm this action.', 'warn');
+                showToast(`${idleLabel} is armed. Click again to confirm.`, 'warn');
                 timer = setTimeout(reset, timeout);
                 return;
             }
@@ -2850,6 +3986,7 @@
 
     function setButtonBusy(button, busy, busyLabel, idleLabel) {
         button.disabled = busy;
+        button.setAttribute('aria-busy', String(!!busy));
         button.textContent = '';
         if (busy) {
             const spinner = document.createElement('span');
@@ -2894,6 +4031,30 @@
         }
     }
 
+    async function copyDiagnosticsToClipboard() {
+        const success = await copyTextToClipboard(buildDiagnosticsReport());
+        showToast(
+            success
+                ? 'Diagnostics copied. You can paste them into a bug report or note.'
+                : 'Clipboard access was unavailable, so diagnostics could not be copied.',
+            success ? 'success' : 'error'
+        );
+        return success;
+    }
+
+    function scrollSectionIntoView(sectionId) {
+        const section = document.getElementById(sectionId);
+        if (!section) return;
+        try {
+            section.scrollIntoView({
+                behavior: prefersReducedMotion() ? 'auto' : 'smooth',
+                block: 'start'
+            });
+        } catch (e) {
+            section.scrollIntoView();
+        }
+    }
+
     function buildDiagnosticsReport() {
         const features = normalizeFeatures(state.features);
         const disabledFeatures = Object.entries(features)
@@ -2912,6 +4073,8 @@
             `${SCRIPT_NAME} v${SCRIPT_VERSION}`,
             `Captured: ${new Date().toISOString()}`,
             `Site: ${location.hostname}${location.pathname}`,
+            `Surface: ${getSiteLabel()} / ${getSurfaceLabel()}`,
+            `Build: ${IS_EXTENSION_BUILD ? 'extension' : 'userscript'}`,
             `UA: ${uaHint}`,
             `Protection enabled: ${isEnabled()}`,
             `Filter source: ${getFilterSourceLabel()}`,
@@ -2976,7 +4139,7 @@
         }
         if (!state.overlayEl) {
             if (show) {
-                showToast('Control center is still loading. Try again in a moment.', 'info');
+                showToast('Control Center is still loading. Try again in a moment.', 'info');
             }
             return;
         }
@@ -3045,15 +4208,7 @@
             () => setScriptEnabled(!isEnabled())
         );
         const h3 = safeRegisterMenu(`${SCRIPT_NAME}: Refresh Rules`, () => { fetchFilters(true); });
-        const h4 = safeRegisterMenu(`${SCRIPT_NAME}: Copy Diagnostics`, async () => {
-            const success = await copyTextToClipboard(buildDiagnosticsReport());
-            showToast(
-                success
-                    ? 'Diagnostics copied. You can paste them into an issue or message.'
-                    : 'Clipboard access was unavailable, so diagnostics could not be copied.',
-                success ? 'success' : 'error'
-            );
-        });
+        const h4 = safeRegisterMenu(`${SCRIPT_NAME}: Copy Diagnostics`, copyDiagnosticsToClipboard);
         for (const h of [h1, h2, h3, h4]) if (h != null) state.menuHandles.push(h);
     }
 
@@ -3063,7 +4218,7 @@
 
         if (!getSetting('welcomed', false)) {
             setSetting('welcomed', true);
-            showToast('YoutubeAdblock is active. Open the control center from your userscript menu any time.', 'success');
+            showToast(`YoutubeAdblock is active. ${getControlCenterAccessHint()}`, 'success');
         }
 
         // Stats counter update interval (panel only repaints when open)

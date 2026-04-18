@@ -39,7 +39,6 @@
 
     let pendingWrite = null;
     let pendingTimer = null;
-    const pendingResponses = [];
 
     function flushPendingWrite() {
         if (!pendingWrite) return;

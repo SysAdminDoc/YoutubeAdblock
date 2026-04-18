@@ -60,6 +60,33 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "Resolved VERSION=$VERSION"
 
+      - name: Validate cross-browser manifest contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          node <<'NODE'
+          const fs = require('fs');
+          const manifest = JSON.parse(fs.readFileSync('extension/manifest.json', 'utf8'));
+          const background = manifest.background || {};
+          const minChrome = String(manifest.minimum_chrome_version || '');
+          if (!background.service_worker) {
+            throw new Error('Manifest must declare background.service_worker for Chromium MV3.');
+          }
+          if (!Array.isArray(background.scripts) || !background.scripts.length) {
+            throw new Error('Manifest must retain background.scripts for Firefox MV3 compatibility.');
+          }
+          const chromeMajor = parseInt(minChrome.split('.')[0], 10);
+          if (!Number.isFinite(chromeMajor) || chromeMajor < 121) {
+            throw new Error('minimum_chrome_version must be 121+ when background.scripts and service_worker are both present.');
+          }
+          const geckoMin = String((((manifest.browser_specific_settings || {}).gecko) || {}).strict_min_version || '');
+          const firefoxMajor = parseInt(geckoMin.split('.')[0], 10);
+          if (!Number.isFinite(firefoxMajor) || firefoxMajor < 128) {
+            throw new Error('Firefox strict_min_version must stay at 128+ to match the documented MV3 support floor.');
+          }
+          console.log(`Manifest contract OK | minimum_chrome_version=${minChrome} | firefox=${geckoMin}`);
+          NODE
+
       - name: Syntax-check generated JS
         shell: bash
         run: |
