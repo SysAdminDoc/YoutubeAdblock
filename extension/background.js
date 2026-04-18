@@ -51,6 +51,30 @@ function waitForTabComplete(tabId, timeoutMs = 30000) {
     });
 }
 
+async function dispatchToTab(tabId, payload, { allowReload = false } = {}) {
+    try {
+        await chrome.tabs.sendMessage(tabId, payload);
+        return true;
+    } catch (e) { /* content script may not be ready yet */ }
+
+    try {
+        await waitForTabComplete(tabId, 15000);
+        await chrome.tabs.sendMessage(tabId, payload);
+        return true;
+    } catch (e) { /* still not ready */ }
+
+    if (!allowReload) return false;
+
+    try {
+        await chrome.tabs.reload(tabId);
+        await waitForTabComplete(tabId, 30000);
+        await chrome.tabs.sendMessage(tabId, payload);
+        return true;
+    } catch (e) {
+        return false;
+    }
+}
+
 async function sendToActiveTab(payload) {
     let tab;
     try {
@@ -60,17 +84,11 @@ async function sendToActiveTab(payload) {
     }
 
     if (tab && tab.id && isYouTubeUrl(tab.url)) {
-        try {
-            await chrome.tabs.sendMessage(tab.id, payload);
-        } catch (e) {
-            // The content script may not yet be loaded (e.g. the user
-            // clicked the action button before document-start ran, or
-            // during an SPA nav). A tab reload restarts content scripts
-            // and carries the intent forward as a query-string hint.
-            try {
-                await chrome.tabs.reload(tab.id);
-            } catch (reloadErr) { /* tab disappeared */ }
-        }
+        // Try the current tab first. If the content script is not ready,
+        // wait for load completion and, as a last resort, reload once so
+        // the requested action is actually delivered instead of being
+        // silently dropped.
+        await dispatchToTab(tab.id, payload, { allowReload: true });
         return;
     }
 
@@ -84,15 +102,8 @@ async function sendToActiveTab(payload) {
         return;
     }
     if (!created || !created.id) return;
-    try {
-        await waitForTabComplete(created.id);
-        await chrome.tabs.sendMessage(created.id, payload);
-    } catch (e) {
-        // Harmless — opener closed the tab, or the content script is
-        // still initializing. The default YouTube home load is not
-        // strictly action-triggered anyway, so failing silently is
-        // acceptable here.
-    }
+    // A brand-new YouTube tab only needs load-aware retries, not a reload.
+    await dispatchToTab(created.id, payload);
 }
 
 chrome.action.onClicked.addListener(() => {
@@ -134,19 +145,19 @@ function rebuildContextMenu() {
             chrome.contextMenus.create({
                 id: 'ytab-open-panel',
                 parentId: CONTEXT_MENU_ROOT,
-                title: 'Open control center',
+                title: 'Open Control Center',
                 contexts: ['action', 'page']
             });
             chrome.contextMenus.create({
                 id: 'ytab-toggle-protection',
                 parentId: CONTEXT_MENU_ROOT,
-                title: 'Pause / resume protection',
+                title: 'Pause or Resume Protection',
                 contexts: ['action', 'page']
             });
             chrome.contextMenus.create({
                 id: 'ytab-refresh-rules',
                 parentId: CONTEXT_MENU_ROOT,
-                title: 'Refresh rules',
+                title: 'Refresh Rules',
                 contexts: ['action', 'page']
             });
         });

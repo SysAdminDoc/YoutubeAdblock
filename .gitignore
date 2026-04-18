@@ -1,5 +1,7 @@
 node_modules/
 dist/
+*.crx
+*.pem
 *.bak
 .env
 *.log

@@ -104,6 +104,9 @@ class of failure from reaching users.
 - **Build script self-check.** `Build-Extension.ps1` now verifies the
   generated file contains all the expected shim + command-hook
   markers, and runs `node --check` on the output if Node is on PATH.
+- **Reusable CRX packer.** Added [Build-CRX.ps1](Build-CRX.ps1) so the
+  repo can produce a signed Chromium `.crx` from the same generated
+  extension folder while reusing a preserved private key in `dist/`.
 - **Ship-zip excludes `extension/README.md`** (dev-facing) from the
   shipped archive.
 

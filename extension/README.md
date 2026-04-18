@@ -9,7 +9,7 @@ directly — your changes will be overwritten on the next build.
 
 | File | Role |
 |------|------|
-| `manifest.json` | MV3 manifest, Chrome 111+ and Firefox 128+ compatible |
+| `manifest.json` | MV3 manifest for Chromium 121+ and Firefox 128+ |
 | `main.js` *(generated)* | Page-world (MAIN) content script — the ad-blocking engine |
 | `bridge.js` | Isolated-world content script, relays `chrome.*` events/messages into the page-world via DOM `CustomEvent` |
 | `background.js` | Service worker: toolbar action, keyboard commands, right-click context menu, tab-messaging relay |
@@ -40,8 +40,8 @@ The bridge is a one-way relay: `chrome.action.onClicked`,
 (all handled by `background.js`) send a `chrome.tabs.sendMessage` to
 the active tab, `bridge.js` receives it and dispatches a `CustomEvent`
 on `document`, and `main.js` listens for that event to invoke the
-in-page control-center function (`toggleSettings`, `setScriptEnabled`,
-or `fetchFilters`).
+in-page Control Center actions (`toggleSettings`, `setScriptEnabled`,
+and `fetchFilters`).
 
 Settings persistence is two-tier:
 - `localStorage[__ytab_ext_settings__]` is the sync read path used by
@@ -50,7 +50,7 @@ Settings persistence is two-tier:
   propagation. Changes on `www.youtube.com` sync to `m.youtube.com`
   and `music.youtube.com` on the next load.
 
-## Install — Chrome / Edge / Brave
+## Install — Chrome / Edge / Brave (Chromium 121+)
 
 1. Clone the repo locally.
 2. From the repo root, run:
@@ -61,8 +61,28 @@ Settings persistence is two-tier:
 
 3. Visit `chrome://extensions`, enable **Developer mode**, click
    **Load unpacked**, and select the `extension/` folder.
-4. Click the toolbar icon (or press `Ctrl+Shift+Y`) to open the control
-   center.
+4. Click the toolbar icon (or press `Ctrl+Shift+Y`) to open the Control
+   Center.
+
+If you trigger the extension while you are not already on YouTube,
+YoutubeAdblock opens a YouTube tab and carries the action there automatically.
+
+The Chromium floor matters because this manifest intentionally includes both
+`background.service_worker` and `background.scripts` so one build can support
+Chromium and Firefox. Chrome ignored the extra `scripts` key starting in
+Chrome 121; earlier MV3 builds reject it.
+
+## Package A CRX
+
+Run the repo-root packer when you need a signed Chromium release artifact:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\Build-CRX.ps1
+```
+
+That writes `YoutubeAdblock-extension-v<version>.crx` plus a reusable private
+key to `dist/`. Keep the generated `.pem` private and reuse it for future
+builds so the packaged extension keeps the same Chromium extension ID.
 
 ## Install — Firefox
 
@@ -76,9 +96,9 @@ Settings persistence is two-tier:
 
 | Command | Default shortcut | Effect |
 |---------|------------------|--------|
-| Open control center | `Ctrl+Shift+Y` (Win/Linux), `Cmd+Shift+Y` (Mac) | Opens the in-page settings panel |
-| Pause / resume protection | *(unbound)* | Toggles the master switch |
-| Refresh rules | *(unbound)* | Forces a rule-list re-fetch |
+| Open Control Center | `Ctrl+Shift+Y` (Win/Linux), `Cmd+Shift+Y` (Mac) | Opens the in-page protection workspace |
+| Pause or Resume Protection | *(unbound)* | Toggles the master switch |
+| Refresh Rules | *(unbound)* | Forces a rule-list refresh |
 
 Re-bind from `chrome://extensions/shortcuts` or
 `about:addons` → gear → *Manage Extension Shortcuts*.
@@ -88,4 +108,6 @@ Re-bind from `chrome://extensions/shortcuts` or
 `.github/workflows/build.yml` regenerates `main.js`, zips the
 `extension/` folder, and uploads the zip + userscript to the matching
 GitHub release on `v*` tag push. Run it manually via the **Actions**
-tab for pre-release packages.
+tab for pre-release packages. The `.crx` asset is built from the preserved
+local signing key via `Build-CRX.ps1` and uploaded to the release alongside
+the CI-generated zip/userscript assets.
