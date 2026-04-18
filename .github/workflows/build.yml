@@ -21,14 +21,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 1
 
       - name: Setup Node (for syntax-checking generated JS)
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
-          node-version: '20'
+          node-version: '24'
+          package-manager-cache: false
 
       - name: Regenerate extension/main.js from userscript
         shell: pwsh
@@ -98,6 +99,7 @@ jobs:
           # Validate JSON shape of manifest + DNR rules
           node -e "JSON.parse(require('fs').readFileSync('extension/manifest.json','utf8'))"
           node -e "JSON.parse(require('fs').readFileSync('extension/rules/network-blocks.json','utf8'))"
+          node --test tests/*.test.mjs
 
       - name: Package extension (.zip)
         shell: bash
@@ -113,6 +115,22 @@ jobs:
           cd ..
           ls -la YoutubeAdblock-extension-v*.zip
 
+      - name: Package extension (.crx, optional)
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          CHROMIUM_EXTENSION_KEY_B64: ${{ secrets.CHROMIUM_EXTENSION_KEY_B64 }}
+        run: |
+          set -euo pipefail
+          trap 'rm -f "YoutubeAdblock-extension.pem"' EXIT
+          if [ -z "${CHROMIUM_EXTENSION_KEY_B64:-}" ]; then
+            echo "No CHROMIUM_EXTENSION_KEY_B64 secret configured; skipping CRX packaging."
+            exit 0
+          fi
+          printf '%s' "$CHROMIUM_EXTENSION_KEY_B64" | base64 -d > "YoutubeAdblock-extension.pem"
+          npx --yes crx3@2.0.0 -p "YoutubeAdblock-extension.pem" -o "YoutubeAdblock-extension-v${VERSION}.crx" -- extension
+          ls -la YoutubeAdblock-extension-v*.crx
+
       - name: Stage userscript artifact
         shell: bash
         env:
@@ -122,13 +140,21 @@ jobs:
 
       - name: Upload artifacts (manual dispatch)
         if: github.event_name == 'workflow_dispatch'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: YoutubeAdblock-v${{ steps.version.outputs.version }}
           path: |
             YoutubeAdblock-extension-v*.zip
             YoutubeAdblock-v*.user.js
           if-no-files-found: error
+
+      - name: Upload CRX artifact (manual dispatch, optional)
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v6
+        with:
+          name: YoutubeAdblock-v${{ steps.version.outputs.version }}-crx
+          path: YoutubeAdblock-extension-v*.crx
+          if-no-files-found: ignore
 
       - name: Ensure release exists (tag push)
         if: startsWith(github.ref, 'refs/tags/')
@@ -153,7 +179,13 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           set -euo pipefail
+          assets=(
+            "YoutubeAdblock-extension-v${VERSION}.zip"
+            "YoutubeAdblock-v${VERSION}.user.js"
+          )
+          if [ -f "YoutubeAdblock-extension-v${VERSION}.crx" ]; then
+            assets+=("YoutubeAdblock-extension-v${VERSION}.crx")
+          fi
           gh release upload "${{ github.ref_name }}" \
-            "YoutubeAdblock-extension-v${VERSION}.zip" \
-            "YoutubeAdblock-v${VERSION}.user.js" \
+            "${assets[@]}" \
             --clobber

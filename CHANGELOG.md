@@ -9,6 +9,10 @@ real correctness, security, performance, or UX bug, or prevents a new
 class of failure from reaching users.
 
 ### Fixed — correctness
+- **Shorts-specific fast-path pruning now keeps URL context.** The
+  fetch/XHR fast-reject helper was called without the request URL, so
+  Shorts reel payloads that only exposed the `isAd` marker could bypass
+  the cheap hint path and skip pruning entirely.
 - **SponsorBlock race on fast navigation.** Previously, if the user
   navigated from video A to video B while A's segments were still being
   fetched, A's segments could be applied to B's `<video>` element — the
@@ -46,6 +50,12 @@ class of failure from reaching users.
   the next open rebuilds cleanly.
 
 ### Fixed — security / safety
+- **Remote JSON filter payloads now go through the same sanitizer as
+  parsed uBO lists.** Previously, a JSON-formatted remote list could
+  bypass selector/path/key validation, exceed list caps, and smuggle
+  unsafe selectors or malformed prune paths into cache. Cached filters
+  are also re-sanitized on load now, so older or corrupted snapshots
+  cannot silently reintroduce those risks.
 - **CSS-injection guard on remote filter lists.** Cosmetic selectors are
   now validated against an allowlist (no `{`, `}`, `;`, `<`, `>`, CSS
   comment terminators, or newlines) and capped at 400 characters each,
@@ -68,6 +78,26 @@ class of failure from reaching users.
   no unrelated extension storage shape can leak into untrusted code.
 
 ### Fixed — performance
+- **Extension settings sync no longer needlessly rebuilds the Control
+  Center.** Mirrored `chrome.storage.local` updates used to trigger a
+  full settings-panel rebuild whenever the panel was open, even when the
+  effective settings were unchanged. The sync handler now compares a
+  small settings signature and only rebuilds on real changes, which
+  avoids extra DOM churn while keeping live status and counters updated.
+
+### Fixed — UX / release hardening
+- **Rule Library messaging now matches the extension fetch model.** The
+  Control Center and docs now explain that custom Rule Library URLs in
+  the extension build work best when the host allows direct browser
+  fetches from YouTube pages, instead of implying every raw list URL is
+  equally reliable there.
+- **CRX packaging in CI is pinned and key cleanup is automatic.** The
+  optional GitHub Actions pack step now pins `crx3@2.0.0` and removes
+  the temporary PEM on exit, which improves reproducibility and reduces
+  the chance of the signing key lingering in the runner workspace.
+- **XHR interception listener cleanup.** Readystatechange listeners are
+  now removed once a request finishes, preventing unnecessary handler
+  accumulation on reused XHR instances.
 - **Fetch/XHR proxy fast-path.** A cheap substring scan (`responseTextMightContainAds`)
   skips the JSON parse + tree walk when the response body clearly has
   no ad field names, eliminating the bulk of wasted work on
@@ -92,6 +122,14 @@ class of failure from reaching users.
 - **Action-button reload fallback.** If the toolbar click arrives before
   the content script has loaded (common immediately after install),
   the service worker now reloads the tab instead of silently failing.
+- **Extension settings mirror now rehydrates on fresh loads.** The
+  isolated-world bridge now pushes the current `chrome.storage.local`
+  snapshot into page storage at startup and flushes pending writes on
+  `pagehide`, so settings changes follow users across `www`, `m`,
+  `music`, and Kids surfaces more reliably.
+- **Kids domain coverage.** Added explicit `www.youtubekids.com`
+  coverage across userscript matches, MV3 content-script matches,
+  context-menu targeting, and DNR initiator scoping.
 
 ### Fixed — CI / build
 - **Release auto-create on tag push.** Previous workflow called
@@ -107,6 +145,10 @@ class of failure from reaching users.
 - **Reusable CRX packer.** Added [Build-CRX.ps1](Build-CRX.ps1) so the
   repo can produce a signed Chromium `.crx` from the same generated
   extension folder while reusing a preserved private key in `dist/`.
+- **Optional CRX release packaging in CI.** Tag builds now package and
+  upload a `.crx` automatically when `CHROMIUM_EXTENSION_KEY_B64` is
+  configured as a GitHub Actions secret, while still succeeding without
+  that secret for zip/userscript-only releases.
 - **Ship-zip excludes `extension/README.md`** (dev-facing) from the
   shipped archive.
 

@@ -30,7 +30,7 @@
 
 Because the MV3 manifest intentionally includes both `background.service_worker` and `background.scripts` for Chrome + Firefox compatibility, the unpacked extension target is Chromium 121 or newer.
 
-If you need a packaged Chromium artifact for release distribution, run `powershell -ExecutionPolicy Bypass -File .\Build-CRX.ps1`. It writes a signed `.crx` plus a reusable private key into `dist/`, so future CRX builds keep the same extension ID.
+If you need a packaged Chromium artifact for release distribution, run `powershell -ExecutionPolicy Bypass -File .\Build-CRX.ps1`. It writes a signed `.crx` plus a reusable private key into `dist/`, so future CRX builds keep the same extension ID. Keep in mind that Chrome generally does **not** allow normal local-file `.crx` installs outside developer-mode, Linux self-hosting, or managed-policy flows, so the unpacked install path remains the best default for most users.
 
 ### Firefox (MV3 extension, temporary install)
 
@@ -113,7 +113,7 @@ All settings persist via `GM_setValue`. Open the userscript menu and choose `You
 |---------|-------------|---------|
 | Protection Overview | Live status, active source, current YouTube surface, quick actions, and jump navigation | Available |
 | Master Switch | Enable or pause every blocking engine without uninstalling the script | On |
-| Rule Library | Point the script at any raw uBO/EasyList-compatible list and refresh it on demand | [youtube-adblock-filters.txt](https://raw.githubusercontent.com/SysAdminDoc/YoutubeAdblock/refs/heads/main/youtube-adblock-filters.txt) |
+| Rule Library | Choose a compatible raw list and refresh it on demand; the recommended source is the safest default for extension installs | [youtube-adblock-filters.txt](https://raw.githubusercontent.com/SysAdminDoc/YoutubeAdblock/refs/heads/main/youtube-adblock-filters.txt) |
 | Core Blocking | Control JSON pruning, fetch/XHR interception, property traps, and request rewriting | On |
 | Anti-Detection | Control abnormality bypass, iframe bypass prevention, SSAP skipping, spoofing, and timer neutralization | On |
 | Interface Cleanup | Control cosmetic cleanup, Premium upsell blocking, and Shorts ad removal | On |
@@ -121,7 +121,7 @@ All settings persist via `GM_setValue`. Open the userscript menu and choose `You
 
 ### Filter List
 
-The default remote filter list is hosted in this repo at [`youtube-adblock-filters.txt`](https://raw.githubusercontent.com/SysAdminDoc/YoutubeAdblock/refs/heads/main/youtube-adblock-filters.txt). It uses uBO-compatible filter syntax and is parsed on fetch. You can point the Rule Library field to any compatible raw list URL. If a refresh fails, YoutubeAdblock keeps the last working rules or the built-in fallback active so protection does not drop unexpectedly.
+The default remote filter list is hosted in this repo at [`youtube-adblock-filters.txt`](https://raw.githubusercontent.com/SysAdminDoc/YoutubeAdblock/refs/heads/main/youtube-adblock-filters.txt). It uses uBO-compatible filter syntax and is parsed on fetch. The userscript build can point the Rule Library field at any compatible raw list URL; the extension build works best with sources that allow direct browser fetches from YouTube pages, so the recommended GitHub-hosted source is the safest default there. If a refresh fails, YoutubeAdblock keeps the last working rules or the built-in fallback active so protection does not drop unexpectedly.
 
 ### Pruned API Fields
 
@@ -142,7 +142,7 @@ The proxy engine strips these fields from YouTube API responses before they reac
 | YouTube Music | `https://music.youtube.com/*` |
 | YouTube TV | `https://tv.youtube.com/*` |
 | YouTube No-Cookie | `https://www.youtube-nocookie.com/*` |
-| YouTube Kids | `https://youtubekids.com/*` |
+| YouTube Kids | `https://youtubekids.com/*`, `https://www.youtubekids.com/*` |
 
 ## FAQ / Troubleshooting
 

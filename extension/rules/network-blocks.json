@@ -38,7 +38,9 @@
         "m.youtube.com",
         "music.youtube.com",
         "tv.youtube.com",
-        "youtube-nocookie.com"
+        "youtube-nocookie.com",
+        "youtubekids.com",
+        "www.youtubekids.com"
       ],
       "resourceTypes": ["xmlhttprequest", "image", "sub_frame", "script", "media", "ping"]
     }
@@ -55,7 +57,9 @@
         "m.youtube.com",
         "music.youtube.com",
         "tv.youtube.com",
-        "youtube-nocookie.com"
+        "youtube-nocookie.com",
+        "youtubekids.com",
+        "www.youtubekids.com"
       ],
       "resourceTypes": ["xmlhttprequest", "image", "sub_frame", "script", "media", "ping"]
     }
@@ -66,6 +70,16 @@
     "action": { "type": "block" },
     "condition": {
       "urlFilter": "||googleadservices.com/",
+      "initiatorDomains": [
+        "youtube.com",
+        "www.youtube.com",
+        "m.youtube.com",
+        "music.youtube.com",
+        "tv.youtube.com",
+        "youtube-nocookie.com",
+        "youtubekids.com",
+        "www.youtubekids.com"
+      ],
       "resourceTypes": ["xmlhttprequest", "image", "sub_frame", "script", "media", "ping"]
     }
   },
