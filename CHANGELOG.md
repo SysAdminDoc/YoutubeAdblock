@@ -2,6 +2,35 @@
 
 All notable changes to YoutubeAdblock are documented here.
 
+## [0.3.3] - 2026-04-22
+
+### Changed
+- **Removed placeholder branding assets.** The auto-generated `banner.png`,
+  `favicon.ico`, `icon.svg`, and the top-level `icons/*.png` set have been
+  deleted; they were ugly placeholders rather than considered branding and
+  now live nowhere in the repo. The `icon.png` hero image that the README
+  uses is retained.
+- **Manifest no longer references the removed extension icons.** The MV3
+  manifest's `icons` block and `action.default_icon` block were dropped so
+  the extension still loads without the now-missing `extension/icons/*.png`
+  files. Chrome and Firefox will render the browser default toolbar icon
+  until a replacement branding set is commissioned and the manifest entries
+  are restored.
+
+### Fixed
+- **CI drift guard.** CI now hard-fails when the committed
+  `extension/main.js` does not match what `Build-Extension.ps1` produces
+  from the current userscript. This closes the regression class where a
+  userscript edit lands without the matching extension regeneration (the
+  failure mode that left v0.3.2 shipping a v0.3.1 extension build before
+  the hardening pass).
+- **Version-lockstep regression tests.** The repo contract tests now assert
+  that the userscript `@version`, userscript `SCRIPT_VERSION`, manifest
+  version, generated `extension/main.js` `SCRIPT_VERSION`, and README
+  version badge all agree, plus the generated build carries every required
+  shim + bridge marker, plus the `@inject-into content` directive stays
+  pinned.
+
 ## [0.3.2] - 2026-04-22
 
 ### Fixed
