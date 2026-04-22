@@ -35,6 +35,24 @@ jobs:
         shell: pwsh
         run: ./Build-Extension.ps1
 
+      # Drift check: if the committed extension/main.js does not match what
+      # Build-Extension.ps1 produces from the current userscript, fail the
+      # build. This catches the failure mode where a userscript edit lands
+      # without the matching extension regeneration (exactly the regression
+      # that shipped v0.3.2 with a stale v0.3.1 main.js before the hardening
+      # pass). The CI regenerates first, so any diff here means the checked-in
+      # copy was out of date.
+      - name: Guard against stale extension/main.js
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! git diff --quiet -- extension/main.js; then
+            echo "::error::extension/main.js is stale. Run ./Build-Extension.ps1 locally and commit the regenerated file."
+            git --no-pager diff --stat -- extension/main.js
+            exit 1
+          fi
+          echo "extension/main.js matches the userscript source."
+
       - name: Resolve + validate version
         id: version
         shell: bash
