@@ -2,6 +2,94 @@
 
 All notable changes to YoutubeAdblock are documented here.
 
+## [0.4.0] - 2026-04-22
+
+Major capability release. Anti-detect hardening, three new user-visible
+integrations (DeArrow, Return YouTube Dislike, volume boost), a full
+Unhook-style clutter panel, and deeper network coverage.
+
+### Added — anti-detect hardening
+- **`Function.prototype.toString` mask.** Every hooked native (JSON.parse,
+  fetch, XHR, Node.prototype.appendChild/insertBefore/replaceChild,
+  Promise.prototype.then, window.setTimeout, navigator.serviceWorker.register,
+  webpack chunk array push) now routes `.toString()` back to the original
+  native source. YouTube's source-inspection-based detection paths see
+  `function fetch() { [native code] }` — not our proxy.
+- **ServiceWorker registration block.** `navigator.serviceWorker.register`,
+  `getRegistration`, and `getRegistrations` are proxied so YouTube cannot
+  install a service worker that would bypass our fetch/XHR proxies. SW-
+  scoped ad beacons (`/api/stats/ads`, `/log_event`) now hit our hooks
+  instead of flowing around them.
+- **Webpack chunk array hook.** `self.webpackChunk_youtube_player.push`
+  is intercepted at document-start. Module factories whose source matches
+  ad-rendering signatures (`adPlacements`, `adBreakHeartbeatParams`,
+  `onAbnormalityDetected`, `getAdBlockedState`, `playerLegacyDesktopWatchAdsRenderer`)
+  are replaced with a no-op that fulfills the module contract without
+  running the ad-rendering body.
+- **Jittered nano-stb replacement delay.** The aggressive anti-stall
+  path used to fire at a fixed 17ms (`0.001 * 17000`), which is itself a
+  fingerprint. Replacement delay now jitters 8-45ms per invocation so
+  the neutralization pattern is no longer deterministic.
+
+### Added — UX integrations
+- **DeArrow crowd-sourced titles & thumbnails** (off by default). Uses
+  the same privacy-preserving hash-prefix API as SponsorBlock —
+  `sha256(videoID).slice(0, 4)` only, never the full ID. Replaces titles
+  and thumbnails on feeds and the watch page. 6-hour TTL + LRU cache.
+- **Return YouTube Dislike** (off by default). Fetches archived vote
+  counts and injects the dislike count under the like button on watch
+  pages. 30-minute TTL + LRU cache, cookies stripped on fetch.
+- **Volume boost up to 5x** (off by default). Web Audio
+  `MediaElementSource → GainNode → destination` graph with a dedicated
+  slider in the player controls. Persisted across SPA navs.
+
+### Added — clutter-free mode (Unhook-style, all off by default)
+- `Hide home feed`, `Hide Shorts shelves`, `Hide Shorts nav entries`,
+  `Hide related videos`, `Hide comments`, `Hide end-screen cards`,
+  `Hide live chat`, `Hide merch shelves`. Each is a pure CSS rule scoped
+  to YT's own component tags — no runtime DOM removal that could race
+  with the player.
+
+### Added — channel + keyword blocklist
+- Two local text-area editors in the Control Center. Channel matches
+  are case-insensitive substring matches on channel name; keyword
+  matches are substring matches on video title. Applied inside the
+  existing `pruneObject` walk so every intercepted payload (fetch,
+  XHR, JSON.parse) shares the same filter.
+- **Shorts → /watch redirect** (off by default). Every `/shorts/VIDEO_ID`
+  URL hard-redirects to `/watch?v=VIDEO_ID`.
+
+### Added — network & payload coverage
+- **Expanded prune keys** with `promotedSparklesWebRenderer`,
+  `promotedVideoRenderer`, `compactPromotedVideoRenderer`,
+  `compactPromotedItemRenderer`, `backgroundPromoRenderer`,
+  `statementBannerRenderer`, `brandVideoShelfRenderer`,
+  `brandVideoSingletonRenderer`, `inlineAdLayoutRenderer`,
+  `adSlotRenderer`, `linkedInstreamAdRenderer`,
+  `shoppingCarouselRenderer`, `merchandiseShelfRenderer`.
+- **Expanded intercept patterns** with `/youtubei/v1/log_event`,
+  `/youtubei/v1/att/get`, `/youtubei/v1/att/log`,
+  `/youtubei/v1/reel_watch_sequence`, `/youtubei/v1/get_survey`,
+  `/youtubei/v1/player/ad_break`.
+- **Expanded cosmetic selectors** for `ytd-in-feed-ad-layout-renderer`,
+  `ytd-banner-promo-renderer`, `ytd-promoted-video-renderer`,
+  `ytd-compact-promoted-video-renderer`, `ytd-action-companion-ad-renderer`,
+  `ytd-brand-video-shelf-renderer`, `ytd-brand-video-singleton-renderer`.
+- **Expanded DNR rules** (8 new entries, 18 total): `||youtube.com/pagead/adview`,
+  `||youtube.com/pagead/interaction`, `||youtube.com/pcs/activeview`,
+  googlevideo `ctier=SR` (SABR-retry), googlevideo `initplayback?...adformat=`,
+  `/youtubei/v1/log_event` (POST), `/youtubei/v1/att/log` (POST),
+  `||youtube.com/generate_204`.
+
+### Added — Control Center
+- Two new live stat tiles: `DeArrow Replaced`, `Feed Filtered`.
+- Three new sections: `Experience Enhancements`, `Clutter-Free Mode`,
+  `Channels & Keywords`.
+- Anti-Detection section gains `nativeToStringMask`, `serviceWorkerBlock`,
+  `webpackChunkHook` toggles.
+- Feature toggles for `volumeBoost`, `dearrow`, `returnYoutubeDislike`,
+  `shortsRedirect` apply instantly without needing a page reload.
+
 ## [0.3.3] - 2026-04-22
 
 ### Changed

@@ -2,7 +2,7 @@
 <p align="center"><img src="icon.png" width="128" alt="Youtube Adblock"></p>
 
 <p align="center">
-  <img alt="Version" src="https://img.shields.io/badge/version-0.3.3-58A6FF?style=for-the-badge">
+  <img alt="Version" src="https://img.shields.io/badge/version-0.4.0-58A6FF?style=for-the-badge">
   <img alt="License" src="https://img.shields.io/badge/license-MIT-4ade80?style=for-the-badge">
   <img alt="Platform" src="https://img.shields.io/badge/platform-Userscript%20%7C%20Chrome%20%7C%20Firefox-58A6FF?style=for-the-badge">
 </p>
@@ -67,10 +67,19 @@ If you trigger the extension while you are not already on YouTube, YoutubeAdbloc
 | Aggressive Anti-Stall | Fast-forwards 17-second bound timers YouTube uses to stall playback when a blocker is suspected | Enabled |
 | Video Ad Fast-Forward | Mutes and accelerates any ad that slips past pruning (last-resort safety net) | Enabled |
 | SponsorBlock Auto-Skip | Silently skips sponsor, self-promo, intro, outro, interaction, preview, music-off-topic, and filler segments using the privacy-preserving SponsorBlock hash-prefix API | Enabled |
-| DNR Network Blocking *(extension only)* | Blocks `/pagead/`, `/api/stats/ads`, `/youtubei/v1/player/ad_break`, googlevideo `ctier=SA`, doubleclick.net, and googlesyndication.com at the browser network layer via MV3 declarativeNetRequest rules | Enabled |
+| toString Proxy Mask | Patches `Function.prototype.toString` so every hooked native still reports `[native code]` to YouTube's detection paths | Enabled |
+| ServiceWorker Block | Proxies `navigator.serviceWorker.register` / `getRegistration{s}` so YouTube can't install a worker that bypasses the request proxies | Enabled |
+| Webpack Chunk Prune | Rewrites ad-rendering factory modules inside `self.webpackChunk_youtube_player.push` before they execute | Enabled |
+| DeArrow Titles & Thumbnails | Replaces clickbait titles and thumbnails with crowd-submitted alternatives via the privacy-preserving DeArrow hash-prefix API | Optional |
+| Return YouTube Dislike | Restores the public dislike count under the like button | Optional |
+| Volume Boost | Web Audio gain stage up to 5x with an inline slider in the player controls | Optional |
+| Clutter-Free Mode | Eight Unhook-style toggles: home feed, Shorts shelves, Shorts tab, related videos, comments, end-screen cards, live chat, merch shelves | Optional |
+| Channel + Keyword Blocklist | Strips videos whose channel or title matches a local blocklist from every intercepted feed payload | Optional |
+| Shorts → /watch Redirect | Rewrites `/shorts/VIDEO_ID` to the full watch player | Optional |
+| DNR Network Blocking *(extension only)* | Blocks `/pagead/*`, `/pagead/adview`, `/pagead/interaction`, `/api/stats/ads`, `/api/stats/atr`, `/pcs/activeview`, `/youtubei/v1/player/ad_break`, `/youtubei/v1/log_event` (POST), `/youtubei/v1/att/log` (POST), googlevideo `ctier=SA`, `ctier=SR`, `initplayback?...adformat=`, `generate_204`, doubleclick.net, googlesyndication.com, googleadservices.com | Enabled |
 | Remote Filter List | Fetches and applies uBO-compatible filter lists from a configurable URL | Enabled |
-| Control Center | Protection overview, quick actions, module toggles, rule refresh, diagnostics, and recovery tools | Enabled |
-| Live Stats | Real-time counters for blocked, pruned, and skipped ads | Enabled |
+| Control Center | Protection overview, quick actions, module toggles, rule refresh, blocklist editors, diagnostics, and recovery tools | Enabled |
+| Live Stats | Real-time counters for blocked, pruned, SSAP skipped, sponsor skipped, DeArrow replaced, and feed filtered | Enabled |
 | TrustedHTML Safe | Full CSP/TrustedTypes compliance — no `innerHTML` violations | Always |
 
 ## How It Works
