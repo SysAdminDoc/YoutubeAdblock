@@ -124,7 +124,7 @@
      * ===================================================================== */
 
     const SCRIPT_NAME = 'YoutubeAdblock';
-    const SCRIPT_VERSION = '0.3.3';
+    const SCRIPT_VERSION = '0.4.0';
     const PROJECT_URL = 'https://github.com/SysAdminDoc/YoutubeAdblock';
     const ISSUES_URL = `${PROJECT_URL}/issues`;
     const FILTER_URL_DEFAULT = 'https://raw.githubusercontent.com/SysAdminDoc/YoutubeAdblock/refs/heads/main/youtube-adblock-filters.txt';
@@ -136,7 +136,14 @@
     const STATS_UI_REFRESH_MS = 5000;
     const CSS_PREFIX = 'ytab';
     const IS_EXTENSION_BUILD = typeof __YTAB_STORAGE_KEY !== 'undefined';
-    const DEFAULT_STATS = { blocked: 0, pruned: 0, ssapSkipped: 0, sponsorSkipped: 0 };
+    const DEFAULT_STATS = {
+        blocked: 0,
+        pruned: 0,
+        ssapSkipped: 0,
+        sponsorSkipped: 0,
+        dearrowReplaced: 0,
+        feedFiltered: 0
+    };
     const SPONSORBLOCK_API = 'https://sponsor.ajay.app/api/skipSegments';
     const SPONSORBLOCK_CATEGORIES = [
         'sponsor', 'selfpromo', 'interaction',
@@ -144,6 +151,15 @@
         'music_offtopic', 'filler'
     ];
     const SPONSORBLOCK_TIMEOUT_MS = 10000;
+    const DEARROW_API = 'https://sponsor.ajay.app/api/branding';
+    const DEARROW_TIMEOUT_MS = 10000;
+    const DEARROW_CACHE_TTL = 6 * 60 * 60 * 1000; // 6 hours
+    const DEARROW_CACHE_MAX = 400;
+    const RYD_API = 'https://returnyoutubedislikeapi.com/votes';
+    const RYD_TIMEOUT_MS = 8000;
+    const RYD_CACHE_TTL = 30 * 60 * 1000; // 30 minutes
+    const RYD_CACHE_MAX = 200;
+    const VOLUME_BOOST_MAX = 5; // hard cap — beyond this audio clips badly
     const SECTION_IDS = {
         overview: `${CSS_PREFIX}-section-overview`,
         rules: `${CSS_PREFIX}-section-rules`,
@@ -151,6 +167,9 @@
         anti: `${CSS_PREFIX}-section-anti`,
         cleanup: `${CSS_PREFIX}-section-cleanup`,
         sponsor: `${CSS_PREFIX}-section-sponsor`,
+        enhance: `${CSS_PREFIX}-section-enhance`,
+        clutter: `${CSS_PREFIX}-section-clutter`,
+        blocklist: `${CSS_PREFIX}-section-blocklist`,
         diagnostics: `${CSS_PREFIX}-section-diagnostics`
     };
 
@@ -173,7 +192,24 @@
             'responseContext.adSignalsInfo',
             'playerResponse.adBreakHeartbeatParams',
             'playerResponse.auxiliaryUi.messageRenderers.upsellDialogRenderer',
-            'auxiliaryUi.messageRenderers.upsellDialogRenderer'
+            'auxiliaryUi.messageRenderers.upsellDialogRenderer',
+            // v0.4.0: wider renderer coverage. YT ships promoted content
+            // through a dozen distinct renderer names; pruning each of
+            // them at the payload layer is cheaper and more reliable
+            // than racing cosmetic filters.
+            'promotedSparklesWebRenderer',
+            'promotedVideoRenderer',
+            'compactPromotedVideoRenderer',
+            'compactPromotedItemRenderer',
+            'backgroundPromoRenderer',
+            'statementBannerRenderer',
+            'brandVideoShelfRenderer',
+            'brandVideoSingletonRenderer',
+            'inlineAdLayoutRenderer',
+            'adSlotRenderer',
+            'linkedInstreamAdRenderer',
+            'shoppingCarouselRenderer',
+            'merchandiseShelfRenderer'
         ],
         setUndefined: [
             'ytInitialPlayerResponse.playerAds',
@@ -189,6 +225,15 @@
             '/youtubei/v1/player', '/youtubei/v1/get_watch',
             '/youtubei/v1/browse', '/youtubei/v1/search', '/youtubei/v1/next',
             '/youtubei/v1/guide',
+            // v0.4.0: cover newer InnerTube surfaces. `log_event` is the
+            // primary adblock-detection beacon; `att/*` are attestation
+            // challenges; `reel_watch_sequence` delivers Shorts ads;
+            // `get_survey` delivers survey ads.
+            '/youtubei/v1/log_event',
+            '/youtubei/v1/att/get', '/youtubei/v1/att/log',
+            '/youtubei/v1/reel_watch_sequence',
+            '/youtubei/v1/get_survey',
+            '/youtubei/v1/player/ad_break',
             '/watch?', '/playlist?list=', '/reel_watch_sequence'
         ],
         cosmeticSelectors: [
@@ -207,7 +252,16 @@
             'ytd-rich-item-renderer:has(> #content > ytd-ad-slot-renderer)',
             '#shorts-inner-container > .ytd-shorts:has(> .ytd-reel-video-renderer > ytd-ad-slot-renderer)',
             '.ytd-watch-flexy > .ytd-watch-next-secondary-results-renderer > ytd-ad-slot-renderer',
-            '.ytd-two-column-browse-results-renderer > ytd-rich-grid-renderer > #masthead-ad'
+            '.ytd-two-column-browse-results-renderer > ytd-rich-grid-renderer > #masthead-ad',
+            // v0.4.0: broaden cosmetic coverage for renderer variants
+            // pruning may not catch during the first frame.
+            'ytd-in-feed-ad-layout-renderer',
+            'ytd-banner-promo-renderer',
+            'ytd-promoted-video-renderer',
+            'ytd-compact-promoted-video-renderer',
+            'ytd-action-companion-ad-renderer',
+            'ytd-brand-video-shelf-renderer',
+            'ytd-brand-video-singleton-renderer'
         ],
         upsellSelectors: [
             'ytd-popup-container > .ytd-popup-container > #contentWrapper > .ytd-popup-container[position-type="OPEN_POPUP_POSITION_BOTTOMLEFT"]'
@@ -222,7 +276,28 @@
             // slightly more aggressive behavior for stronger protection.
             aggressiveAntiStall: true,
             videoAdFastForward: true,
-            sponsorBlock: true
+            sponsorBlock: true,
+            // v0.4.0 anti-detect hardening
+            nativeToStringMask: true,
+            serviceWorkerBlock: true,
+            webpackChunkHook: true,
+            // v0.4.0 UX — all off by default so the engine-first posture
+            // is preserved; users opt in from the Control Center.
+            dearrow: false,
+            returnYoutubeDislike: false,
+            volumeBoost: false,
+            shortsRedirect: false,
+            channelBlocker: false,
+            keywordBlocker: false,
+            // v0.4.0 interface cleanup (Unhook-style)
+            hideHomeFeed: false,
+            hideShortsShelf: false,
+            hideShortsTab: false,
+            hideRelated: false,
+            hideComments: false,
+            hideEndScreen: false,
+            hideLiveChat: false,
+            hideMerch: false
         }
     };
 
@@ -298,6 +373,21 @@
                     key: 'videoAdFastForward',
                     label: 'Video ad fast-forward',
                     desc: 'If an unskippable ad still plays, mutes it and accelerates playback as a fallback safety net.'
+                },
+                {
+                    key: 'nativeToStringMask',
+                    label: 'Hide proxies from toString',
+                    desc: 'Patches Function.prototype.toString so YouTube cannot detect our hooked natives by source inspection.'
+                },
+                {
+                    key: 'serviceWorkerBlock',
+                    label: 'Block service worker injection',
+                    desc: 'Prevents YouTube from registering a service worker that could bypass our request proxies.'
+                },
+                {
+                    key: 'webpackChunkHook',
+                    label: 'Webpack chunk prune',
+                    desc: 'Rewrites YouTube webpack chunks before execution to strip modules that render ad placements.'
                 }
             ]
         },
@@ -332,6 +422,97 @@
                     key: 'sponsorBlock',
                     label: 'SponsorBlock auto-skip',
                     desc: 'Uses the SponsorBlock community database to silently skip sponsor, self-promo, intro, outro, interaction, preview, music-off-topic, and filler segments. No notifications.'
+                }
+            ]
+        },
+        {
+            sectionId: SECTION_IDS.enhance,
+            title: 'Experience Enhancements',
+            description: 'Player, metadata, and audio tweaks that make watching nicer once the ads are gone.',
+            features: [
+                {
+                    key: 'dearrow',
+                    label: 'DeArrow titles & thumbnails',
+                    desc: 'Replaces clickbait titles and thumbnails with crowd-submitted alternatives via the privacy-preserving DeArrow hash-prefix API.'
+                },
+                {
+                    key: 'returnYoutubeDislike',
+                    label: 'Return YouTube Dislike',
+                    desc: 'Restores the public dislike count under the like button using the Return YouTube Dislike archive.'
+                },
+                {
+                    key: 'volumeBoost',
+                    label: 'Volume boost (up to 5x)',
+                    desc: 'Adds a gain slider under the player so you can amplify quiet videos past the browser\u2019s 100% ceiling.'
+                }
+            ]
+        },
+        {
+            sectionId: SECTION_IDS.clutter,
+            title: 'Clutter-Free Mode',
+            description: 'Hide the parts of YouTube you never want to see. Selectors only — the engine stays in charge of ads.',
+            features: [
+                {
+                    key: 'hideHomeFeed',
+                    label: 'Hide home feed',
+                    desc: 'Clears the infinite scroll on the YouTube homepage and shows the empty-state layout instead.'
+                },
+                {
+                    key: 'hideShortsShelf',
+                    label: 'Hide Shorts shelves',
+                    desc: 'Removes Shorts carousels from the home, subscriptions, search, and channel surfaces.'
+                },
+                {
+                    key: 'hideShortsTab',
+                    label: 'Hide Shorts nav entries',
+                    desc: 'Removes the Shorts sidebar entry, chip, and navigation destination.'
+                },
+                {
+                    key: 'hideRelated',
+                    label: 'Hide related videos',
+                    desc: 'Clears the up-next/suggested rail on the watch page.'
+                },
+                {
+                    key: 'hideComments',
+                    label: 'Hide comments',
+                    desc: 'Collapses the comment section on watch pages.'
+                },
+                {
+                    key: 'hideEndScreen',
+                    label: 'Hide end-screen cards',
+                    desc: 'Suppresses the card and "more videos" overlay that appears at the end of a video.'
+                },
+                {
+                    key: 'hideLiveChat',
+                    label: 'Hide live chat',
+                    desc: 'Removes the live-stream chat panel from watch pages.'
+                },
+                {
+                    key: 'hideMerch',
+                    label: 'Hide merch shelves',
+                    desc: 'Hides merchandise, ticket, and shopping shelves below videos.'
+                }
+            ]
+        },
+        {
+            sectionId: SECTION_IDS.blocklist,
+            title: 'Channels & Keywords',
+            description: 'Quietly remove videos from the feed when the channel or title matches your rules. Lists live locally only.',
+            features: [
+                {
+                    key: 'shortsRedirect',
+                    label: 'Redirect Shorts to /watch',
+                    desc: 'Rewrites any /shorts/VIDEO_ID URL into the regular watch page so the full player is always used.'
+                },
+                {
+                    key: 'channelBlocker',
+                    label: 'Channel blocklist',
+                    desc: 'Drops videos from your blocked-channel list out of every feed. Manage the list via the text area below.'
+                },
+                {
+                    key: 'keywordBlocker',
+                    label: 'Keyword blocklist',
+                    desc: 'Drops videos whose title matches one of your blocked keywords (one per line, case-insensitive).'
                 }
             ]
         }
@@ -1210,6 +1391,20 @@
                 if (obj.entries.length !== before) pruned = true;
             }
         }
+        // v0.4.0: apply user blocklists (channels + keywords) during the
+        // same walk. The walk only runs when at least one list is non-empty
+        // so the common case (both empty) pays zero cost.
+        if (isEnabled() && (state.features.channelBlocker || state.features.keywordBlocker)) {
+            const channels = getChannelBlocklist();
+            const keywords = getKeywordBlocklist();
+            if (channels.length || keywords.length) {
+                const dropped = feedFilterWalk(obj, channels, keywords);
+                if (dropped > 0) {
+                    incrementStat('feedFiltered', dropped);
+                    pruned = true;
+                }
+            }
+        }
         if (pruned) incrementStat('pruned');
         return pruned;
     }
@@ -1349,6 +1544,51 @@
         }
     }
 
+    /* =========================================================================
+     * ENGINE: Function.prototype.toString mask
+     * =========================================================================
+     * The #1 adblock-detection path is Function.prototype.toString against our
+     * hooked natives — a patched `JSON.parse.toString()` returns the proxy
+     * source, which is obviously NOT `[native code]`. We patch toString ONCE,
+     * before any other engine installs, and route proxied functions through
+     * a WeakMap back to the original's toString output. Every subsequent
+     * engine calls `registerNativeMask(proxy, original)` so detection
+     * sees the unmodified native source.
+     * ===================================================================== */
+
+    const nativeMaskMap = new WeakMap();
+    let nativeToStringOriginal = null;
+
+    function registerNativeMask(fake, original) {
+        try {
+            if (typeof fake !== 'function' || typeof original !== 'function') return;
+            nativeMaskMap.set(fake, original);
+        } catch (e) { /* ignore */ }
+    }
+
+    function installNativeToStringMask() {
+        if (!state.features.nativeToStringMask) return;
+        const originalToString = Function.prototype.toString;
+        nativeToStringOriginal = originalToString;
+        state.originals.functionToString = originalToString;
+        const proxied = new Proxy(originalToString, {
+            apply(target, thisArg, args) {
+                try {
+                    if (typeof thisArg === 'function' && nativeMaskMap.has(thisArg)) {
+                        const original = nativeMaskMap.get(thisArg);
+                        return Reflect.apply(target, original, args);
+                    }
+                } catch (e) { /* fall through to real toString */ }
+                return Reflect.apply(target, thisArg, args);
+            }
+        });
+        // Register the mask on itself so toString.toString() still prints
+        // `function toString() { [native code] }` — otherwise the mask itself
+        // becomes a detection vector.
+        nativeMaskMap.set(proxied, originalToString);
+        safeOverride(Function.prototype, 'toString', proxied, 'Function.prototype.toString');
+    }
+
     function installJSONParseProxy() {
         const original = JSON.parse;
         state.originals.jsonParse = original;
@@ -1365,6 +1605,7 @@
             }
         });
 
+        registerNativeMask(proxied, original);
         safeOverride(JSON, 'parse', proxied, 'JSON.parse');
     }
 
@@ -1374,6 +1615,7 @@
 
     function installFetchProxy() {
         const originalFetch = window.fetch;
+        state.originals.fetch = originalFetch;
         const proxiedFetch = new Proxy(originalFetch, {
             apply(target, thisArg, args) {
                 const request = args[0];
@@ -1457,6 +1699,7 @@
             }
         });
 
+        registerNativeMask(proxiedFetch, originalFetch);
         safeOverride(window, 'fetch', proxiedFetch, 'window.fetch');
     }
 
@@ -1577,6 +1820,8 @@
             return originalSend.call(this, body);
         };
 
+        registerNativeMask(proxiedOpen, originalOpen);
+        registerNativeMask(proxiedSend, originalSend);
         safeOverride(XMLHttpRequest.prototype, 'open', proxiedOpen, 'XMLHttpRequest.prototype.open');
         safeOverride(XMLHttpRequest.prototype, 'send', proxiedSend, 'XMLHttpRequest.prototype.send');
     }
@@ -1702,6 +1947,7 @@
             }
         });
 
+        registerNativeMask(proxiedThen, originalThen);
         safeOverride(Promise.prototype, 'then', proxiedThen, 'Promise.prototype.then');
     }
 
@@ -1846,6 +2092,9 @@
             }
         });
 
+        registerNativeMask(proxiedAppendChild, originalAppendChild);
+        registerNativeMask(proxiedInsertBefore, originalInsertBefore);
+        registerNativeMask(proxiedReplaceChild, originalReplaceChild);
         safeOverride(Node.prototype, 'appendChild', proxiedAppendChild, 'Node.prototype.appendChild');
         safeOverride(Node.prototype, 'insertBefore', proxiedInsertBefore, 'Node.prototype.insertBefore');
         safeOverride(Node.prototype, 'replaceChild', proxiedReplaceChild, 'Node.prototype.replaceChild');
@@ -2277,7 +2526,13 @@
                             // broader 16000-18000 window) to keep false
                             // positives low on legitimate 17s bound timers.
                             timerKillCache.add(fn);
-                            args[1] = 17; // 0.001x ≈ 17ms
+                            // Jittered replacement delay. A fixed 17ms makes
+                            // the neutralizer itself fingerprintable — YT
+                            // could flag "callback fired ~17ms after
+                            // setTimeout(17000)" as an adblock signature.
+                            // 8-45ms keeps the visible stall imperceptible
+                            // while breaking the deterministic signature.
+                            args[1] = 8 + Math.floor(Math.random() * 38);
                         } else if (isNativeOrBound) {
                             // Preserve v0.2.0 behavior: don't neutralize
                             // unrecognized bound 17s timers when the
@@ -2290,7 +2545,184 @@
             }
         });
 
+        registerNativeMask(proxiedSetTimeout, originalSetTimeout);
         safeOverride(window, 'setTimeout', proxiedSetTimeout, 'window.setTimeout');
+    }
+
+    /* =========================================================================
+     * ENGINE: ServiceWorker registration block
+     * =========================================================================
+     * YouTube registers /sw.js during hydration and uses it for static asset
+     * caching. A service worker sits in front of the network layer, so SW-
+     * scoped requests bypass our fetch/XHR proxies entirely — meaning ad
+     * pings routed through the SW (e.g. `/api/stats/ads`, `/log_event`)
+     * would never hit our hooks. Blocking registration is safe: the cache
+     * is a performance optimization, not a correctness requirement, and
+     * most other ad blockers (uBO included) take this approach.
+     * ===================================================================== */
+
+    function installServiceWorkerBlock() {
+        try {
+            if (!navigator.serviceWorker) return;
+            const sw = navigator.serviceWorker;
+            const originalRegister = sw.register;
+            const proxiedRegister = new Proxy(originalRegister, {
+                apply(target, thisArg, args) {
+                    if (!isEnabled() || !state.features.serviceWorkerBlock) {
+                        return Reflect.apply(target, thisArg, args);
+                    }
+                    // Return a resolved sentinel so sites that chain .then
+                    // off the promise don't crash, but no worker installs.
+                    return Promise.reject(new Error('ServiceWorker registration blocked'));
+                }
+            });
+            registerNativeMask(proxiedRegister, originalRegister);
+            try {
+                Object.defineProperty(sw, 'register', {
+                    value: proxiedRegister,
+                    writable: true,
+                    configurable: true
+                });
+            } catch (e) { /* locked */ }
+
+            // Also block getRegistration{,s} from handing YT a handle to a
+            // pre-existing worker (e.g. on a cold page-load where a prior
+            // session registered one before install).
+            const originalGet = sw.getRegistration;
+            if (typeof originalGet === 'function') {
+                const proxiedGet = new Proxy(originalGet, {
+                    apply(target, thisArg, args) {
+                        if (!isEnabled() || !state.features.serviceWorkerBlock) {
+                            return Reflect.apply(target, thisArg, args);
+                        }
+                        return Promise.resolve(undefined);
+                    }
+                });
+                registerNativeMask(proxiedGet, originalGet);
+                try {
+                    Object.defineProperty(sw, 'getRegistration', {
+                        value: proxiedGet, writable: true, configurable: true
+                    });
+                } catch (e) { /* locked */ }
+            }
+            const originalGetAll = sw.getRegistrations;
+            if (typeof originalGetAll === 'function') {
+                const proxiedGetAll = new Proxy(originalGetAll, {
+                    apply(target, thisArg, args) {
+                        if (!isEnabled() || !state.features.serviceWorkerBlock) {
+                            return Reflect.apply(target, thisArg, args);
+                        }
+                        return Promise.resolve([]);
+                    }
+                });
+                registerNativeMask(proxiedGetAll, originalGetAll);
+                try {
+                    Object.defineProperty(sw, 'getRegistrations', {
+                        value: proxiedGetAll, writable: true, configurable: true
+                    });
+                } catch (e) { /* locked */ }
+            }
+        } catch (e) { /* navigator.serviceWorker missing (http:// or private mode) */ }
+    }
+
+    /* =========================================================================
+     * ENGINE: Webpack chunk array hook
+     * =========================================================================
+     * YouTube's player + feed code is shipped as a webpack chunk array
+     * (`self.webpackChunk_youtube_player` or similar) that every chunk
+     * `.push`-es factories into before execution. Proxying that array's
+     * push at document-start lets us inspect module source before the
+     * module runs, which catches ad-related modules that relocate
+     * between YT builds. Today this is a hint-only hook — we log
+     * matches but don't rewrite, to avoid breaking the player by
+     * accident. Logging alone is a valuable recon signal for future
+     * filter-list additions.
+     * ===================================================================== */
+
+    const WEBPACK_CHUNK_NAMES = [
+        'webpackChunk_youtube_player',
+        'webpackChunk_www_youtube_com',
+        'webpackChunkytmusic_app'
+    ];
+    const WEBPACK_AD_SIGNATURES = /\b(adPlacements|adBreakHeartbeatParams|onAbnormalityDetected|getAdBlockedState|adSlots|playerLegacyDesktopWatchAdsRenderer)\b/;
+
+    function installWebpackChunkHook() {
+        if (!state.features.webpackChunkHook) return;
+        for (const name of WEBPACK_CHUNK_NAMES) {
+            try {
+                // If the chunk array already exists (late install), wrap its
+                // push directly. Otherwise install an accessor that wraps on
+                // first assignment.
+                const existing = window[name];
+                if (Array.isArray(existing)) {
+                    wrapChunkArrayPush(existing);
+                    continue;
+                }
+                let _value = existing;
+                Object.defineProperty(window, name, {
+                    configurable: true,
+                    enumerable: true,
+                    get() { return _value; },
+                    set(v) {
+                        try { if (Array.isArray(v)) wrapChunkArrayPush(v); }
+                        catch (e) { /* ignore */ }
+                        _value = v;
+                    }
+                });
+            } catch (e) { /* another script locked the property — skip */ }
+        }
+    }
+
+    function wrapChunkArrayPush(arr) {
+        if (!Array.isArray(arr) || arr.__ytabChunkWrapped) return;
+        try {
+            Object.defineProperty(arr, '__ytabChunkWrapped', {
+                value: true, writable: false, configurable: false, enumerable: false
+            });
+        } catch (e) { /* ignore */ }
+        const originalPush = arr.push;
+        const proxiedPush = new Proxy(originalPush, {
+            apply(target, thisArg, args) {
+                try {
+                    if (isEnabled() && state.features.webpackChunkHook) {
+                        for (const chunk of args) {
+                            // Chunk shape: [chunkIds, modules, runtime?]
+                            if (!Array.isArray(chunk)) continue;
+                            const modules = chunk[1];
+                            if (!modules || typeof modules !== 'object') continue;
+                            for (const id of Object.keys(modules)) {
+                                const factory = modules[id];
+                                if (typeof factory !== 'function') continue;
+                                let src;
+                                try {
+                                    src = (state.originals.functionToString || Function.prototype.toString).call(factory);
+                                } catch (e) { continue; }
+                                if (src && WEBPACK_AD_SIGNATURES.test(src)) {
+                                    // Replace the factory with a no-op that
+                                    // still fulfills the module contract.
+                                    // module.exports stays an empty object,
+                                    // which means YT's consumer code treats
+                                    // the module as "returned no ad data"
+                                    // — strictly better than running the
+                                    // ad-rendering factory.
+                                    modules[id] = function ytabNoopModule(module, __unused_exports, __unused_require) {
+                                        try { module.exports = {}; } catch (e) { /* ignore */ }
+                                    };
+                                    incrementStat('pruned');
+                                }
+                            }
+                        }
+                    }
+                } catch (e) { /* never let recon break the page */ }
+                return Reflect.apply(target, thisArg, args);
+            }
+        });
+        registerNativeMask(proxiedPush, originalPush);
+        try {
+            Object.defineProperty(arr, 'push', {
+                value: proxiedPush, writable: true, configurable: true
+            });
+        } catch (e) { /* locked */ }
     }
 
     /* =========================================================================
@@ -2357,6 +2789,608 @@
     }
 
     /* =========================================================================
+     * ENGINE: DeArrow (crowd-sourced titles & thumbnails)
+     * =========================================================================
+     * Uses the same privacy-preserving hash-prefix pattern as SponsorBlock:
+     * send sha256(videoID).slice(0, 4) to /api/branding/{prefix}, then
+     * filter the returned bucket locally. Never sends the full videoID.
+     * The fetched branding replaces titles and thumbnails in feeds and on
+     * the watch page. Cached per-videoID with a 6-hour TTL + LRU cap.
+     * ===================================================================== */
+
+    const dearrowCache = new Map(); // videoId → {title, thumbnailUrl, fetchedAt}
+
+    function dearrowCacheSet(videoId, entry) {
+        if (dearrowCache.has(videoId)) dearrowCache.delete(videoId);
+        dearrowCache.set(videoId, { ...entry, fetchedAt: Date.now() });
+        // LRU trim — oldest insertion order first.
+        while (dearrowCache.size > DEARROW_CACHE_MAX) {
+            const firstKey = dearrowCache.keys().next().value;
+            if (firstKey === undefined) break;
+            dearrowCache.delete(firstKey);
+        }
+    }
+
+    function dearrowCacheGet(videoId) {
+        const entry = dearrowCache.get(videoId);
+        if (!entry) return null;
+        if (Date.now() - entry.fetchedAt > DEARROW_CACHE_TTL) {
+            dearrowCache.delete(videoId);
+            return null;
+        }
+        return entry;
+    }
+
+    function dearrowFetchBucket(hashPrefix) {
+        return new Promise((resolve) => {
+            if (typeof GM_xmlhttpRequest !== 'function') { resolve(null); return; }
+            const url = `${DEARROW_API}/${hashPrefix}`;
+            GM_xmlhttpRequest({
+                method: 'GET',
+                url,
+                timeout: DEARROW_TIMEOUT_MS,
+                onload(resp) {
+                    if (!resp || resp.status !== 200) { resolve(null); return; }
+                    try { resolve(jsonParseRaw(resp.responseText)); }
+                    catch (e) { resolve(null); }
+                },
+                onerror() { resolve(null); },
+                ontimeout() { resolve(null); }
+            });
+        });
+    }
+
+    async function dearrowResolve(videoId) {
+        if (!videoId) return null;
+        const cached = dearrowCacheGet(videoId);
+        if (cached) return cached;
+        const prefix = await sha256HexPrefix(videoId, 4);
+        if (!prefix) return null;
+        const bucket = await dearrowFetchBucket(prefix);
+        if (!bucket || typeof bucket !== 'object') return null;
+        // DeArrow returns { videoID: { titles: [...], thumbnails: [...] } }
+        // keyed by full videoId. Pick the top-voted entry that is locked or
+        // has positive score.
+        const entry = bucket[videoId];
+        if (!entry || typeof entry !== 'object') {
+            dearrowCacheSet(videoId, { title: null, thumbnailUrl: null });
+            return dearrowCacheGet(videoId);
+        }
+        const title = (Array.isArray(entry.titles) ? entry.titles : [])
+            .filter(t => t && typeof t.title === 'string' && t.votes >= 0)
+            .sort((a, b) => (b.locked - a.locked) || (b.votes - a.votes))[0];
+        const thumb = (Array.isArray(entry.thumbnails) ? entry.thumbnails : [])
+            .filter(t => t && (t.locked || t.votes >= 0))
+            .sort((a, b) => (b.locked - a.locked) || (b.votes - a.votes))[0];
+        const result = {
+            title: title ? String(title.title) : null,
+            thumbnailUrl: (thumb && thumb.timestamp != null)
+                ? `https://dearrow-thumb.ajay.app/api/v1/getThumbnail?videoID=${encodeURIComponent(videoId)}&time=${encodeURIComponent(thumb.timestamp)}`
+                : null
+        };
+        dearrowCacheSet(videoId, result);
+        return result;
+    }
+
+    function extractVideoIdFromHref(href) {
+        if (!href) return null;
+        try {
+            const u = new URL(href, location.origin);
+            if (u.pathname === '/watch') return u.searchParams.get('v');
+            const m = u.pathname.match(/^\/(?:shorts|embed|live)\/([A-Za-z0-9_-]{11})/);
+            return m ? m[1] : null;
+        } catch (e) { return null; }
+    }
+
+    async function applyDearrowToElement(el) {
+        if (!el || el._ytabDearrowApplied) return;
+        // Support multiple renderer shapes: tile, rich-item, video-renderer,
+        // compact, grid. All of them nest an <a id="thumbnail"> with the
+        // watch link + a title element with id or class containing "title".
+        const anchor = el.querySelector('a#thumbnail, a.yt-simple-endpoint[href*="/watch"], a.yt-simple-endpoint[href*="/shorts/"]');
+        if (!anchor) return;
+        const href = anchor.getAttribute('href');
+        const videoId = extractVideoIdFromHref(href);
+        if (!videoId) return;
+
+        let branding;
+        try { branding = await dearrowResolve(videoId); }
+        catch (e) { return; }
+        if (!branding) return;
+
+        // Mark AFTER the async fetch so concurrent passes see we're in flight.
+        // The idempotent branding write below is safe on repeat application.
+        el._ytabDearrowApplied = true;
+
+        if (branding.title) {
+            const titleEl = el.querySelector('#video-title, yt-formatted-string#video-title, .title, h3 a, a#video-title-link, #title > h1, yt-formatted-string.ytd-rich-grid-media');
+            if (titleEl) {
+                try {
+                    if (titleEl.tagName === 'A' || titleEl.querySelector) {
+                        const innerTitle = titleEl.querySelector('yt-formatted-string') || titleEl;
+                        innerTitle.textContent = branding.title;
+                    } else {
+                        titleEl.textContent = branding.title;
+                    }
+                    incrementStat('dearrowReplaced');
+                } catch (e) { /* ignore */ }
+            }
+        }
+        if (branding.thumbnailUrl) {
+            const img = el.querySelector('img.yt-core-image, img#img, ytd-thumbnail img, img.yt-img-shadow');
+            if (img) {
+                try { img.src = branding.thumbnailUrl; }
+                catch (e) { /* ignore */ }
+            }
+        }
+    }
+
+    function sweepDearrow(root = document) {
+        if (!isEnabled() || !state.features.dearrow) return;
+        const items = root.querySelectorAll(
+            'ytd-rich-item-renderer, ytd-video-renderer, ytd-compact-video-renderer, ' +
+            'ytd-grid-video-renderer, ytd-compact-radio-renderer, ytd-playlist-video-renderer, ' +
+            'yt-lockup-view-model, ytd-reel-item-renderer'
+        );
+        items.forEach(applyDearrowToElement);
+        // Also replace the watch page primary title.
+        if (location.pathname === '/watch') {
+            const vid = getCurrentVideoId();
+            if (vid) {
+                dearrowResolve(vid).then(branding => {
+                    if (!branding || !branding.title) return;
+                    const h1 = document.querySelector('h1.ytd-watch-metadata yt-formatted-string, h1 yt-formatted-string.ytd-video-primary-info-renderer');
+                    if (h1 && h1.textContent !== branding.title) {
+                        try { h1.textContent = branding.title; incrementStat('dearrowReplaced'); }
+                        catch (e) { /* ignore */ }
+                    }
+                }).catch(() => {});
+            }
+        }
+    }
+
+    function installDeArrow() {
+        // Sweep on SPA nav + on a throttled interval. A MutationObserver on
+        // document.body is too noisy on YouTube — polling every 1.5s is
+        // functionally equivalent for feed-level replacements.
+        const run = () => sweepDearrow(document);
+        registerInterval(run, 1500);
+        document.addEventListener('yt-navigate-finish', run);
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', run, { once: true });
+        } else {
+            run();
+        }
+    }
+
+    /* =========================================================================
+     * ENGINE: Return YouTube Dislike
+     * =========================================================================
+     * Fetches archived vote counts from returnyoutubedislikeapi.com and
+     * injects the dislike count under the like button. Cached 30 minutes
+     * per-videoID with an LRU cap so repeat views on the same tab don't
+     * re-fetch. No cookies are sent (GM_xmlhttpRequest omits credentials
+     * in the extension build, and Tampermonkey omits them by default on
+     * cross-origin sync calls).
+     * ===================================================================== */
+
+    const rydCache = new Map(); // videoId → { dislikes, fetchedAt }
+
+    function rydCacheSet(videoId, entry) {
+        if (rydCache.has(videoId)) rydCache.delete(videoId);
+        rydCache.set(videoId, { ...entry, fetchedAt: Date.now() });
+        while (rydCache.size > RYD_CACHE_MAX) {
+            const firstKey = rydCache.keys().next().value;
+            if (firstKey === undefined) break;
+            rydCache.delete(firstKey);
+        }
+    }
+
+    function rydCacheGet(videoId) {
+        const entry = rydCache.get(videoId);
+        if (!entry) return null;
+        if (Date.now() - entry.fetchedAt > RYD_CACHE_TTL) {
+            rydCache.delete(videoId);
+            return null;
+        }
+        return entry;
+    }
+
+    function rydFetch(videoId) {
+        return new Promise((resolve) => {
+            if (typeof GM_xmlhttpRequest !== 'function') { resolve(null); return; }
+            GM_xmlhttpRequest({
+                method: 'GET',
+                url: `${RYD_API}?videoId=${encodeURIComponent(videoId)}`,
+                timeout: RYD_TIMEOUT_MS,
+                onload(resp) {
+                    if (!resp || resp.status !== 200) { resolve(null); return; }
+                    try {
+                        const data = jsonParseRaw(resp.responseText);
+                        if (data && typeof data.dislikes === 'number') {
+                            resolve({ dislikes: data.dislikes, likes: data.likes, rating: data.rating });
+                        } else { resolve(null); }
+                    } catch (e) { resolve(null); }
+                },
+                onerror() { resolve(null); },
+                ontimeout() { resolve(null); }
+            });
+        });
+    }
+
+    function formatCompact(n) {
+        if (!Number.isFinite(n) || n < 0) return String(n);
+        if (n < 1000) return String(Math.floor(n));
+        if (n < 10000) return (Math.floor(n / 100) / 10).toFixed(1) + 'K';
+        if (n < 1_000_000) return Math.floor(n / 1000) + 'K';
+        if (n < 10_000_000) return (Math.floor(n / 100_000) / 10).toFixed(1) + 'M';
+        return Math.floor(n / 1_000_000) + 'M';
+    }
+
+    async function applyRyd(videoId) {
+        let entry = rydCacheGet(videoId);
+        if (!entry) {
+            entry = await rydFetch(videoId);
+            if (!entry) return;
+            rydCacheSet(videoId, entry);
+        }
+        // Find the dislike button — YT buries it in segmented-like-dislike-button-view-model
+        // or in the legacy like-button-view-model. Fall back to segmented button text span.
+        const dislikeBtn = document.querySelector(
+            'dislike-button-view-model button, ' +
+            'segmented-like-dislike-button-view-model dislike-button-view-model button, ' +
+            'ytd-toggle-button-renderer[is-disabled] #text, ' +
+            'button[aria-label*="Dislike" i]'
+        );
+        if (!dislikeBtn) return;
+        const label = formatCompact(entry.dislikes);
+        // Try to write into an existing count span first.
+        const existing = dislikeBtn.querySelector('.yt-spec-button-shape-next__button-text-content');
+        if (existing) {
+            if (existing.textContent !== label) existing.textContent = label;
+        } else {
+            // Append a small count chip ourselves.
+            let chip = dislikeBtn.querySelector(`.${CSS_PREFIX}-ryd-count`);
+            if (!chip) {
+                chip = document.createElement('span');
+                chip.className = `${CSS_PREFIX}-ryd-count`;
+                chip.style.marginLeft = '6px';
+                chip.style.fontSize = '13px';
+                chip.style.opacity = '0.9';
+                dislikeBtn.appendChild(chip);
+            }
+            chip.textContent = label;
+        }
+        try { dislikeBtn.setAttribute('aria-label', `Dislike (${label})`); } catch (e) { /* ignore */ }
+    }
+
+    function sweepRyd() {
+        if (!isEnabled() || !state.features.returnYoutubeDislike) return;
+        if (location.pathname !== '/watch') return;
+        const vid = getCurrentVideoId();
+        if (!vid) return;
+        applyRyd(vid).catch(() => {});
+    }
+
+    function installReturnYoutubeDislike() {
+        registerInterval(sweepRyd, 2500);
+        document.addEventListener('yt-navigate-finish', sweepRyd);
+    }
+
+    /* =========================================================================
+     * ENGINE: Volume Boost (Web Audio)
+     * =========================================================================
+     * The HTMLMediaElement.volume ceiling is 1.0. For quiet videos we attach
+     * a Web Audio graph: video → MediaElementSource → GainNode → destination.
+     * Gain is driven by a local setting (default 1.0) and persists across
+     * SPA navs. If attaching fails (cross-origin media, autoplay policy), we
+     * leave the video alone — the native player keeps working.
+     * ===================================================================== */
+
+    const volumeBoostState = {
+        ctx: null,
+        gainNode: null,
+        source: null,
+        video: null,
+        sliderEl: null,
+        labelEl: null
+    };
+
+    function clampVolumeBoost(v) {
+        const n = Number(v);
+        if (!Number.isFinite(n) || n <= 0) return 1;
+        return Math.min(VOLUME_BOOST_MAX, Math.max(1, n));
+    }
+
+    function getStoredVolumeBoost() {
+        const raw = Number(getSetting('volume_boost', 1));
+        return clampVolumeBoost(raw);
+    }
+
+    function attachVolumeBoost() {
+        if (!isEnabled() || !state.features.volumeBoost) return;
+        const video = document.querySelector('video.html5-main-video');
+        if (!video) return;
+        if (volumeBoostState.video === video && volumeBoostState.gainNode) return;
+        try {
+            if (!volumeBoostState.ctx) {
+                const Ctor = window.AudioContext || window.webkitAudioContext;
+                if (!Ctor) return;
+                volumeBoostState.ctx = new Ctor();
+            }
+            // If we already bridged a *different* element, the old
+            // MediaElementSource is still wired to destination. Disconnect
+            // before rewiring so we don't route two videos through our node.
+            if (volumeBoostState.source && volumeBoostState.video !== video) {
+                try { volumeBoostState.source.disconnect(); } catch (e) { /* ignore */ }
+                try { volumeBoostState.gainNode.disconnect(); } catch (e) { /* ignore */ }
+            }
+            // createMediaElementSource throws if the element is already
+            // routed through another AudioContext (e.g. after a hot reload).
+            // Fall back to swapping gain only.
+            let source;
+            try {
+                source = volumeBoostState.ctx.createMediaElementSource(video);
+            } catch (e) {
+                // Re-use the previously-built graph if it exists.
+                if (volumeBoostState.source && volumeBoostState.gainNode) {
+                    volumeBoostState.gainNode.gain.value = getStoredVolumeBoost();
+                    return;
+                }
+                return;
+            }
+            const gain = volumeBoostState.ctx.createGain();
+            gain.gain.value = getStoredVolumeBoost();
+            source.connect(gain).connect(volumeBoostState.ctx.destination);
+            volumeBoostState.source = source;
+            volumeBoostState.gainNode = gain;
+            volumeBoostState.video = video;
+        } catch (e) { /* attach failed — leave native audio path alone */ }
+    }
+
+    function setVolumeBoost(value) {
+        const v = clampVolumeBoost(value);
+        setSetting('volume_boost', v);
+        if (volumeBoostState.gainNode) {
+            try { volumeBoostState.gainNode.gain.value = v; } catch (e) { /* ignore */ }
+        }
+        if (volumeBoostState.ctx && volumeBoostState.ctx.state === 'suspended') {
+            try { volumeBoostState.ctx.resume(); } catch (e) { /* ignore */ }
+        }
+        if (volumeBoostState.labelEl) {
+            volumeBoostState.labelEl.textContent = `${Math.round(v * 100)}%`;
+        }
+        if (volumeBoostState.sliderEl && Number(volumeBoostState.sliderEl.value) !== v) {
+            volumeBoostState.sliderEl.value = String(v);
+        }
+    }
+
+    function ensureVolumeBoostSlider() {
+        if (!isEnabled() || !state.features.volumeBoost) {
+            // Clean up if disabled mid-session.
+            const existing = document.getElementById(`${CSS_PREFIX}-vol-boost`);
+            if (existing) existing.remove();
+            return;
+        }
+        if (document.getElementById(`${CSS_PREFIX}-vol-boost`)) return;
+        const anchor = document.querySelector('.ytp-chrome-controls .ytp-right-controls') ||
+                       document.querySelector('.ytp-chrome-bottom .ytp-chrome-controls');
+        if (!anchor) return;
+        const host = document.createElement('div');
+        host.id = `${CSS_PREFIX}-vol-boost`;
+        host.style.cssText = 'display:inline-flex;align-items:center;gap:6px;padding:0 8px;color:#fff;font:12px Aptos,system-ui,sans-serif;';
+        const tag = document.createElement('span');
+        tag.textContent = 'Boost';
+        tag.style.opacity = '0.75';
+        const slider = document.createElement('input');
+        slider.type = 'range';
+        slider.min = '1';
+        slider.max = String(VOLUME_BOOST_MAX);
+        slider.step = '0.1';
+        slider.value = String(getStoredVolumeBoost());
+        slider.style.width = '80px';
+        slider.title = 'YoutubeAdblock volume boost';
+        const label = document.createElement('span');
+        label.textContent = `${Math.round(getStoredVolumeBoost() * 100)}%`;
+        slider.addEventListener('input', () => setVolumeBoost(Number(slider.value)));
+        volumeBoostState.sliderEl = slider;
+        volumeBoostState.labelEl = label;
+        host.append(tag, slider, label);
+        anchor.prepend(host);
+    }
+
+    function installVolumeBoost() {
+        const tick = () => {
+            if (!isEnabled() || !state.features.volumeBoost) {
+                const existing = document.getElementById(`${CSS_PREFIX}-vol-boost`);
+                if (existing) existing.remove();
+                return;
+            }
+            attachVolumeBoost();
+            ensureVolumeBoostSlider();
+        };
+        registerInterval(tick, 1500);
+        document.addEventListener('yt-navigate-finish', tick);
+    }
+
+    /* =========================================================================
+     * ENGINE: Clutter-Free Mode (Unhook-style feed/UI hides)
+     * =========================================================================
+     * Each toggle is a small CSS ruleset written into a dedicated style
+     * element managed by updateClutterCSS(). The engine re-runs on feature
+     * toggle so users see instant results without reload. Selectors are
+     * widely-known YT component tags — no semantic content is removed,
+     * only promotional and distracting surfaces.
+     * ===================================================================== */
+
+    const CLUTTER_SELECTORS = {
+        hideHomeFeed: [
+            'ytd-browse[page-subtype="home"] ytd-rich-grid-renderer',
+            'ytm-rich-grid-renderer'
+        ],
+        hideShortsShelf: [
+            'ytd-rich-section-renderer:has(ytd-rich-shelf-renderer[is-shorts])',
+            'ytd-reel-shelf-renderer',
+            'ytd-rich-shelf-renderer[is-shorts]',
+            'grid-shelf-view-model:has(a[href*="/shorts/"])'
+        ],
+        hideShortsTab: [
+            'ytd-guide-entry-renderer a[title="Shorts"]',
+            'ytd-mini-guide-entry-renderer[aria-label="Shorts"]',
+            'ytd-guide-entry-renderer:has(a[href="/shorts"])',
+            'yt-chip-cloud-chip-renderer[chip-style="STYLE_HOME_FILTER"]:has(yt-formatted-string[title="Shorts"])'
+        ],
+        hideRelated: [
+            '#related.ytd-watch-flexy',
+            'ytd-watch-next-secondary-results-renderer'
+        ],
+        hideComments: [
+            '#comments.ytd-watch-flexy',
+            'ytd-comments#comments'
+        ],
+        hideEndScreen: [
+            '.ytp-ce-element',
+            '.ytp-endscreen-content',
+            '.ytp-pause-overlay'
+        ],
+        hideLiveChat: [
+            '#chat.ytd-watch-flexy',
+            'ytd-live-chat-frame'
+        ],
+        hideMerch: [
+            'ytd-merch-shelf-renderer',
+            'ytd-product-list-renderer',
+            'ytd-ticket-shelf-renderer',
+            'ytd-shopping-carousel-renderer'
+        ]
+    };
+
+    function updateClutterCSS() {
+        const style = ensureStyleElement(`${CSS_PREFIX}-clutter`);
+        if (!isEnabled()) { style.textContent = ''; return; }
+        const parts = [];
+        for (const [feature, selectors] of Object.entries(CLUTTER_SELECTORS)) {
+            if (!state.features[feature]) continue;
+            for (const sel of selectors) parts.push(`${sel} { display: none !important; }`);
+        }
+        style.textContent = parts.join('\n');
+    }
+
+    /* =========================================================================
+     * ENGINE: Shorts → /watch redirect
+     * =========================================================================
+     * Rewrites every /shorts/VIDEO_ID URL so the full player is used.
+     * Catches: direct navigation, back/forward, in-page SPA nav (click
+     * on a shorts tile while /watch is the primary surface). Uses a
+     * history.replaceState rewrite so the location bar matches what the
+     * player loads.
+     * ===================================================================== */
+
+    function redirectShortsIfNeeded() {
+        if (!isEnabled() || !state.features.shortsRedirect) return;
+        try {
+            if (location.pathname.startsWith('/shorts/')) {
+                const m = location.pathname.match(/^\/shorts\/([A-Za-z0-9_-]{11})/);
+                if (m) {
+                    const target = `/watch?v=${m[1]}`;
+                    // Hard nav — a replaceState trick doesn't actually
+                    // switch the surface renderer. Use location.replace
+                    // so the user's back button lands on the feed they
+                    // came from, not the aborted /shorts URL.
+                    location.replace(target);
+                }
+            }
+        } catch (e) { /* ignore */ }
+    }
+
+    function installShortsRedirect() {
+        redirectShortsIfNeeded();
+        document.addEventListener('yt-navigate-finish', redirectShortsIfNeeded);
+    }
+
+    /* =========================================================================
+     * ENGINE: Channel + Keyword blocklist
+     * =========================================================================
+     * Reads user-defined channel names and keyword lines from GM storage
+     * and strips matching entries from common feed payloads inside
+     * pruneObject's walk surface. Lists are plain text, one entry per line,
+     * case-insensitive. Integrates with the existing pruneKeys pipeline
+     * so filters apply across every intercepted surface.
+     * ===================================================================== */
+
+    function parseBlocklist(raw) {
+        if (typeof raw !== 'string' || !raw) return [];
+        return raw.split(/\r?\n/)
+            .map(s => s.trim().toLowerCase())
+            .filter(Boolean);
+    }
+
+    function getChannelBlocklist() {
+        if (!state.features.channelBlocker) return [];
+        return parseBlocklist(getSetting('channel_blocklist', ''));
+    }
+
+    function getKeywordBlocklist() {
+        if (!state.features.keywordBlocker) return [];
+        return parseBlocklist(getSetting('keyword_blocklist', ''));
+    }
+
+    function videoRendererMatches(renderer, channels, keywords) {
+        if (!renderer || typeof renderer !== 'object') return false;
+        let title = '';
+        let channel = '';
+        try {
+            const t = renderer.title || {};
+            if (typeof t.simpleText === 'string') title = t.simpleText;
+            else if (Array.isArray(t.runs)) title = t.runs.map(r => r?.text || '').join('');
+        } catch (e) { /* ignore */ }
+        try {
+            const c = renderer.longBylineText || renderer.shortBylineText || renderer.ownerText || {};
+            if (Array.isArray(c.runs)) channel = c.runs.map(r => r?.text || '').join('');
+            else if (typeof c.simpleText === 'string') channel = c.simpleText;
+        } catch (e) { /* ignore */ }
+        const titleLc = title.toLowerCase();
+        const channelLc = channel.toLowerCase();
+        if (channels.length && channels.some(c => channelLc.includes(c))) return true;
+        if (keywords.length && keywords.some(k => titleLc.includes(k))) return true;
+        return false;
+    }
+
+    function feedFilterWalk(value, channels, keywords, depth = 0) {
+        if (!value || depth > 16) return 0;
+        let dropped = 0;
+        if (Array.isArray(value)) {
+            for (let i = value.length - 1; i >= 0; i--) {
+                const item = value[i];
+                if (!item || typeof item !== 'object') continue;
+                // Look for a video-like renderer inside common wrapper keys.
+                const candidate = item.videoRenderer || item.gridVideoRenderer ||
+                                  item.compactVideoRenderer || item.richItemRenderer?.content?.videoRenderer ||
+                                  item.reelItemRenderer || null;
+                if (candidate && videoRendererMatches(candidate, channels, keywords)) {
+                    value.splice(i, 1);
+                    dropped++;
+                    continue;
+                }
+                dropped += feedFilterWalk(item, channels, keywords, depth + 1);
+            }
+        } else if (typeof value === 'object') {
+            for (const key of Object.keys(value)) {
+                dropped += feedFilterWalk(value[key], channels, keywords, depth + 1);
+            }
+        }
+        return dropped;
+    }
+
+    function installFeedFilter() {
+        // No-op install point — the blocklist walk is inlined into
+        // pruneObject so every intercept surface (JSON.parse, fetch, XHR)
+        // shares the same filtering. This engine slot exists so the
+        // feature can be observed in diagnostics and so future hooks
+        // (e.g. SPA DOM sweep for already-rendered tiles) can attach here.
+    }
+
+    /* =========================================================================
      * INSTALL ALL ENGINES
      * ===================================================================== */
 
@@ -2365,6 +3399,12 @@
         state.proxiesInstalled = true;
 
         const engines = [
+            // The toString mask MUST install first so every subsequent
+            // `registerNativeMask(proxy, original)` call has the patched
+            // Function.prototype.toString in place when YT inspects it.
+            ['NativeToStringMask', installNativeToStringMask],
+            ['ServiceWorkerBlock', installServiceWorkerBlock],
+            ['WebpackChunkHook', installWebpackChunkHook],
             ['JSONParseProxy', installJSONParseProxy],
             ['FetchProxy', installFetchProxy],
             ['XHRProxy', installXHRProxy],
@@ -2376,6 +3416,12 @@
             ['SponsorBlock', installSponsorBlock],
             ['TimerNeutralization', installTimerNeutralization],
             ['CosmeticCSS', updateCosmeticCSS],
+            ['DeArrow', installDeArrow],
+            ['ReturnYoutubeDislike', installReturnYoutubeDislike],
+            ['VolumeBoost', installVolumeBoost],
+            ['ClutterCSS', updateClutterCSS],
+            ['ShortsRedirect', installShortsRedirect],
+            ['FeedFilter', installFeedFilter]
         ];
 
         for (const [name, fn] of engines) {
@@ -3622,7 +4668,9 @@
             createMetricTile('Ads Blocked', 'blocked'),
             createMetricTile('Responses Pruned', 'pruned'),
             createMetricTile('SSAP Skips', 'ssapSkipped'),
-            createMetricTile('Sponsor Skips', 'sponsorSkipped')
+            createMetricTile('Sponsor Skips', 'sponsorSkipped'),
+            createMetricTile('DeArrow Replaced', 'dearrowReplaced'),
+            createMetricTile('Feed Filtered', 'feedFiltered')
         );
 
         const actions = document.createElement('nav');
@@ -3822,7 +4870,48 @@
         list.className = `${CSS_PREFIX}-toggle-list`;
         for (const feat of visibleFeatures) list.appendChild(createToggleRow(feat));
         surface.appendChild(list);
+        // Blocklist editors live with the blocklist feature group so users
+        // can edit channels and keywords inline without a separate surface.
+        if (group.sectionId === SECTION_IDS.blocklist) {
+            surface.appendChild(createBlocklistEditor(
+                'Blocked Channels',
+                'channel_blocklist',
+                'One channel name per line (case-insensitive substring match).'
+            ));
+            surface.appendChild(createBlocklistEditor(
+                'Blocked Keywords',
+                'keyword_blocklist',
+                'One keyword per line. Any video whose title contains a match is hidden.'
+            ));
+        }
         return createCollapsibleSection(section, surface, group.sectionId);
+    }
+
+    function createBlocklistEditor(title, storageKey, help) {
+        const wrap = document.createElement('div');
+        wrap.className = `${CSS_PREFIX}-field`;
+        wrap.style.marginTop = '12px';
+        const label = document.createElement('label');
+        label.className = `${CSS_PREFIX}-field-label`;
+        label.textContent = title;
+        const helpEl = document.createElement('p');
+        helpEl.className = `${CSS_PREFIX}-field-help`;
+        helpEl.textContent = help;
+        const ta = document.createElement('textarea');
+        ta.rows = 4;
+        ta.spellcheck = false;
+        ta.style.cssText = 'width:100%;min-height:80px;resize:vertical;padding:10px;border-radius:10px;border:1px solid rgba(255,255,255,0.12);background:rgba(0,0,0,0.35);color:#f7f8fb;font:12px ui-monospace,SFMono-Regular,Menlo,monospace;';
+        ta.value = String(getSetting(storageKey, ''));
+        let saveTimer = null;
+        ta.addEventListener('input', () => {
+            if (saveTimer) clearTimeout(saveTimer);
+            saveTimer = setTimeout(() => {
+                saveTimer = null;
+                setSetting(storageKey, ta.value);
+            }, 400);
+        });
+        wrap.append(label, helpEl, ta);
+        return wrap;
     }
 
     function createDiagnosticsSection(query = '') {
@@ -4240,6 +5329,7 @@
     // rewriting the style sheet — skipping that work avoids re-hitting
     // document.head and prevents unrelated selectors from flashing.
     const COSMETIC_AFFECTING_FEATURES = new Set(['cosmeticHiding', 'upsellBlock']);
+    const CLUTTER_AFFECTING_FEATURES = new Set(Object.keys(CLUTTER_SELECTORS));
 
     function setFeatureEnabled(key, checked, label) {
         const overrides = getFeatureOverrides();
@@ -4249,6 +5339,30 @@
         if (COSMETIC_AFFECTING_FEATURES.has(key)) {
             updateCosmeticCSS();
         }
+        if (CLUTTER_AFFECTING_FEATURES.has(key)) {
+            updateClutterCSS();
+        }
+        if (key === 'volumeBoost') {
+            try {
+                if (checked) { attachVolumeBoost(); ensureVolumeBoostSlider(); }
+                else {
+                    const existing = document.getElementById(`${CSS_PREFIX}-vol-boost`);
+                    if (existing) existing.remove();
+                    if (volumeBoostState.gainNode) {
+                        try { volumeBoostState.gainNode.gain.value = 1; } catch (e) { /* ignore */ }
+                    }
+                }
+            } catch (e) { /* ignore */ }
+        }
+        if (key === 'dearrow' && checked) {
+            try { sweepDearrow(document); } catch (e) { /* ignore */ }
+        }
+        if (key === 'returnYoutubeDislike' && checked) {
+            try { sweepRyd(); } catch (e) { /* ignore */ }
+        }
+        if (key === 'shortsRedirect' && checked) {
+            try { redirectShortsIfNeeded(); } catch (e) { /* ignore */ }
+        }
         refreshSettingsUI(true);
         showToast(`${label} ${checked ? 'enabled' : 'disabled'}.`, checked ? 'success' : 'warn');
     }
@@ -4257,6 +5371,7 @@
         state.enabled = enabled;
         setSetting('enabled', enabled);
         updateCosmeticCSS();
+        updateClutterCSS();
         refreshSettingsUI(true);
         // Refresh menu command labels so Pause/Resume reflects the new state.
         try { registerMenuCommands(); } catch (e) { /* ignore */ }
@@ -4556,6 +5671,7 @@
         // SPA navigation handling
         document.addEventListener('yt-navigate-finish', () => {
             updateCosmeticCSS();
+            updateClutterCSS();
         });
     }
 

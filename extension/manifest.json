@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "YoutubeAdblock",
-  "version": "0.3.3",
-  "description": "Document-start YouTube ad blocker with anti-detect hardening, iframe fetch-lift defense, SponsorBlock auto-skip, and DNR-based network blocking.",
+  "version": "0.4.0",
+  "description": "Document-start YouTube ad blocker with toString-masked proxies, ServiceWorker block, webpack chunk prune, iframe fetch-lift defense, SponsorBlock + DeArrow + Return YouTube Dislike, volume boost, Unhook-style clutter hides, and expanded DNR rules.",
   "author": "SysAdminDoc",
   "homepage_url": "https://github.com/SysAdminDoc/YoutubeAdblock",
   "minimum_chrome_version": "121",
@@ -25,7 +25,9 @@
     "*://youtubekids.com/*",
     "*://www.youtubekids.com/*",
     "https://raw.githubusercontent.com/*",
-    "https://sponsor.ajay.app/*"
+    "https://sponsor.ajay.app/*",
+    "https://dearrow-thumb.ajay.app/*",
+    "https://returnyoutubedislikeapi.com/*"
   ],
   "content_scripts": [
     {
