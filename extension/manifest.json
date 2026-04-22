@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "YoutubeAdblock",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "Document-start YouTube ad blocker with anti-detect hardening, iframe fetch-lift defense, SponsorBlock auto-skip, and DNR-based network blocking.",
   "author": "SysAdminDoc",
   "homepage_url": "https://github.com/SysAdminDoc/YoutubeAdblock",
