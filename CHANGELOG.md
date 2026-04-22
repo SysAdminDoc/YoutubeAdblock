@@ -2,6 +2,17 @@
 
 All notable changes to YoutubeAdblock are documented here.
 
+## [0.3.2] - 2026-04-22
+
+### Fixed
+- **Script not detected as running in Tampermonkey MV3.** Added explicit `@inject-into content`
+  directive so Tampermonkey unambiguously places the script in the content (isolated) execution
+  context, where all `GM_*` APIs are available. Without this, some MV3 builds would silently
+  skip injection when the sandbox context was ambiguous, causing the script to appear absent
+  in the Tampermonkey dashboard even though the match pattern was correct. Users who installed
+  on v0.1.1 and saw the "player blocked after 3 videos" popup should update — the iframe
+  fetch-lift defense (added in v0.2.1) and this injection fix together resolve the issue.
+
 ## [0.3.1] - 2026-04-17
 
 End-to-end hardening pass. No new features — every change either fixes a
