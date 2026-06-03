@@ -2,6 +2,27 @@
 
 All notable changes to YoutubeAdblock are documented here.
 
+## [0.4.1] - 2026-06-03
+
+Critical playback fix.
+
+### Fixed
+- **Broken video player + missing comments on `/watch` (issue #2).** The
+  `clientScreenSpoof` feature rewrote outbound `/youtubei/v1/player` (and
+  `/youtubei/v1/get_watch`) request bodies, setting
+  `context.client.clientScreen = 'CHANNEL'`. YouTube treats that as a
+  channel-page preview surface and returns `playabilityStatus = UNPLAYABLE`
+  with **no `streamingData`** — so the player never renders (no video, no
+  play button) and the watch-page hydration aborts, taking the comments
+  section with it. Verified against the live authenticated player endpoint:
+  the identical request returns `OK` + 14 adaptive formats without the spoof
+  and `UNPLAYABLE` + 0 formats with it.
+  - The spoof no longer rewrites the player/watch request bodies under any
+    circumstance (removed in both the fetch and XHR proxies).
+  - `clientScreenSpoof` now defaults to **off**. Existing users who had it
+    persisted as on are protected regardless, because the harmful mutation
+    is gone — the toggle can no longer strip `streamingData`.
+
 ## [0.4.0] - 2026-04-22
 
 Major capability release. Anti-detect hardening, three new user-visible

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         YoutubeAdblock
 // @namespace    https://github.com/SysAdminDoc
-// @version      0.4.0
+// @version      0.4.1
 // @description  YouTube ad blocker with remote rules, anti-detect hardening, toString-hiding proxies, DeArrow + RYD, volume boost, UI cleanup, and an in-page Control Center
 // @author       SysAdminDoc
 // @license      MIT
@@ -40,7 +40,7 @@
      * ===================================================================== */
 
     const SCRIPT_NAME = 'YoutubeAdblock';
-    const SCRIPT_VERSION = '0.4.0';
+    const SCRIPT_VERSION = '0.4.1';
     const PROJECT_URL = 'https://github.com/SysAdminDoc/YoutubeAdblock';
     const ISSUES_URL = `${PROJECT_URL}/issues`;
     const FILTER_URL_DEFAULT = 'https://raw.githubusercontent.com/SysAdminDoc/YoutubeAdblock/refs/heads/main/youtube-adblock-filters.txt';
@@ -185,7 +185,7 @@
         features: {
             jsonParsePrune: true, fetchIntercept: true, xhrIntercept: true,
             setUndefinedTraps: true, ssapAutoSkip: true, abnormalityBypass: true,
-            domBypassPrevention: true, clientScreenSpoof: true, shortsAdBlock: true,
+            domBypassPrevention: true, clientScreenSpoof: false, shortsAdBlock: true,
             cosmeticHiding: true, upsellBlock: true, requestBodyModify: true,
             timerNeutralization: true,
             // New in 0.2.1 — opt-in by default because they trade off
@@ -268,7 +268,7 @@
                 {
                     key: 'clientScreenSpoof',
                     label: 'Client screen spoofing',
-                    desc: 'Reports a safer client screen value to reduce ad-specific responses.'
+                    desc: 'Off by default. Legacy outbound spoof; never rewrites the video player request (doing so broke playback). Safe to leave disabled.'
                 },
                 {
                     key: 'ssapAutoSkip',
@@ -1544,21 +1544,18 @@
                     return Reflect.apply(target, thisArg, args);
                 }
 
-                // Modify outbound request body (clientScreen spoof)
-                if (state.features.clientScreenSpoof && state.features.requestBodyModify) {
-                    try {
-                        if (url.includes('/youtubei/v1/player') || url.includes('/youtubei/v1/get_watch')) {
-                            const init = args[1];
-                            if (init && init.body && typeof init.body === 'string') {
-                                const bodyObj = jsonParseRaw(init.body);
-                                if (bodyObj?.context?.client?.clientName === 'WEB') {
-                                    bodyObj.context.client.clientScreen = 'CHANNEL';
-                                    args[1] = { ...init, body: JSON.stringify(bodyObj) };
-                                }
-                            }
-                        }
-                    } catch (e) { /* fail silently */ }
-                }
+                // Outbound request body spoof — DISABLED on the player/watch
+                // endpoints. Setting context.client.clientScreen = 'CHANNEL' on
+                // /youtubei/v1/player makes YouTube treat the request as a
+                // channel-page preview and return playabilityStatus=UNPLAYABLE
+                // with NO streamingData, which breaks playback entirely (no
+                // video, no play button) and cascades into the watch-page
+                // hydration (missing comments). Verified: identical authed
+                // /player request returns OK + 14 formats without the spoof and
+                // UNPLAYABLE + 0 formats with it. The clientScreenSpoof toggle
+                // is retained for non-player requests only; it must never
+                // rewrite /youtubei/v1/player or /youtubei/v1/get_watch.
+                // See issue #2.
 
                 if (!state.features.fetchIntercept || !matchesInterceptPattern(url)) {
                     return Reflect.apply(target, thisArg, args);
@@ -1633,14 +1630,11 @@
             const urlStr = (typeof url === 'string') ? url : (url != null ? String(url) : '');
             this._ytab_url = urlStr;
 
-            // Modify outbound request body interception point
-            if (isEnabled() && state.features.clientScreenSpoof && state.features.requestBodyModify) {
-                this._ytab_shouldModify = (
-                    urlStr.includes('/youtubei/v1/player') || urlStr.includes('/youtubei/v1/get_watch')
-                );
-            } else {
-                this._ytab_shouldModify = false;
-            }
+            // Outbound body spoof intentionally never targets the player/watch
+            // endpoints — clientScreen='CHANNEL' on /youtubei/v1/player strips
+            // streamingData and yields UNPLAYABLE, breaking the player. See the
+            // fetch proxy and issue #2 for the verified repro.
+            this._ytab_shouldModify = false;
 
             return originalOpen.call(this, method, url, ...rest);
         };
@@ -1650,16 +1644,7 @@
                 return originalSend.call(this, body);
             }
 
-            // Modify outbound request body
-            if (this._ytab_shouldModify && body && typeof body === 'string') {
-                try {
-                    const bodyObj = jsonParseRaw(body);
-                    if (bodyObj?.context?.client?.clientName === 'WEB') {
-                        bodyObj.context.client.clientScreen = 'CHANNEL';
-                        body = JSON.stringify(bodyObj);
-                    }
-                } catch (e) { /* fail silently */ }
-            }
+            // (Outbound clientScreen spoof removed — see proxiedOpen / issue #2.)
 
             if (!state.features.xhrIntercept || !matchesInterceptPattern(this._ytab_url)) {
                 return originalSend.call(this, body);
