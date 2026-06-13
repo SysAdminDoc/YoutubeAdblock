@@ -35,6 +35,11 @@ if (-not (Test-Path -LiteralPath $srcPath)) {
 
 $raw = [System.IO.File]::ReadAllText($srcPath)
 
+# Strip a leading UTF-8 BOM if present so the header regex matches cleanly.
+if ($raw.Length -gt 0 -and $raw[0] -eq [char]0xFEFF) {
+    $raw = $raw.Substring(1)
+}
+
 # Strip the ==UserScript== block (and anything before it that is only
 # the file's leading whitespace). Case-insensitive, dotall.
 $headerPattern = '(?is)^\s*//\s*==UserScript==.*?//\s*==/UserScript==\s*'

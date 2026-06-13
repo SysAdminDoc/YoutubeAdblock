@@ -3682,6 +3682,12 @@
                 --panel-border-strong: rgba(255, 255, 255, 0.14);
                 --accent: #ff6a4d;
                 --accent-strong: #ff8a5c;
+                --accent-focus: rgba(255, 106, 77, 0.16);
+                --accent-focus-border: rgba(255, 106, 77, 0.48);
+                --accent-tap: rgba(255, 106, 77, 0.14);
+                --accent-glow: rgba(255, 106, 77, 0.28);
+                --scrollbar-thumb: rgba(255, 255, 255, 0.14);
+                --scrollbar-thumb-webkit: rgba(255, 255, 255, 0.12);
                 --success: #66d995;
                 --info: #7abfff;
                 --warning: #ffc46b;
@@ -3739,7 +3745,7 @@
                 font-size: 14px;
                 font-weight: 800;
                 letter-spacing: 0.08em;
-                box-shadow: 0 14px 34px rgba(255, 106, 77, 0.28);
+                box-shadow: 0 14px 34px var(--accent-glow);
                 flex-shrink: 0;
             }
             .${CSS_PREFIX}-brand {
@@ -3810,13 +3816,13 @@
                 overscroll-behavior: contain;
                 scrollbar-gutter: stable both-edges;
                 scrollbar-width: thin;
-                scrollbar-color: rgba(255, 255, 255, 0.14) transparent;
+                scrollbar-color: var(--scrollbar-thumb) transparent;
             }
             .${CSS_PREFIX}-content::-webkit-scrollbar {
                 width: 8px;
             }
             .${CSS_PREFIX}-content::-webkit-scrollbar-thumb {
-                background: rgba(255, 255, 255, 0.12);
+                background: var(--scrollbar-thumb-webkit);
                 border-radius: 999px;
             }
             .${CSS_PREFIX}-layout {
@@ -3869,7 +3875,7 @@
             .${CSS_PREFIX}-section-toggle:focus-visible {
                 outline: none;
                 border-radius: 12px;
-                box-shadow: 0 0 0 3px rgba(255, 106, 77, 0.16);
+                box-shadow: 0 0 0 3px var(--accent-focus);
             }
             .${CSS_PREFIX}-section-chevron {
                 display: inline-flex;
@@ -4143,7 +4149,7 @@
                 line-height: 1.45;
                 font-family: "Cascadia Code", "SF Mono", Consolas, monospace;
                 touch-action: manipulation;
-                -webkit-tap-highlight-color: rgba(255, 106, 77, 0.14);
+                -webkit-tap-highlight-color: var(--accent-tap);
                 outline: none;
                 transition: border-color 0.16s ease, background 0.16s ease, box-shadow 0.16s ease;
             }
@@ -4151,8 +4157,8 @@
                 background: rgba(255, 255, 255, 0.04);
             }
             .${CSS_PREFIX}-input:focus-visible {
-                border-color: rgba(255, 106, 77, 0.48);
-                box-shadow: 0 0 0 3px rgba(255, 106, 77, 0.14);
+                border-color: var(--accent-focus-border);
+                box-shadow: 0 0 0 3px var(--accent-tap);
                 background: rgba(255, 255, 255, 0.045);
             }
             .${CSS_PREFIX}-input[aria-invalid="true"] {
@@ -4186,7 +4192,7 @@
                 white-space: nowrap;
                 text-decoration: none;
                 touch-action: manipulation;
-                -webkit-tap-highlight-color: rgba(255, 106, 77, 0.14);
+                -webkit-tap-highlight-color: var(--accent-tap);
             }
             .${CSS_PREFIX}-btn:disabled {
                 cursor: default;
@@ -4251,7 +4257,7 @@
                 font-size: 18px;
                 cursor: pointer;
                 touch-action: manipulation;
-                -webkit-tap-highlight-color: rgba(255, 106, 77, 0.14);
+                -webkit-tap-highlight-color: var(--accent-tap);
             }
             .${CSS_PREFIX}-close:hover {
                 color: var(--text);
@@ -4274,15 +4280,15 @@
                 transition: border-color 0.16s ease, background 0.16s ease, box-shadow 0.16s ease;
                 cursor: pointer;
                 touch-action: manipulation;
-                -webkit-tap-highlight-color: rgba(255, 106, 77, 0.12);
+                -webkit-tap-highlight-color: var(--accent-tap);
             }
             .${CSS_PREFIX}-row:hover {
                 background: rgba(255, 255, 255, 0.028);
                 border-color: rgba(255, 255, 255, 0.1);
             }
             .${CSS_PREFIX}-row:focus-within {
-                border-color: rgba(255, 106, 77, 0.38);
-                box-shadow: 0 0 0 3px rgba(255, 106, 77, 0.1);
+                border-color: var(--accent-focus-border);
+                box-shadow: 0 0 0 3px var(--accent-focus);
             }
             .${CSS_PREFIX}-row-label-line {
                 display: flex;
@@ -4461,7 +4467,7 @@
             .${CSS_PREFIX}-toggle input:focus-visible + .${CSS_PREFIX}-toggle-track,
             .${CSS_PREFIX}-input:focus-visible {
                 outline: none;
-                box-shadow: 0 0 0 3px rgba(255, 106, 77, 0.16);
+                box-shadow: 0 0 0 3px var(--accent-focus);
             }
             @media (max-width: 820px) {
                 .${CSS_PREFIX}-overlay {
