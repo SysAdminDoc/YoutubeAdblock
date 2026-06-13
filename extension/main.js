@@ -2358,6 +2358,7 @@
         // applying videoA's segments to videoB.
         loadingToken: null,
         segments: [],
+        highlight: null,
         video: null,
         timeupdateHandler: null,
         lastSkipEnd: -1,
@@ -2423,8 +2424,8 @@
                 resolve(null);
                 return;
             }
-            const cats = encodeURIComponent(JSON.stringify(SPONSORBLOCK_CATEGORIES));
-            const actions = encodeURIComponent(JSON.stringify(['skip', 'full']));
+            const cats = encodeURIComponent(JSON.stringify([...SPONSORBLOCK_CATEGORIES, 'poi_highlight']));
+            const actions = encodeURIComponent(JSON.stringify(['skip', 'full', 'poi']));
             const url = `${SPONSORBLOCK_API}/${hashPrefix}?categories=${cats}&actionTypes=${actions}`;
             GM_xmlhttpRequest({
                 method: 'GET',
@@ -2483,12 +2484,18 @@
             if (!match || !Array.isArray(match.segments)) return;
 
             const clean = [];
+            var highlight = null;
             for (const s of match.segments) {
                 if (!s || !Array.isArray(s.segment) || s.segment.length !== 2) continue;
-                if (s.actionType && s.actionType !== 'skip' && s.actionType !== 'full') continue;
+                var action = s.actionType || 'skip';
+                if (action !== 'skip' && action !== 'full' && action !== 'poi') continue;
                 const start = Number(s.segment[0]);
                 const end = Number(s.segment[1]);
                 if (!Number.isFinite(start) || !Number.isFinite(end)) continue;
+                if (action === 'poi') {
+                    if (start >= 0) highlight = { time: start, category: s.category, uuid: s.UUID };
+                    continue;
+                }
                 if (end <= start || start < 0) continue;
                 clean.push({ start, end, category: s.category, uuid: s.UUID });
             }
@@ -2497,7 +2504,9 @@
             // match.
             clean.sort((a, b) => a.start - b.start);
             sponsorBlockState.segments = clean;
+            sponsorBlockState.highlight = highlight;
             sponsorBlockState.videoId = videoId;
+            renderHighlightButton();
         } finally {
             // Only clear the token if we still own it. If another load
             // replaced us, leave it alone.
@@ -2575,20 +2584,47 @@
         } catch (e) { /* ignore */ }
     }
 
+    function renderHighlightButton() {
+        var existing = document.getElementById('ytab-highlight-btn');
+        if (existing) existing.remove();
+        var hl = sponsorBlockState.highlight;
+        if (!hl || !isEnabled() || !state.features.sponsorBlock) return;
+        var controls = document.querySelector('.ytp-right-controls');
+        if (!controls) return;
+        var btn = document.createElement('button');
+        btn.id = 'ytab-highlight-btn';
+        btn.className = 'ytp-button';
+        btn.title = 'Jump to highlight (' + Math.floor(hl.time / 60) + ':' + String(Math.floor(hl.time % 60)).padStart(2, '0') + ')';
+        btn.setAttribute('aria-label', btn.title);
+        btn.style.cssText = 'font-size:12px;font-weight:600;color:#ff0;cursor:pointer;padding:0 6px;line-height:36px;opacity:0.9;';
+        btn.textContent = '★';
+        btn.addEventListener('click', function() {
+            var video = sponsorBlockState.video || document.querySelector('video.html5-main-video');
+            if (video && Number.isFinite(hl.time)) {
+                try { video.currentTime = hl.time; } catch (e) { /* ignore */ }
+            }
+        });
+        controls.prepend(btn);
+    }
+
     function handleSponsorBlockNav() {
         if (!isEnabled() || !state.features.sponsorBlock) return;
         const vid = getCurrentVideoId();
         if (!vid) {
             sponsorBlockState.segments = [];
+            sponsorBlockState.highlight = null;
             sponsorBlockState.videoId = null;
             sponsorBlockState.pendingVideoId = null;
             sponsorBlockState.lastSkipEnd = -1;
+            var hlBtn = document.getElementById('ytab-highlight-btn');
+            if (hlBtn) hlBtn.remove();
             return;
         }
         // Fresh video — drop whatever segments we had so a stale in-flight
         // fetch can't apply in the gap between nav and new segments.
         if (vid !== sponsorBlockState.videoId) {
             sponsorBlockState.segments = [];
+            sponsorBlockState.highlight = null;
             sponsorBlockState.lastSkipEnd = -1;
             loadSponsorSegments(vid);
         }
