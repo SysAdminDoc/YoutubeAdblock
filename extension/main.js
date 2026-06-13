@@ -2466,6 +2466,20 @@
         }
     }
 
+    function reportSponsorBlockView(segmentUUID) {
+        if (!segmentUUID || typeof GM_xmlhttpRequest !== 'function') return;
+        try {
+            GM_xmlhttpRequest({
+                method: 'POST',
+                url: `https://sponsor.ajay.app/api/viewedVideoSponsorTime?UUID=${encodeURIComponent(segmentUUID)}`,
+                timeout: 5000,
+                onload() {},
+                onerror() {},
+                ontimeout() {}
+            });
+        } catch (e) { /* fire-and-forget */ }
+    }
+
     function attachSponsorBlockVideo() {
         const video = document.querySelector('video.html5-main-video');
         if (!video || video === sponsorBlockState.video) return;
@@ -2500,6 +2514,9 @@
                     video.currentTime = Number.isFinite(target) && target > t ? target : seg.end;
                     sponsorBlockState.lastSkipEnd = seg.end;
                     incrementStat('sponsorSkipped');
+                    // Ecosystem contract: report the skip so community stats
+                    // stay accurate. Fire-and-forget, non-blocking.
+                    reportSponsorBlockView(seg.uuid);
                 } catch (e) { /* some codepaths reject currentTime writes */ }
                 return;
             }
