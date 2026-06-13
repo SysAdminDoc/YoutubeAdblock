@@ -2358,15 +2358,37 @@
         }
     }
 
-    function getCurrentVideoId() {
+    function extractVideoIdFromUrl(urlStr, base) {
         try {
-            const u = new URL(location.href);
+            const u = base ? new URL(urlStr, base) : new URL(urlStr);
             if (u.pathname === '/watch') return u.searchParams.get('v');
             const m = u.pathname.match(/^\/(?:shorts|embed|live)\/([A-Za-z0-9_-]{11})/);
             return m ? m[1] : null;
-        } catch (e) {
+        } catch (e) { return null; }
+    }
+
+    function getCurrentVideoId() {
+        return extractVideoIdFromUrl(location.href);
+    }
+
+    function lruCacheSet(cache, maxSize, key, entry) {
+        if (cache.has(key)) cache.delete(key);
+        cache.set(key, { ...entry, fetchedAt: Date.now() });
+        while (cache.size > maxSize) {
+            const firstKey = cache.keys().next().value;
+            if (firstKey === undefined) break;
+            cache.delete(firstKey);
+        }
+    }
+
+    function lruCacheGet(cache, ttl, key) {
+        const entry = cache.get(key);
+        if (!entry) return null;
+        if (Date.now() - entry.fetchedAt > ttl) {
+            cache.delete(key);
             return null;
         }
+        return entry;
     }
 
     function sponsorBlockFetchBucket(hashPrefix) {
@@ -2842,17 +2864,23 @@
         }
     }
 
+    let cosmeticCSSLastHash = '';
+
     function updateCosmeticCSS() {
         // Re-resolve when the cached node has been torn out of the document,
         // e.g. if YouTube rewrites <head> during an SPA navigation. The old
         // implementation kept a stale reference and silently stopped updating.
         if (!state.cosmeticStyleEl || !state.cosmeticStyleEl.isConnected) {
             state.cosmeticStyleEl = ensureStyleElement(`${CSS_PREFIX}-cosmetic`);
+            cosmeticCSSLastHash = '';
         }
         watchCosmeticStyleSurvival();
 
         if (!isEnabled() || !state.features.cosmeticHiding) {
-            state.cosmeticStyleEl.textContent = '';
+            if (cosmeticCSSLastHash !== '') {
+                state.cosmeticStyleEl.textContent = '';
+                cosmeticCSSLastHash = '';
+            }
             return;
         }
 
@@ -2869,9 +2897,19 @@
         for (const s of selectors) if (isSafeCosmeticSelector(s)) safe.push(s);
         for (const s of upsellSelectors) if (isSafeCosmeticSelector(s)) safe.push(s);
         if (!safe.length) {
-            state.cosmeticStyleEl.textContent = '';
+            if (cosmeticCSSLastHash !== '') {
+                state.cosmeticStyleEl.textContent = '';
+                cosmeticCSSLastHash = '';
+            }
             return;
         }
+        // Cheap identity check: only rewrite the <style> element when the
+        // selector set actually changed. On SPA navigations + the 1.5s
+        // DeArrow sweep this short-circuits the common case (same filter
+        // set, same feature flags) with zero DOM writes.
+        const hash = safe.length + ':' + safe[0] + ':' + safe[safe.length - 1];
+        if (hash === cosmeticCSSLastHash) return;
+        cosmeticCSSLastHash = hash;
         // One rule per selector — per the CSS spec, a malformed selector in
         // a comma list invalidates the whole rule. Per-selector isolation
         // means a single bad entry only loses itself.
@@ -2893,24 +2931,11 @@
     const dearrowCache = new Map(); // videoId → {title, thumbnailUrl, fetchedAt}
 
     function dearrowCacheSet(videoId, entry) {
-        if (dearrowCache.has(videoId)) dearrowCache.delete(videoId);
-        dearrowCache.set(videoId, { ...entry, fetchedAt: Date.now() });
-        // LRU trim — oldest insertion order first.
-        while (dearrowCache.size > DEARROW_CACHE_MAX) {
-            const firstKey = dearrowCache.keys().next().value;
-            if (firstKey === undefined) break;
-            dearrowCache.delete(firstKey);
-        }
+        lruCacheSet(dearrowCache, DEARROW_CACHE_MAX, videoId, entry);
     }
 
     function dearrowCacheGet(videoId) {
-        const entry = dearrowCache.get(videoId);
-        if (!entry) return null;
-        if (Date.now() - entry.fetchedAt > DEARROW_CACHE_TTL) {
-            dearrowCache.delete(videoId);
-            return null;
-        }
-        return entry;
+        return lruCacheGet(dearrowCache, DEARROW_CACHE_TTL, videoId);
     }
 
     function dearrowFetchBucket(hashPrefix) {
@@ -2966,12 +2991,7 @@
 
     function extractVideoIdFromHref(href) {
         if (!href) return null;
-        try {
-            const u = new URL(href, location.origin);
-            if (u.pathname === '/watch') return u.searchParams.get('v');
-            const m = u.pathname.match(/^\/(?:shorts|embed|live)\/([A-Za-z0-9_-]{11})/);
-            return m ? m[1] : null;
-        } catch (e) { return null; }
+        return extractVideoIdFromUrl(href, location.origin);
     }
 
     async function applyDearrowToElement(el) {
@@ -3074,23 +3094,11 @@
     const rydCache = new Map(); // videoId → { dislikes, fetchedAt }
 
     function rydCacheSet(videoId, entry) {
-        if (rydCache.has(videoId)) rydCache.delete(videoId);
-        rydCache.set(videoId, { ...entry, fetchedAt: Date.now() });
-        while (rydCache.size > RYD_CACHE_MAX) {
-            const firstKey = rydCache.keys().next().value;
-            if (firstKey === undefined) break;
-            rydCache.delete(firstKey);
-        }
+        lruCacheSet(rydCache, RYD_CACHE_MAX, videoId, entry);
     }
 
     function rydCacheGet(videoId) {
-        const entry = rydCache.get(videoId);
-        if (!entry) return null;
-        if (Date.now() - entry.fetchedAt > RYD_CACHE_TTL) {
-            rydCache.delete(videoId);
-            return null;
-        }
-        return entry;
+        return lruCacheGet(rydCache, RYD_CACHE_TTL, videoId);
     }
 
     function rydFetch(videoId) {
