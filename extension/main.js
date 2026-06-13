@@ -1914,10 +1914,16 @@
         const proxiedAssign = new Proxy(originalAssign, {
             apply(target, thisArg, args) {
                 const result = Reflect.apply(target, thisArg, args);
-                // Cheap gate: two boolean reads, then at most two own-property
-                // lookups inside injectNoAdFlag. Object.assign is hot, so the
-                // happy path must stay allocation-free.
-                if (isEnabled() && state.features.requestBodyModify) {
+                // Only check objects that could plausibly be InnerTube player
+                // request bodies. Object.assign is extremely hot — every YT
+                // component merges state through it — so the guard must be
+                // cheap: one typeof + one property-in check. Without this
+                // gate the flag would be injected into analytics payloads,
+                // UI config objects, and any third-party code that happens
+                // to merge an object with a contentPlaybackContext field.
+                if (isEnabled() && state.features.requestBodyModify &&
+                    result && typeof result === 'object' &&
+                    ('playbackContext' in result || 'contentPlaybackContext' in result)) {
                     injectNoAdFlag(result);
                 }
                 return result;
@@ -2135,21 +2141,13 @@
                 if (node instanceof HTMLIFrameElement) {
                     bridgeIframeWindow(node);
                     try {
-                        // Re-bridge on every document swap, not just once.
-                        // An iframe can swap its document multiple times
-                        // (e.g. YT uses blob: and srcdoc-driven swaps).
-                        // Each new document gets a fresh Window, and the
-                        // sentinel lives on the old one — so this listener
-                        // picks up every swap without leaking old refs.
-                        node.addEventListener('load', () => {
-                            // Clear the cross-origin memoization so the
-                            // new document gets a fresh probe — an iframe
-                            // that navigated from same-origin to cross-
-                            // origin (or vice versa) would otherwise stay
-                            // stuck in the old classification.
-                            frameCrossOriginCache.delete(node);
-                            bridgeIframeWindow(node);
-                        });
+                        if (!node.__ytabLoadBridged) {
+                            node.__ytabLoadBridged = true;
+                            node.addEventListener('load', () => {
+                                frameCrossOriginCache.delete(node);
+                                bridgeIframeWindow(node);
+                            });
+                        }
                     } catch (e) { /* ignore */ }
                 }
                 // Block inline script injection that resets fetch.
@@ -2548,6 +2546,10 @@
         sponsorBlockState.video = video;
         const handler = function onSponsorBlockTimeUpdate() {
             if (!isEnabled() || !state.features.sponsorBlock) return;
+            if (!video.isConnected) {
+                try { video.removeEventListener('timeupdate', handler); } catch (e) { /* ignore */ }
+                return;
+            }
             const segments = sponsorBlockState.segments;
             if (!segments.length) return;
             // Defense-in-depth against the stale-fetch race: only apply
@@ -2873,7 +2875,7 @@
                                 try {
                                     src = (state.originals.functionToString || Function.prototype.toString).call(factory);
                                 } catch (e) { continue; }
-                                if (src && WEBPACK_AD_SIGNATURES.test(src)) {
+                                if (src && src.length < 200000 && WEBPACK_AD_SIGNATURES.test(src)) {
                                     // Replace the factory with a no-op that
                                     // still fulfills the module contract.
                                     // module.exports stays an empty object,
@@ -3709,6 +3711,7 @@
         if (!document.body) return null;
         const region = document.createElement('div');
         region.className = `${CSS_PREFIX}-toast-region`;
+        region.setAttribute('role', 'status');
         region.setAttribute('aria-live', 'polite');
         region.setAttribute('aria-atomic', 'false');
         document.body.appendChild(region);
@@ -4624,6 +4627,30 @@
                     animation-iteration-count: 1;
                 }
             }
+            .${CSS_PREFIX}-blocklist-textarea {
+                width: 100%;
+                min-height: 80px;
+                resize: vertical;
+                padding: 10px;
+                border-radius: 10px;
+                border: 1px solid var(--panel-border);
+                background: rgba(0, 0, 0, 0.35);
+                color: var(--text);
+                font: 12px ui-monospace, SFMono-Regular, Menlo, monospace;
+            }
+            .${CSS_PREFIX}-blocklist-textarea:focus {
+                outline: 2px solid var(--accent);
+                outline-offset: -2px;
+            }
+            .${CSS_PREFIX}-attribution {
+                margin-top: 8px;
+                font-size: 11px;
+                opacity: 0.7;
+            }
+            .${CSS_PREFIX}-attribution a {
+                color: var(--accent);
+                text-decoration: underline;
+            }
         `;
         ensureStyleElement(`${CSS_PREFIX}-ui`).textContent = css;
     }
@@ -5170,9 +5197,9 @@
         helpEl.className = `${CSS_PREFIX}-field-help`;
         helpEl.textContent = help;
         const ta = document.createElement('textarea');
+        ta.className = `${CSS_PREFIX}-blocklist-textarea`;
         ta.rows = 4;
         ta.spellcheck = false;
-        ta.style.cssText = 'width:100%;min-height:80px;resize:vertical;padding:10px;border-radius:10px;border:1px solid rgba(255,255,255,0.12);background:rgba(0,0,0,0.35);color:#f7f8fb;font:12px ui-monospace,SFMono-Regular,Menlo,monospace;';
         ta.value = String(getSetting(storageKey, ''));
         let saveTimer = null;
         ta.addEventListener('input', () => {
@@ -5431,22 +5458,18 @@
 
     function createAttributionNote(text, links) {
         const note = document.createElement('div');
-        note.className = `${CSS_PREFIX}-note`;
+        note.className = `${CSS_PREFIX}-note ${CSS_PREFIX}-attribution`;
         note.dataset.tone = 'neutral';
-        note.style.marginTop = '8px';
-        note.style.fontSize = '11px';
-        note.style.opacity = '0.7';
         const bodyEl = document.createElement('p');
         bodyEl.className = `${CSS_PREFIX}-note-text`;
         bodyEl.textContent = text + ' ';
-        for (let i = 0; i < links.length; i++) {
+        for (var i = 0; i < links.length; i++) {
             if (i > 0) bodyEl.appendChild(document.createTextNode(' · '));
-            const a = document.createElement('a');
+            var a = document.createElement('a');
             a.href = links[i][1];
             a.target = '_blank';
             a.rel = 'noopener noreferrer';
             a.textContent = links[i][0];
-            a.style.cssText = 'color:var(--accent);text-decoration:underline;';
             bodyEl.appendChild(a);
         }
         note.appendChild(bodyEl);
@@ -5513,6 +5536,7 @@
         input.setAttribute('aria-describedby', descId);
         if (feature.locked) {
             input.disabled = true;
+            input.setAttribute('aria-disabled', 'true');
             row.style.opacity = '0.6';
         }
         row.append(copy, toggle);
@@ -6008,7 +6032,7 @@
         registerInterval(() => {
             if (!isEnabled() || breakageToastFired) return;
             const enforcement = document.querySelector(
-                'ytd-enforcement-message-view-model, tp-yt-paper-dialog.ytd-popup-container[aria-label]'
+                'ytd-enforcement-message-view-model, tp-yt-paper-dialog:has(ytd-enforcement-message-view-model)'
             );
             const adOverlay = document.querySelector(
                 '.ytp-ad-player-overlay, .ytp-ad-action-interstitial, .ad-showing .ytp-ad-module'
