@@ -5807,13 +5807,28 @@
         document.addEventListener('ytab:settings-changed', handleExtensionSettingsSync);
     }
 
-    // Phase 1: Load config and install proxies ASAP (document-start)
+    // Phase 1: Load config and install proxies ASAP (document-start).
+    // If document-start was lost (late injection under Tampermonkey MV3,
+    // prerendered navigations, or hot-reload), installProxies is
+    // idempotent: it bails on `state.proxiesInstalled` and safeOverride
+    // logs any natives that are already locked.
     loadState();
-    installProxies();
-    injectSettingsCSS();
+    // Handle Chrome prerendered documents: defer proxy install until the
+    // page activates so we don't race against a speculative document
+    // that may be discarded (wasted work + possible double-install).
+    if (typeof document !== 'undefined' && document.prerendering) {
+        document.addEventListener('prerenderingchange', () => {
+            installProxies();
+            injectSettingsCSS();
+            fetchFilters();
+        }, { once: true });
+    } else {
+        installProxies();
+        injectSettingsCSS();
 
-    // Phase 2: Background filter fetch
-    fetchFilters();
+        // Phase 2: Background filter fetch
+        fetchFilters();
+    }
 
     function safeRegisterMenu(label, fn) {
         if (typeof GM_registerMenuCommand !== 'function') return null;
@@ -5866,6 +5881,31 @@
             updateCosmeticCSS();
             updateClutterCSS();
         });
+
+        // Breakage self-test: detect enforcement popups or ad elements that
+        // survived pruning. When the user has protection on but YouTube still
+        // rendered an enforcement banner or a video ad overlay, a recovery
+        // toast offers a one-click rule refresh. The check runs every 10s and
+        // debounces (at most one toast per page load) to avoid false-alarm
+        // spam on transient DOM.
+        let breakageToastFired = false;
+        registerInterval(() => {
+            if (!isEnabled() || breakageToastFired) return;
+            const enforcement = document.querySelector(
+                'ytd-enforcement-message-view-model, tp-yt-paper-dialog.ytd-popup-container[aria-label]'
+            );
+            const adOverlay = document.querySelector(
+                '.ytp-ad-player-overlay, .ytp-ad-action-interstitial, .ad-showing .ytp-ad-module'
+            );
+            if (enforcement || adOverlay) {
+                breakageToastFired = true;
+                showToast(
+                    'YouTube may have changed its ad delivery. Try refreshing rules from the Control Center.',
+                    'warn'
+                );
+            }
+        }, 10000);
+        document.addEventListener('yt-navigate-finish', () => { breakageToastFired = false; });
     }
 
     if (document.readyState === 'loading') {
