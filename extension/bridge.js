@@ -40,6 +40,15 @@
     let pendingWrite = null;
     let pendingTimer = null;
 
+    const inflight = new Set();
+    let pendingGetIds = null;
+    let pendingGetTimer = null;
+    const GET_COALESCE_MS = 16;
+    const RATE_WINDOW_MS = 1000;
+    const RATE_MAX_OPS = 30;
+    let rateWindowStart = 0;
+    let rateWindowCount = 0;
+
     function flushPendingWrite() {
         if (!pendingWrite) return;
         const { value, ids } = pendingWrite;
@@ -50,6 +59,7 @@
             chrome.storage.local.set({ [ALLOWED_STORAGE_KEY]: value }, () => {
                 const err = chrome.runtime && chrome.runtime.lastError;
                 for (const id of snapshotIds) {
+                    inflight.delete(id);
                     document.dispatchEvent(new CustomEvent(EVT_PAGE_RESPONSE, {
                         detail: err
                             ? { id, error: String(err.message || err) }
@@ -59,6 +69,7 @@
             });
         } catch (e) {
             for (const id of snapshotIds) {
+                inflight.delete(id);
                 document.dispatchEvent(new CustomEvent(EVT_PAGE_RESPONSE, {
                     detail: { id, error: String(e && e.message || e) }
                 }));
@@ -109,33 +120,71 @@
         });
     } catch (e) { /* extension context gone, harmless */ }
 
-    // Accept storage requests from the page-world. Hardened:
-    //   - only one allowlisted key;
-    //   - serialized payloads over MAX_PAYLOAD_BYTES are rejected;
-    //   - writes are debounced so a flood of events can't exhaust quota.
+    function flushPendingGet() {
+        if (!pendingGetIds) return;
+        const ids = pendingGetIds;
+        pendingGetIds = null;
+        pendingGetTimer = null;
+        try {
+            chrome.storage.local.get([ALLOWED_STORAGE_KEY], (items) => {
+                const err = chrome.runtime && chrome.runtime.lastError;
+                for (const rid of ids) {
+                    inflight.delete(rid);
+                    document.dispatchEvent(new CustomEvent(EVT_PAGE_RESPONSE, {
+                        detail: err
+                            ? { id: rid, error: String(err.message || err) }
+                            : { id: rid, value: items ? items[ALLOWED_STORAGE_KEY] : undefined }
+                    }));
+                }
+            });
+        } catch (e) {
+            for (const rid of ids) {
+                inflight.delete(rid);
+                document.dispatchEvent(new CustomEvent(EVT_PAGE_RESPONSE, {
+                    detail: { id: rid, error: String(e && e.message || e) }
+                }));
+            }
+        }
+    }
+
+    function isRateLimited() {
+        const now = Date.now();
+        if (now - rateWindowStart > RATE_WINDOW_MS) {
+            rateWindowStart = now;
+            rateWindowCount = 0;
+        }
+        if (rateWindowCount >= RATE_MAX_OPS) return true;
+        rateWindowCount++;
+        return false;
+    }
+
     document.addEventListener(EVT_PAGE_REQUEST, (event) => {
         const detail = event && event.detail;
         if (!detail || typeof detail !== 'object') return;
         const { id, op, key, value } = detail;
         if (typeof id !== 'string' || !id || id.length > 64) return;
+        if (inflight.has(id)) return;
         if (key !== ALLOWED_STORAGE_KEY) {
             document.dispatchEvent(new CustomEvent(EVT_PAGE_RESPONSE, {
                 detail: { id, error: 'storage key not allowed' }
             }));
             return;
         }
+        if (isRateLimited()) {
+            document.dispatchEvent(new CustomEvent(EVT_PAGE_RESPONSE, {
+                detail: { id, error: 'rate limited' }
+            }));
+            return;
+        }
+        inflight.add(id);
         try {
             if (op === 'get') {
-                chrome.storage.local.get([key], (items) => {
-                    const err = chrome.runtime && chrome.runtime.lastError;
-                    document.dispatchEvent(new CustomEvent(EVT_PAGE_RESPONSE, {
-                        detail: err
-                            ? { id, error: String(err.message || err) }
-                            : { id, value: items ? items[key] : undefined }
-                    }));
-                });
+                pendingGetIds = pendingGetIds ? pendingGetIds.concat(id) : [id];
+                if (pendingGetTimer) clearTimeout(pendingGetTimer);
+                pendingGetTimer = setTimeout(flushPendingGet, GET_COALESCE_MS);
             } else if (op === 'set') {
                 if (serializedSize(value) > MAX_PAYLOAD_BYTES) {
+                    inflight.delete(id);
                     document.dispatchEvent(new CustomEvent(EVT_PAGE_RESPONSE, {
                         detail: { id, error: 'payload too large' }
                     }));
@@ -143,11 +192,13 @@
                 }
                 scheduleWrite(id, value);
             } else {
+                inflight.delete(id);
                 document.dispatchEvent(new CustomEvent(EVT_PAGE_RESPONSE, {
                     detail: { id, error: 'unknown op' }
                 }));
             }
         } catch (e) {
+            inflight.delete(id);
             document.dispatchEvent(new CustomEvent(EVT_PAGE_RESPONSE, {
                 detail: { id, error: String(e && e.message || e) }
             }));
