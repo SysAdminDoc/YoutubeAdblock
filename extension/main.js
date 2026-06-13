@@ -128,6 +128,9 @@
     const PROJECT_URL = 'https://github.com/SysAdminDoc/YoutubeAdblock';
     const ISSUES_URL = `${PROJECT_URL}/issues`;
     const FILTER_URL_DEFAULT = 'https://raw.githubusercontent.com/SysAdminDoc/YoutubeAdblock/refs/heads/main/youtube-adblock-filters.txt';
+    const FILTER_URL_MIRRORS = [
+        'https://cdn.jsdelivr.net/gh/SysAdminDoc/YoutubeAdblock@main/youtube-adblock-filters.txt',
+    ];
     const FILTER_CACHE_TTL = 4 * 60 * 60 * 1000; // 4 hours
     const FILTER_MAX_BYTES = 5 * 1024 * 1024; // 5MB safety cap on remote lists
     const FILTER_FETCH_TIMEOUT_MS = 15000;
@@ -1258,109 +1261,97 @@
                 }
             };
 
-            const cacheBusted = url + (url.includes('?') ? '&' : '?') + '_=' + Date.now();
+            // Build the list of URLs to attempt. The default URL gets
+            // automatic mirror fallback; custom URLs are tried once only.
+            const isDefault = url === FILTER_URL_DEFAULT;
+            const urls = [url, ...(isDefault ? FILTER_URL_MIRRORS : [])];
+            let urlIndex = 0;
 
-            GM_xmlhttpRequest({
-                method: 'GET',
-                url: cacheBusted,
-                timeout: FILTER_FETCH_TIMEOUT_MS,
-                onload(resp) {
-                    try {
-                        const text = resp.responseText || '';
-                        if (text.length > FILTER_MAX_BYTES) {
-                            throw new Error(`Remote filter list exceeds ${Math.round(FILTER_MAX_BYTES / 1024 / 1024)}MB limit.`);
-                        }
-                        if (resp.status && (resp.status < 200 || resp.status >= 300)) {
-                            throw new Error(`Remote filter request returned HTTP ${resp.status}.`);
-                        }
+            function attemptFetch() {
+                const fetchUrl = urls[urlIndex];
+                const cacheBusted = fetchUrl + (fetchUrl.includes('?') ? '&' : '?') + '_=' + Date.now();
 
-                        let data;
-                        // Detect format: JSON starts with { or [, otherwise uBO filter list
-                        if (text.trimStart().startsWith('{') || text.trimStart().startsWith('[')) {
-                            data = sanitizeFilterPayload(jsonParseRaw(text));
-                            if (!data) {
-                                throw new Error('Invalid JSON filter schema.');
-                            }
-                        } else {
-                            data = sanitizeFilterPayload(parseUBOFilterList(text));
-                        }
-
-                        if (!data) {
-                            throw new Error('The remote list produced no usable rules.');
-                        }
-                        if (isStaleRequest()) {
-                            finish();
-                            resolve(state.filters);
-                            return;
-                        }
-                        state.filters = data;
-                        state.filterSource = 'remote';
-                        state.lastFilterUpdate = Date.now();
-                        state.filterError = '';
-                        try {
-                            setSetting('filters_cache', data);
-                            setSetting('filters_cache_time', Date.now());
-                            setSetting('filters_cache_url', url);
-                        } catch (e) { /* quota errors are non-fatal */ }
-                        // Re-merge features with overrides
-                        const overrides = getFeatureOverrides();
-                        state.features = normalizeFeatures(data.features);
-                        for (const [k, v] of Object.entries(overrides)) {
-                            if (k in state.features) state.features[k] = !!v;
-                        }
-                        updateCosmeticCSS();
-                        // New remote rules may introduce additional setUndefined
-                        // paths or new roots. Re-install lets the newly named
-                        // roots get guarded, and rebuildTrapPathsByRoot makes
-                        // new subpaths on already-trapped roots take effect.
-                        try { installPropertyTraps(); } catch (e) { /* ignore */ }
-                        finish();
-                        resolve(data);
-                        refreshSettingsUI(true);
-                        const count = data.filterCount || data.cosmeticSelectors?.length || 0;
-                        showToast(`Rule refresh complete. ${formatNumber(count)} rules are active (${data.version || '?'}).`, 'success');
-                    } catch (e) {
-                        console.warn(`[${SCRIPT_NAME}] Filter parse error:`, e);
-                        if (isStaleRequest()) {
-                            finish();
-                            resolve(state.filters);
-                            return;
-                        }
-                        const detail = e && e.message ? e.message : '';
-                        state.filterError = detail
-                            ? `Rule library problem: ${detail} Your current rules stayed active.`
-                            : 'The remote list could not be parsed. Your current rules stayed active.';
+                const tryNextMirror = () => {
+                    urlIndex++;
+                    if (urlIndex < urls.length && !isStaleRequest()) {
+                        attemptFetch();
+                    } else {
+                        if (isStaleRequest()) { finish(); resolve(state.filters); return; }
+                        state.filterError = urls.length > 1
+                            ? 'All filter sources (primary + mirrors) were unreachable. Your current rules stayed active.'
+                            : 'The remote list was unreachable, so YoutubeAdblock stayed on the last known rule set.';
                         finish();
                         resolve(state.filters);
                         refreshSettingsUI(true);
                         showToast(state.filterError, 'error');
                     }
-                },
-                onerror() {
-                    if (isStaleRequest()) {
-                        finish();
-                        resolve(state.filters);
-                        return;
-                    }
-                    state.filterError = 'The remote list was unreachable, so YoutubeAdblock stayed on the last known rule set.';
-                    finish();
-                    resolve(state.filters);
-                    refreshSettingsUI(true);
-                    showToast('The remote list was unreachable. Your current protection stayed active.', 'error');
-                },
-                ontimeout() {
-                    if (isStaleRequest()) {
-                        finish();
-                        resolve(state.filters);
-                        return;
-                    }
-                    state.filterError = 'The remote list took too long to respond, so your current rules remained in place.';
-                    finish();
-                    resolve(state.filters);
-                    refreshSettingsUI(true);
-                    showToast('The rule refresh timed out. Your current protection stayed active.', 'error');
-                }
-            });
+                };
+
+                GM_xmlhttpRequest({
+                    method: 'GET',
+                    url: cacheBusted,
+                    timeout: FILTER_FETCH_TIMEOUT_MS,
+                    onload(resp) {
+                        try {
+                            const text = resp.responseText || '';
+                            if (text.length > FILTER_MAX_BYTES) {
+                                throw new Error(`Remote filter list exceeds ${Math.round(FILTER_MAX_BYTES / 1024 / 1024)}MB limit.`);
+                            }
+                            if (resp.status && (resp.status < 200 || resp.status >= 300)) {
+                                throw new Error(`Remote filter request returned HTTP ${resp.status}.`);
+                            }
+
+                            let data;
+                            if (text.trimStart().startsWith('{') || text.trimStart().startsWith('[')) {
+                                data = sanitizeFilterPayload(jsonParseRaw(text));
+                                if (!data) throw new Error('Invalid JSON filter schema.');
+                            } else {
+                                data = sanitizeFilterPayload(parseUBOFilterList(text));
+                            }
+
+                            if (!data) throw new Error('The remote list produced no usable rules.');
+                            if (isStaleRequest()) { finish(); resolve(state.filters); return; }
+                            state.filters = data;
+                            state.filterSource = 'remote';
+                            state.lastFilterUpdate = Date.now();
+                            state.filterError = '';
+                            try {
+                                setSetting('filters_cache', data);
+                                setSetting('filters_cache_time', Date.now());
+                                setSetting('filters_cache_url', url);
+                            } catch (e) { /* quota errors are non-fatal */ }
+                            const overrides = getFeatureOverrides();
+                            state.features = normalizeFeatures(data.features);
+                            for (const [k, v] of Object.entries(overrides)) {
+                                if (k in state.features) state.features[k] = !!v;
+                            }
+                            if (IS_EXTENSION_BUILD) state.features.dearrow = false;
+                            updateCosmeticCSS();
+                            try { installPropertyTraps(); } catch (e) { /* ignore */ }
+                            finish();
+                            resolve(data);
+                            refreshSettingsUI(true);
+                            const applied = data.filterCount || data.cosmeticSelectors?.length || 0;
+                            showToast(`Rule refresh complete. ${formatNumber(applied)} rules active (${data.version || '?'}).`, 'success');
+                        } catch (e) {
+                            console.warn(`[${SCRIPT_NAME}] Filter parse error:`, e);
+                            if (isStaleRequest()) { finish(); resolve(state.filters); return; }
+                            const detail = e && e.message ? e.message : '';
+                            state.filterError = detail
+                                ? `Rule library problem: ${detail} Your current rules stayed active.`
+                                : 'The remote list could not be parsed. Your current rules stayed active.';
+                            finish();
+                            resolve(state.filters);
+                            refreshSettingsUI(true);
+                            showToast(state.filterError, 'error');
+                        }
+                    },
+                    onerror() { tryNextMirror(); },
+                    ontimeout() { tryNextMirror(); }
+                });
+            }
+
+            attemptFetch();
         });
         state.filterRequestPromise = request;
         return request;
