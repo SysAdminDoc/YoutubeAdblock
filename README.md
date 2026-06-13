@@ -39,6 +39,22 @@ If you need a packaged Chromium artifact for release distribution, run `powershe
 3. Click **Load Temporary Add-on** and pick [extension/manifest.json](extension/manifest.json)
 4. Click the YoutubeAdblock toolbar button to open the Control Center
 
+### Safari (iOS / macOS, via Userscripts app)
+
+1. Install [Userscripts](https://github.com/quoid/userscripts) from the App Store (free, open-source)
+2. Enable the Userscripts Safari extension in Settings → Safari → Extensions
+3. Open the Userscripts editor, tap **+**, and paste the raw URL: `https://github.com/SysAdminDoc/YoutubeAdblock/raw/refs/heads/main/YoutubeAdblock.user.js`
+4. Reload YouTube — the script runs the same engine as Tampermonkey/Violentmonkey
+
+> **Note:** Safari support is community-tested, not officially validated. DeArrow, volume boost, and other features relying on Web Audio or advanced GM_* APIs may behave differently. Report issues with your Safari version.
+
+### Firefox for Android
+
+1. Install [Firefox for Android](https://play.google.com/store/apps/details?id=org.mozilla.firefox) (supports extensions since Dec 2023)
+2. Install [Tampermonkey](https://addons.mozilla.org/en-US/android/addon/tampermonkey/) or [Violentmonkey](https://addons.mozilla.org/en-US/android/addon/violentmonkey/) from AMO
+3. Navigate to the [raw userscript](https://github.com/SysAdminDoc/YoutubeAdblock/raw/refs/heads/main/YoutubeAdblock.user.js) and confirm the install
+4. Open YouTube — this is currently the only mainstream mobile path for full YouTube ad blocking in a browser
+
 The extension ships the same blocking engine as the userscript plus **declarativeNetRequest rules** that block ad-serving endpoints (`/pagead/`, `/api/stats/ads`, `/youtubei/v1/player/ad_break`, googlevideo `ctier=SA` segments, doubleclick.net and googlesyndication.com from YouTube origins) at the browser network layer — outside the reach of any page-level anti-adblock countermeasure.
 If you trigger the extension while you are not already on YouTube, YoutubeAdblock opens a YouTube tab and carries the action forward there automatically.
 

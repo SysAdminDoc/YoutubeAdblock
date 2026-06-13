@@ -300,7 +300,9 @@
             hideComments: false,
             hideEndScreen: false,
             hideLiveChat: false,
-            hideMerch: false
+            hideMerch: false,
+            hideMembersOnly: false,
+            hideSponsoredComments: false
         }
     };
 
@@ -489,6 +491,16 @@
                     key: 'hideMerch',
                     label: 'Hide merch shelves',
                     desc: 'Hides merchandise, ticket, and shopping shelves below videos.'
+                },
+                {
+                    key: 'hideMembersOnly',
+                    label: 'Hide members-only videos',
+                    desc: 'Removes videos with a Members badge from feeds so free-tier users never see paywalled content.'
+                },
+                {
+                    key: 'hideSponsoredComments',
+                    label: 'Hide sponsored comments & affiliate links',
+                    desc: 'Hides sponsor-badged comments and common affiliate redirect links in video descriptions.'
                 }
             ]
         },
@@ -1526,9 +1538,23 @@
      * ===================================================================== */
 
     function safeOverride(obj, prop, newValue, label) {
+        // Detect pre-proxied natives before we attempt the override. If
+        // the current value is a function whose toString doesn't print
+        // [native code], another extension likely already hooked it.
+        // Record this for the coexistence notice — it's not a failure,
+        // but it explains unexpected behavior in diagnostics.
+        try {
+            const current = obj[prop];
+            if (typeof current === 'function') {
+                const src = Function.prototype.toString.call(current);
+                if (typeof src === 'string' && !src.includes('[native code]')) {
+                    state.preProxiedNatives = state.preProxiedNatives || [];
+                    state.preProxiedNatives.push(label || String(prop));
+                }
+            }
+        } catch (e) { /* hostile getter or cross-origin — skip detection */ }
         try {
             obj[prop] = newValue;
-            // Skip strict equality check — proxied properties may not read back identically
             return true;
         } catch (e) { /* direct assign failed */ }
         try {
@@ -3367,6 +3393,18 @@
             'ytd-product-list-renderer',
             'ytd-ticket-shelf-renderer',
             'ytd-shopping-carousel-renderer'
+        ],
+        hideMembersOnly: [
+            'ytd-rich-item-renderer:has(ytd-badge-supported-renderer [aria-label*="Members"])',
+            'ytd-video-renderer:has(ytd-badge-supported-renderer [aria-label*="Members"])',
+            'ytd-compact-video-renderer:has(ytd-badge-supported-renderer [aria-label*="Members"])',
+            'ytd-grid-video-renderer:has(ytd-badge-supported-renderer [aria-label*="Members"])'
+        ],
+        hideSponsoredComments: [
+            'ytd-comment-renderer:has(#sponsor-comment-badge)',
+            '#description ytd-metadata-row-renderer:has(a[href*="/redirect"])',
+            '#description a[href*="amzn.to"]',
+            '#description a[href*="bit.ly"]'
         ]
     };
 
@@ -4801,18 +4839,23 @@
         // diagnosable one (this was the failure mode behind issues #1 and #2).
         const unhealthyEngines = Object.entries(state.engineHealth || {})
             .filter(([, status]) => status !== 'ok');
+        const preProxied = (state.preProxiedNatives || []);
         let healthNote = null;
         if (unhealthyEngines.length) {
             const engineList = unhealthyEngines
-                .map(([name, status]) => `${name} (${status})`)
+                .map(function(pair) { return pair[0] + ' (' + pair[1] + ')'; })
                 .join(', ');
             const lockedList = (state.overrideFailures || []).join(', ');
+            var noteBody = 'Some engines could not fully install: ' + engineList + '.';
+            if (lockedList) noteBody += ' Locked natives: ' + lockedList + '.';
+            if (preProxied.length) noteBody += ' Pre-proxied by another extension: ' + preProxied.join(', ') + '.';
+            noteBody += ' Another extension or YouTube may have claimed these first. Remaining engines are still active; reloading the page usually wins the race back.';
+            healthNote = createNote('Protection Degraded', noteBody, 'warn');
+        } else if (preProxied.length) {
             healthNote = createNote(
-                'Protection Degraded',
-                `Some engines could not fully install: ${engineList}.` +
-                (lockedList ? ` Locked natives: ${lockedList}.` : '') +
-                ' Another extension or YouTube’s own scripts may have claimed these first. Remaining engines are still active; reloading the page usually wins the race back.',
-                'warn'
+                'Coexistence Detected',
+                'Another extension already hooked: ' + preProxied.join(', ') + '. YoutubeAdblock replaced them with its own proxies. If you see unexpected behavior, try disabling the other blocker.',
+                'info'
             );
         }
 
@@ -5695,6 +5738,7 @@
             `Trapped roots: ${trappedRoots}`,
             `Engine health: ${Object.entries(state.engineHealth || {}).map(([name, status]) => `${name}=${status}`).join(', ') || 'not installed'}`,
             `Locked natives: ${(state.overrideFailures || []).join(', ') || 'none'}`,
+            `Pre-proxied (another extension): ${(state.preProxiedNatives || []).join(', ') || 'none'}`,
             `Stats: blocked=${state.stats.blocked}, pruned=${state.stats.pruned}, ssapSkipped=${state.stats.ssapSkipped}, sponsorSkipped=${state.stats.sponsorSkipped}`,
             `Enabled features: ${enabledFeatures}`,
             `Disabled features: ${disabledFeatures}`
