@@ -2,7 +2,7 @@
 <p align="center"><img src="icon.png" width="128" alt="Youtube Adblock"></p>
 
 <p align="center">
-  <img alt="Version" src="https://img.shields.io/badge/version-0.4.1-58A6FF?style=for-the-badge">
+  <img alt="Version" src="https://img.shields.io/badge/version-0.5.0-58A6FF?style=for-the-badge">
   <img alt="License" src="https://img.shields.io/badge/license-MIT-4ade80?style=for-the-badge">
   <img alt="Platform" src="https://img.shields.io/badge/platform-Userscript%20%7C%20Chrome%20%7C%20Firefox-58A6FF?style=for-the-badge">
 </p>
@@ -70,7 +70,9 @@ If you trigger the extension while you are not already on YouTube, YoutubeAdbloc
 | toString Proxy Mask | Patches `Function.prototype.toString` so every hooked native still reports `[native code]` to YouTube's detection paths | Enabled |
 | ServiceWorker Block | Proxies `navigator.serviceWorker.register` / `getRegistration{s}` so YouTube can't install a worker that bypasses the request proxies | Enabled |
 | Webpack Chunk Prune | Rewrites ad-rendering factory modules inside `self.webpackChunk_youtube_player.push` before they execute | Enabled |
-| DeArrow Titles & Thumbnails | Replaces clickbait titles and thumbnails with crowd-submitted alternatives via the privacy-preserving DeArrow hash-prefix API | Optional |
+| No-Ad Request Signal | Injects `isInlinePlaybackNoAd` into outbound `/player` request bodies via fetch, XHR, and an `Object.assign` hook that survives YouTube's locker script — defeats SABR fake-buffering on both cold loads and SPA navigation | Enabled |
+| Engine Health Monitor | Tracks per-engine install success and surfaces degraded-protection warnings in the Control Center when YouTube's locker script or a competing blocker locks a native | Enabled |
+| DeArrow Titles & Thumbnails | Replaces clickbait titles and thumbnails with crowd-submitted alternatives via the privacy-preserving DeArrow hash-prefix API *(userscript only — extension build pending API permission)* | Optional |
 | Return YouTube Dislike | Restores the public dislike count under the like button | Optional |
 | Volume Boost | Web Audio gain stage up to 5x with an inline slider in the player controls | Optional |
 | Clutter-Free Mode | Eight Unhook-style toggles: home feed, Shorts shelves, Shorts tab, related videos, comments, end-screen cards, live chat, merch shelves | Optional |

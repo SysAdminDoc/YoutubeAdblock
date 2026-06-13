@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         YoutubeAdblock
 // @namespace    https://github.com/SysAdminDoc
-// @version      0.4.1
+// @version      0.5.0
 // @description  YouTube ad blocker with remote rules, anti-detect hardening, toString-hiding proxies, DeArrow + RYD, volume boost, UI cleanup, and an in-page Control Center
 // @author       SysAdminDoc
 // @license      MIT
@@ -40,7 +40,7 @@
      * ===================================================================== */
 
     const SCRIPT_NAME = 'YoutubeAdblock';
-    const SCRIPT_VERSION = '0.4.1';
+    const SCRIPT_VERSION = '0.5.0';
     const PROJECT_URL = 'https://github.com/SysAdminDoc/YoutubeAdblock';
     const ISSUES_URL = `${PROJECT_URL}/issues`;
     const FILTER_URL_DEFAULT = 'https://raw.githubusercontent.com/SysAdminDoc/YoutubeAdblock/refs/heads/main/youtube-adblock-filters.txt';
@@ -185,7 +185,7 @@
         features: {
             jsonParsePrune: true, fetchIntercept: true, xhrIntercept: true,
             setUndefinedTraps: true, ssapAutoSkip: true, abnormalityBypass: true,
-            domBypassPrevention: true, clientScreenSpoof: false, shortsAdBlock: true,
+            domBypassPrevention: true, shortsAdBlock: true,
             cosmeticHiding: true, upsellBlock: true, requestBodyModify: true,
             timerNeutralization: true,
             // New in 0.2.1 — opt-in by default because they trade off
@@ -243,11 +243,6 @@
                     label: 'Initial property traps',
                     desc: 'Keeps early ad-related player properties undefined during first-page hydration.'
                 },
-                {
-                    key: 'requestBodyModify',
-                    label: 'Outbound request rewrite',
-                    desc: 'Adjusts request payloads that can influence how YouTube returns ad data.'
-                }
             ]
         },
         {
@@ -266,9 +261,9 @@
                     desc: 'Stops clean iframe contexts from restoring unmodified browser APIs.'
                 },
                 {
-                    key: 'clientScreenSpoof',
-                    label: 'Client screen spoofing',
-                    desc: 'Off by default. Legacy outbound spoof; never rewrites the video player request (doing so broke playback). Safe to leave disabled.'
+                    key: 'requestBodyModify',
+                    label: 'No-ad request signal',
+                    desc: 'Marks outbound player requests with the inline-playback no-ad flag so YouTube serves no ad payload and no fake-buffering delay. Works on cold loads and in-app navigation.'
                 },
                 {
                     key: 'ssapAutoSkip',
@@ -480,7 +475,15 @@
         // INIT path can avoid re-registering on hot reload (e.g. dev
         // scenarios where the userscript is re-evaluated) and future
         // teardown paths can cleanly stop them.
-        engineIntervals: []
+        engineIntervals: [],
+        // Per-engine install outcome ('ok' | 'degraded' | 'failed'),
+        // recorded by installProxies and surfaced in the Control Center
+        // overview + diagnostics so a lost document-start race (YouTube's
+        // locker script, a competing blocker) is never silent.
+        engineHealth: {},
+        // Labels of natives safeOverride could not replace (e.g.
+        // 'window.fetch'). Drives the degraded-protection warning.
+        overrideFailures: []
     };
 
     // Cap simultaneously visible toasts so a flurry of errors doesn't fill
@@ -521,8 +524,17 @@
         const rawOverrides = getSetting('feature_overrides', {});
         if (!rawOverrides || typeof rawOverrides !== 'object') return {};
         const clean = {};
+        let droppedStaleKey = false;
         for (const [key, value] of Object.entries(rawOverrides)) {
             if (key in DEFAULT_FILTERS.features) clean[key] = !!value;
+            else droppedStaleKey = true;
+        }
+        // One-time migration: persist the cleaned map when a removed
+        // feature key (e.g. clientScreenSpoof, retired in v0.5.0) is
+        // still present in storage, so stale toggles don't live forever
+        // in the settings blob.
+        if (droppedStaleKey) {
+            try { setSetting('feature_overrides', clean); } catch (e) { /* non-fatal */ }
         }
         return clean;
     }
@@ -580,6 +592,11 @@
         for (const [k, v] of Object.entries(featureOverrides)) {
             if (k in state.features) state.features[k] = !!v;
         }
+
+        // DeArrow is gated off in the extension build pending API permission
+        // for browser extensions (see installDeArrow). Forcing the runtime
+        // flag keeps a userscript-era override from re-enabling it here.
+        if (IS_EXTENSION_BUILD) state.features.dearrow = false;
     }
 
     function saveStats() {
@@ -1452,9 +1469,12 @@
             });
             return true;
         } catch (e) {
-            // Another script (e.g. another YouTube adblock userscript) already
-            // locked the property non-configurably. Log once so the user can
-            // diagnose conflicts; downstream engines still do their part.
+            // Another script (YouTube's locker script, or another YouTube
+            // adblock userscript) already locked the property
+            // non-configurably. Record the loss so installProxies can mark
+            // the owning engine degraded and the Control Center can surface
+            // it; downstream engines still do their part.
+            state.overrideFailures.push(label || String(prop));
             console.warn(`[${SCRIPT_NAME}] Could not override ${label || prop}. Another script may have already locked it.`);
             return false;
         }
@@ -1529,6 +1549,43 @@
      * ENGINE: fetch() Proxy
      * ===================================================================== */
 
+    // Outbound no-ad request signal (feature key: requestBodyModify).
+    // Setting `playbackContext.contentPlaybackContext.isInlinePlaybackNoAd: true`
+    // on InnerTube /player requests makes the server return no ad payload and
+    // no SABR fake-buffering backoff. Unlike the retired clientScreen spoof
+    // (issue #2), this flag is purely additive: it never changes the response
+    // shape, and we only annotate a contentPlaybackContext that already
+    // exists — parents are never fabricated, so a malformed body can't gain
+    // structure it didn't have.
+    const PLAYER_ENDPOINT_RE = /\/youtubei\/v1\/(?:player|get_watch)(?:\?|$)/;
+
+    function injectNoAdFlag(obj) {
+        try {
+            if (!obj || typeof obj !== 'object') return false;
+            const ctx = (obj.playbackContext && obj.playbackContext.contentPlaybackContext) ||
+                obj.contentPlaybackContext;
+            if (ctx && typeof ctx === 'object' && ctx.isInlinePlaybackNoAd !== true) {
+                ctx.isInlinePlaybackNoAd = true;
+                return true;
+            }
+        } catch (e) { /* foreign object with hostile getters — leave it alone */ }
+        return false;
+    }
+
+    // Returns the rewritten JSON body string, or null when nothing changed
+    // (non-JSON body, no contentPlaybackContext, or flag already present).
+    function rewriteRequestBodyText(text) {
+        if (typeof text !== 'string' || !text || text.indexOf('contentPlaybackContext') === -1) {
+            return null;
+        }
+        try {
+            const parse = state.originals.jsonParse || JSON.parse;
+            const body = parse.call(JSON, text);
+            if (injectNoAdFlag(body)) return JSON.stringify(body);
+        } catch (e) { /* not JSON — pass through untouched */ }
+        return null;
+    }
+
     function installFetchProxy() {
         const originalFetch = window.fetch;
         state.originals.fetch = originalFetch;
@@ -1544,18 +1601,23 @@
                     return Reflect.apply(target, thisArg, args);
                 }
 
-                // Outbound request body spoof — DISABLED on the player/watch
-                // endpoints. Setting context.client.clientScreen = 'CHANNEL' on
-                // /youtubei/v1/player makes YouTube treat the request as a
-                // channel-page preview and return playabilityStatus=UNPLAYABLE
-                // with NO streamingData, which breaks playback entirely (no
-                // video, no play button) and cascades into the watch-page
-                // hydration (missing comments). Verified: identical authed
-                // /player request returns OK + 14 formats without the spoof and
-                // UNPLAYABLE + 0 formats with it. The clientScreenSpoof toggle
-                // is retained for non-player requests only; it must never
-                // rewrite /youtubei/v1/player or /youtubei/v1/get_watch.
-                // See issue #2.
+                // Outbound no-ad signal on player requests. Historical note:
+                // an earlier clientScreen='CHANNEL' spoof here returned
+                // playabilityStatus=UNPLAYABLE with no streamingData and broke
+                // playback (issue #2, removed in v0.4.1/v0.5.0). The
+                // isInlinePlaybackNoAd flag is additive-only and safe.
+                // Only `fetch(url, init)` string bodies are handled — YouTube's
+                // InnerTube client builds requests that way; Request-object
+                // bodies would force an async clone and aren't used by YT.
+                if (state.features.requestBodyModify && PLAYER_ENDPOINT_RE.test(url)) {
+                    try {
+                        const init = args[1];
+                        if (init && typeof init.body === 'string') {
+                            const rewritten = rewriteRequestBodyText(init.body);
+                            if (rewritten !== null) args[1] = { ...init, body: rewritten };
+                        }
+                    } catch (e) { /* never block the request over a rewrite */ }
+                }
 
                 if (!state.features.fetchIntercept || !matchesInterceptPattern(url)) {
                     return Reflect.apply(target, thisArg, args);
@@ -1630,12 +1692,6 @@
             const urlStr = (typeof url === 'string') ? url : (url != null ? String(url) : '');
             this._ytab_url = urlStr;
 
-            // Outbound body spoof intentionally never targets the player/watch
-            // endpoints — clientScreen='CHANNEL' on /youtubei/v1/player strips
-            // streamingData and yields UNPLAYABLE, breaking the player. See the
-            // fetch proxy and issue #2 for the verified repro.
-            this._ytab_shouldModify = false;
-
             return originalOpen.call(this, method, url, ...rest);
         };
 
@@ -1644,7 +1700,17 @@
                 return originalSend.call(this, body);
             }
 
-            // (Outbound clientScreen spoof removed — see proxiedOpen / issue #2.)
+            // Outbound no-ad signal — same additive isInlinePlaybackNoAd flag
+            // as the fetch proxy (see rewriteRequestBodyText for the issue #2
+            // history on why only this flag is safe to inject here).
+            if (state.features.requestBodyModify &&
+                typeof body === 'string' &&
+                PLAYER_ENDPOINT_RE.test(this._ytab_url || '')) {
+                try {
+                    const rewritten = rewriteRequestBodyText(body);
+                    if (rewritten !== null) body = rewritten;
+                } catch (e) { /* never block the request over a rewrite */ }
+            }
 
             if (!state.features.xhrIntercept || !matchesInterceptPattern(this._ytab_url)) {
                 return originalSend.call(this, body);
@@ -1725,6 +1791,39 @@
         registerNativeMask(proxiedSend, originalSend);
         safeOverride(XMLHttpRequest.prototype, 'open', proxiedOpen, 'XMLHttpRequest.prototype.open');
         safeOverride(XMLHttpRequest.prototype, 'send', proxiedSend, 'XMLHttpRequest.prototype.send');
+    }
+
+    /* =========================================================================
+     * ENGINE: Object.assign no-ad hook
+     * =========================================================================
+     * Locker-resilient fallback for the outbound no-ad signal. YouTube's
+     * anti-adblock "locker" script (injected first in <head>) freezes
+     * window.fetch / JSON.parse via Object.defineProperty, which defeats the
+     * fetch/XHR proxies when it wins the document-start race. Object.assign
+     * stays writable, and YouTube's InnerTube client routes the player
+     * request context through it while building the body — so annotating
+     * contentPlaybackContext here still lands the flag even when the network
+     * proxies are locked out. Same additive-only injection contract as
+     * rewriteRequestBodyText.
+     * ===================================================================== */
+
+    function installObjectAssignHook() {
+        const originalAssign = Object.assign;
+        state.originals.objectAssign = originalAssign;
+        const proxiedAssign = new Proxy(originalAssign, {
+            apply(target, thisArg, args) {
+                const result = Reflect.apply(target, thisArg, args);
+                // Cheap gate: two boolean reads, then at most two own-property
+                // lookups inside injectNoAdFlag. Object.assign is hot, so the
+                // happy path must stay allocation-free.
+                if (isEnabled() && state.features.requestBodyModify) {
+                    injectNoAdFlag(result);
+                }
+                return result;
+            }
+        });
+        registerNativeMask(proxiedAssign, originalAssign);
+        safeOverride(Object, 'assign', proxiedAssign, 'Object.assign');
     }
 
     /* =========================================================================
@@ -2534,10 +2633,10 @@
      * `.push`-es factories into before execution. Proxying that array's
      * push at document-start lets us inspect module source before the
      * module runs, which catches ad-related modules that relocate
-     * between YT builds. Today this is a hint-only hook — we log
-     * matches but don't rewrite, to avoid breaking the player by
-     * accident. Logging alone is a valuable recon signal for future
-     * filter-list additions.
+     * between YT builds. Factories whose source matches
+     * WEBPACK_AD_SIGNATURES are replaced with a no-op module (empty
+     * exports) before the chunk executes, so the ad-rendering code never
+     * runs; each replacement counts toward the `pruned` stat.
      * ===================================================================== */
 
     const WEBPACK_CHUNK_NAMES = [
@@ -2851,6 +2950,11 @@
     }
 
     function installDeArrow() {
+        // The DeArrow API is "free to use for all non browser-extensions"
+        // (wiki.sponsor.ajay.app/w/API_Docs/DeArrow). The userscript build
+        // qualifies; the extension build does not until explicit permission
+        // from the maintainer is granted, so it ships with DeArrow inert.
+        if (IS_EXTENSION_BUILD) return;
         // Sweep on SPA nav + on a throttled interval. A MutationObserver on
         // document.body is too noisy on YouTube — polling every 1.5s is
         // functionally equivalent for feed-level replacements.
@@ -3309,6 +3413,7 @@
             ['JSONParseProxy', installJSONParseProxy],
             ['FetchProxy', installFetchProxy],
             ['XHRProxy', installXHRProxy],
+            ['ObjectAssignHook', installObjectAssignHook],
             ['PropertyTraps', installPropertyTraps],
             ['AbnormalityBypass', installAbnormalityBypass],
             ['DOMBypassPrevention', installDOMBypassPrevention],
@@ -3326,11 +3431,26 @@
         ];
 
         for (const [name, fn] of engines) {
-            try { fn(); }
-            catch (e) { console.warn(`[${SCRIPT_NAME}] Engine ${name} failed:`, e); }
+            const failuresBefore = state.overrideFailures.length;
+            try {
+                fn();
+                // An engine that "succeeded" but lost one of its safeOverride
+                // calls (e.g. to YouTube's locker script or a competing
+                // blocker) is degraded, not healthy — surface that distinctly
+                // so the Control Center can explain what actually happened.
+                state.engineHealth[name] = state.overrideFailures.length > failuresBefore
+                    ? 'degraded'
+                    : 'ok';
+            } catch (e) {
+                state.engineHealth[name] = 'failed';
+                console.warn(`[${SCRIPT_NAME}] Engine ${name} failed:`, e);
+            }
         }
 
-        console.log(`[${SCRIPT_NAME} v${SCRIPT_VERSION}] Engines active | Source: ${state.filterSource} | Filters v${state.filters?.version || '?'}`);
+        const unhealthy = Object.entries(state.engineHealth)
+            .filter(([, status]) => status !== 'ok')
+            .map(([name, status]) => `${name}:${status}`);
+        console.log(`[${SCRIPT_NAME} v${SCRIPT_VERSION}] Engines active | Source: ${state.filterSource} | Filters v${state.filters?.version || '?'}${unhealthy.length ? ` | Unhealthy: ${unhealthy.join(', ')}` : ''}`);
     }
 
     /* =========================================================================
@@ -4497,7 +4617,7 @@
     function createOverviewSection(query = '') {
         if (query && !matchesSettingsQuery(
             query,
-            'overview protection paused refresh project page diagnostics master switch rule library',
+            'overview protection paused refresh project page diagnostics master switch rule library engine health degraded conflict',
             getProtectionSummary().description
         )) {
             return null;
@@ -4574,6 +4694,28 @@
             createMetricTile('Feed Filtered', 'feedFiltered')
         );
 
+        // Degraded-protection warning. Engines that threw during install or
+        // lost a native to another script's lock are otherwise invisible —
+        // the user sees "Protection On" while core interception is dead.
+        // Naming the engines and natives turns a silent failure into a
+        // diagnosable one (this was the failure mode behind issues #1 and #2).
+        const unhealthyEngines = Object.entries(state.engineHealth || {})
+            .filter(([, status]) => status !== 'ok');
+        let healthNote = null;
+        if (unhealthyEngines.length) {
+            const engineList = unhealthyEngines
+                .map(([name, status]) => `${name} (${status})`)
+                .join(', ');
+            const lockedList = (state.overrideFailures || []).join(', ');
+            healthNote = createNote(
+                'Protection Degraded',
+                `Some engines could not fully install: ${engineList}.` +
+                (lockedList ? ` Locked natives: ${lockedList}.` : '') +
+                ' Another extension or YouTube’s own scripts may have claimed these first. Remaining engines are still active; reloading the page usually wins the race back.',
+                'warn'
+            );
+        }
+
         const actions = document.createElement('nav');
         actions.className = `${CSS_PREFIX}-summary-actions`;
         actions.setAttribute('aria-label', 'Quick actions');
@@ -4595,7 +4737,8 @@
             diagnosticsJump
         );
 
-        surface.append(hero, facts, metrics, actions);
+        if (healthNote) surface.append(hero, facts, healthNote, metrics, actions);
+        else surface.append(hero, facts, metrics, actions);
         section.appendChild(surface);
         return section;
     }
@@ -4769,8 +4912,37 @@
         const surface = createSurface();
         const list = document.createElement('div');
         list.className = `${CSS_PREFIX}-toggle-list`;
-        for (const feat of visibleFeatures) list.appendChild(createToggleRow(feat));
+        for (const feat of visibleFeatures) {
+            // DeArrow is read-only in the extension build pending DeArrow API
+            // permission for browser extensions (see installDeArrow).
+            const effective = (feat.key === 'dearrow' && IS_EXTENSION_BUILD)
+                ? {
+                    ...feat,
+                    locked: true,
+                    lockedReason: 'Unavailable in the extension build: the DeArrow API requires explicit permission for browser extensions. Use the userscript build for this feature.'
+                }
+                : feat;
+            list.appendChild(createToggleRow(effective));
+        }
         surface.appendChild(list);
+        // Community data sources deserve visible credit — SponsorBlock and
+        // DeArrow data are CC BY-NC-SA licensed (attribution required), and
+        // Return YouTube Dislike's usage terms mandate attribution.
+        if (group.sectionId === SECTION_IDS.sponsor) {
+            surface.appendChild(createAttributionNote(
+                'Segment data from SponsorBlock, licensed CC BY-NC-SA 4.0.',
+                [['sponsor.ajay.app', 'https://sponsor.ajay.app']]
+            ));
+        }
+        if (group.sectionId === SECTION_IDS.enhance) {
+            surface.appendChild(createAttributionNote(
+                'Title/thumbnail data from DeArrow (CC BY-NC-SA 4.0); dislike counts from Return YouTube Dislike.',
+                [
+                    ['dearrow.ajay.app', 'https://dearrow.ajay.app'],
+                    ['returnyoutubedislike.com', 'https://returnyoutubedislike.com']
+                ]
+            ));
+        }
         // Blocklist editors live with the blocklist feature group so users
         // can edit channels and keywords inline without a separate surface.
         if (group.sectionId === SECTION_IDS.blocklist) {
@@ -5058,6 +5230,30 @@
         return note;
     }
 
+    function createAttributionNote(text, links) {
+        const note = document.createElement('div');
+        note.className = `${CSS_PREFIX}-note`;
+        note.dataset.tone = 'neutral';
+        note.style.marginTop = '8px';
+        note.style.fontSize = '11px';
+        note.style.opacity = '0.7';
+        const bodyEl = document.createElement('p');
+        bodyEl.className = `${CSS_PREFIX}-note-text`;
+        bodyEl.textContent = text + ' ';
+        for (let i = 0; i < links.length; i++) {
+            if (i > 0) bodyEl.appendChild(document.createTextNode(' · '));
+            const a = document.createElement('a');
+            a.href = links[i][1];
+            a.target = '_blank';
+            a.rel = 'noopener noreferrer';
+            a.textContent = links[i][0];
+            a.style.cssText = 'color:var(--accent);text-decoration:underline;';
+            bodyEl.appendChild(a);
+        }
+        note.appendChild(bodyEl);
+        return note;
+    }
+
     function createPill(text, tone = 'neutral') {
         const pill = document.createElement('span');
         pill.className = `${CSS_PREFIX}-pill`;
@@ -5092,7 +5288,8 @@
     function createToggleRow(feature) {
         const row = document.createElement('label');
         row.className = `${CSS_PREFIX}-row`;
-        row.dataset.enabled = String(state.features[feature.key] !== false);
+        const isOn = !feature.locked && state.features[feature.key] !== false;
+        row.dataset.enabled = String(isOn);
         const copy = document.createElement('div');
         const line = document.createElement('div');
         line.className = `${CSS_PREFIX}-row-label-line`;
@@ -5104,12 +5301,21 @@
         desc.className = `${CSS_PREFIX}-row-desc`;
         const descId = `${CSS_PREFIX}-desc-${feature.key}`;
         desc.id = descId;
-        desc.textContent = feature.desc;
+        desc.textContent = feature.locked && feature.lockedReason
+            ? `${feature.desc} ${feature.lockedReason}`
+            : feature.desc;
         copy.append(line, desc);
-        const { toggle, input } = createToggleControl(`${CSS_PREFIX}-toggle-${feature.key}`, state.features[feature.key] !== false, checked => setFeatureEnabled(feature.key, checked, feature.label), `Toggle ${feature.label}`);
+        const { toggle, input } = createToggleControl(`${CSS_PREFIX}-toggle-${feature.key}`, isOn, checked => {
+            if (feature.locked) return;
+            setFeatureEnabled(feature.key, checked, feature.label);
+        }, `Toggle ${feature.label}`);
         // Tie the switch to the visible description so screen-reader users
         // hear what the toggle does, not just its short label.
         input.setAttribute('aria-describedby', descId);
+        if (feature.locked) {
+            input.disabled = true;
+            row.style.opacity = '0.6';
+        }
         row.append(copy, toggle);
         return row;
     }
@@ -5387,6 +5593,8 @@
             `Cosmetic selectors: ${(state.filters?.cosmeticSelectors || []).length}`,
             `Intercept patterns: ${(state.filters?.interceptPatterns || []).join(' · ') || 'none'}`,
             `Trapped roots: ${trappedRoots}`,
+            `Engine health: ${Object.entries(state.engineHealth || {}).map(([name, status]) => `${name}=${status}`).join(', ') || 'not installed'}`,
+            `Locked natives: ${(state.overrideFailures || []).join(', ') || 'none'}`,
             `Stats: blocked=${state.stats.blocked}, pruned=${state.stats.pruned}, ssapSkipped=${state.stats.ssapSkipped}, sponsorSkipped=${state.stats.sponsorSkipped}`,
             `Enabled features: ${enabledFeatures}`,
             `Disabled features: ${disabledFeatures}`
