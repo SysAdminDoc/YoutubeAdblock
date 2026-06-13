@@ -32,7 +32,11 @@ Because the MV3 manifest intentionally includes both `background.service_worker`
 
 If you need a packaged Chromium artifact for release distribution, run `powershell -ExecutionPolicy Bypass -File .\Build-CRX.ps1`. It writes a signed `.crx` plus a reusable private key into `dist/`, so future CRX builds keep the same extension ID. Keep in mind that Chrome generally does **not** allow normal local-file `.crx` installs outside developer-mode, Linux self-hosting, or managed-policy flows, so the unpacked install path remains the best default for most users.
 
-### Firefox (MV3 extension, temporary install)
+### Firefox (MV3 extension)
+
+**Signed XPI (persistent install):** Download the latest `.xpi` from [Releases](https://github.com/SysAdminDoc/YoutubeAdblock/releases), open it in Firefox, and confirm the install. The extension persists across restarts. This also works on **Firefox for Android** (128+).
+
+**Temporary install (development):**
 
 1. Build the extension as above
 2. Visit `about:debugging#/runtime/this-firefox`

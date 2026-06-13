@@ -103,7 +103,11 @@ jobs:
           if (!Number.isFinite(firefoxMajor) || firefoxMajor < 128) {
             throw new Error('Firefox strict_min_version must stay at 128+ to match the documented MV3 support floor.');
           }
-          console.log(`Manifest contract OK | minimum_chrome_version=${minChrome} | firefox=${geckoMin}`);
+          const geckoAndroid = (manifest.browser_specific_settings || {}).gecko_android;
+          if (!geckoAndroid || !geckoAndroid.strict_min_version) {
+            throw new Error('Manifest must declare browser_specific_settings.gecko_android for Firefox Android support.');
+          }
+          console.log(`Manifest contract OK | minimum_chrome_version=${minChrome} | firefox=${geckoMin} | firefox_android=${geckoAndroid.strict_min_version}`);
           NODE
 
       - name: Syntax-check generated JS
@@ -149,6 +153,33 @@ jobs:
           npx --yes crx3@2.0.0 -p "YoutubeAdblock-extension.pem" -o "YoutubeAdblock-extension-v${VERSION}.crx" -- extension
           ls -la YoutubeAdblock-extension-v*.crx
 
+      - name: Sign Firefox XPI via AMO (optional)
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          AMO_JWT_ISSUER: ${{ secrets.AMO_JWT_ISSUER }}
+          AMO_JWT_SECRET: ${{ secrets.AMO_JWT_SECRET }}
+        run: |
+          set -euo pipefail
+          if [ -z "${AMO_JWT_ISSUER:-}" ] || [ -z "${AMO_JWT_SECRET:-}" ]; then
+            echo "No AMO_JWT_ISSUER/AMO_JWT_SECRET secrets configured; skipping XPI signing."
+            exit 0
+          fi
+          npm install --no-save web-ext@8
+          npx web-ext sign \
+            --source-dir extension \
+            --api-key "$AMO_JWT_ISSUER" \
+            --api-secret "$AMO_JWT_SECRET" \
+            --channel unlisted \
+            --artifacts-dir .
+          signed=$(ls -1 youtubeadblock*.xpi 2>/dev/null | head -n1)
+          if [ -n "$signed" ]; then
+            mv "$signed" "YoutubeAdblock-v${VERSION}.xpi"
+            echo "Signed XPI: YoutubeAdblock-v${VERSION}.xpi"
+          else
+            echo "::warning::web-ext sign completed but no .xpi found in artifacts."
+          fi
+
       - name: Stage userscript artifact
         shell: bash
         env:
@@ -172,6 +203,14 @@ jobs:
         with:
           name: YoutubeAdblock-v${{ steps.version.outputs.version }}-crx
           path: YoutubeAdblock-extension-v*.crx
+          if-no-files-found: ignore
+
+      - name: Upload XPI artifact (manual dispatch, optional)
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v6
+        with:
+          name: YoutubeAdblock-v${{ steps.version.outputs.version }}-xpi
+          path: YoutubeAdblock-v*.xpi
           if-no-files-found: ignore
 
       - name: Ensure release exists (tag push)
@@ -203,6 +242,9 @@ jobs:
           )
           if [ -f "YoutubeAdblock-extension-v${VERSION}.crx" ]; then
             assets+=("YoutubeAdblock-extension-v${VERSION}.crx")
+          fi
+          if [ -f "YoutubeAdblock-v${VERSION}.xpi" ]; then
+            assets+=("YoutubeAdblock-v${VERSION}.xpi")
           fi
           gh release upload "${{ github.ref_name }}" \
             "${assets[@]}" \
