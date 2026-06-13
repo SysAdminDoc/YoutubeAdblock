@@ -3380,9 +3380,23 @@
 
     function parseBlocklist(raw) {
         if (typeof raw !== 'string' || !raw) return [];
-        return raw.split(/\r?\n/)
-            .map(s => s.trim().toLowerCase())
-            .filter(Boolean);
+        const entries = [];
+        for (const line of raw.split(/\r?\n/)) {
+            const trimmed = line.trim();
+            if (!trimmed) continue;
+            var rxMatch = trimmed.match(/^\/(.+)\/([gimsuy]*)$/);
+            if (rxMatch) {
+                try {
+                    var flags = rxMatch[2].includes('i') ? rxMatch[2] : rxMatch[2] + 'i';
+                    entries.push({ type: 'regex', pattern: new RegExp(rxMatch[1], flags) });
+                } catch (e) {
+                    entries.push({ type: 'string', value: trimmed.toLowerCase() });
+                }
+            } else {
+                entries.push({ type: 'string', value: trimmed.toLowerCase() });
+            }
+        }
+        return entries;
     }
 
     function getChannelBlocklist() {
@@ -3409,10 +3423,16 @@
             if (Array.isArray(c.runs)) channel = c.runs.map(r => r?.text || '').join('');
             else if (typeof c.simpleText === 'string') channel = c.simpleText;
         } catch (e) { /* ignore */ }
-        const titleLc = title.toLowerCase();
-        const channelLc = channel.toLowerCase();
-        if (channels.length && channels.some(c => channelLc.includes(c))) return true;
-        if (keywords.length && keywords.some(k => titleLc.includes(k))) return true;
+        var titleLc = title.toLowerCase();
+        var channelLc = channel.toLowerCase();
+        for (var ci = 0; ci < channels.length; ci++) {
+            var ce = channels[ci];
+            if (ce.type === 'regex' ? ce.pattern.test(channel) : channelLc.includes(ce.value)) return true;
+        }
+        for (var ki = 0; ki < keywords.length; ki++) {
+            var ke = keywords[ki];
+            if (ke.type === 'regex' ? ke.pattern.test(title) : titleLc.includes(ke.value)) return true;
+        }
         return false;
     }
 
@@ -5009,12 +5029,12 @@
             surface.appendChild(createBlocklistEditor(
                 'Blocked Channels',
                 'channel_blocklist',
-                'One channel name per line (case-insensitive substring match).'
+                'One channel name per line. Substring match (case-insensitive). Wrap in /slashes/ for regex, e.g. /^Exact Channel$/.'
             ));
             surface.appendChild(createBlocklistEditor(
                 'Blocked Keywords',
                 'keyword_blocklist',
-                'One keyword per line. Any video whose title contains a match is hidden.'
+                'One keyword per line. Substring match (case-insensitive). Wrap in /slashes/ for regex, e.g. /sponsor|promo/i.'
             ));
         }
         return createCollapsibleSection(section, surface, group.sectionId);
