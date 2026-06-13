@@ -116,6 +116,9 @@
                 case 'ytab:refresh-rules':
                     document.dispatchEvent(new CustomEvent(EVT_REFRESH_RULES));
                     break;
+                case 'ytab:block-channel':
+                    document.dispatchEvent(new CustomEvent('ytab:block-channel'));
+                    break;
             }
         });
     } catch (e) { /* extension context gone, harmless */ }

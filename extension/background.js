@@ -121,6 +121,9 @@ chrome.commands.onCommand.addListener((name) => {
         case 'ytab-refresh-rules':
             sendToActiveTab({ type: 'ytab:refresh-rules' });
             break;
+        case 'ytab-block-channel':
+            sendToActiveTab({ type: 'ytab:block-channel' });
+            break;
     }
 });
 
@@ -160,6 +163,12 @@ function rebuildContextMenu() {
                 parentId: CONTEXT_MENU_ROOT,
                 title: 'Refresh Rules',
                 contexts: ['action', 'page']
+            });
+            chrome.contextMenus.create({
+                id: 'ytab-block-channel',
+                parentId: CONTEXT_MENU_ROOT,
+                title: 'Block This Channel',
+                contexts: ['page', 'link']
             });
         });
     } catch (e) { /* API may not be available on all channels */ }

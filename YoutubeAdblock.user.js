@@ -440,6 +440,21 @@
                     key: 'keywordBlocker',
                     label: 'Keyword blocklist',
                     desc: 'Drops videos whose title matches one of your blocked keywords (one per line, case-insensitive).'
+                },
+                {
+                    key: 'whitelistMode',
+                    label: 'Whitelist mode',
+                    desc: 'Inverts the channel list: only show videos from listed channels, hide everything else.'
+                },
+                {
+                    key: 'durationFilter',
+                    label: 'Duration filter',
+                    desc: 'Hides videos shorter or longer than your thresholds. Set via the fields below.'
+                },
+                {
+                    key: 'adAllowlist',
+                    label: 'Per-channel ad allowlist',
+                    desc: 'Skips ad pruning for listed channels so their ads play normally. Supports creator sponsorship.'
                 }
             ]
         }
@@ -1309,6 +1324,9 @@
 
     function pruneObject(obj, context) {
         if (!obj || typeof obj !== 'object') return false;
+        if (state.features.adAllowlist && obj.videoDetails && obj.videoDetails.author) {
+            if (isChannelAdAllowed(obj.videoDetails.author)) return false;
+        }
         let pruned = false;
         const keys = state.filters?.pruneKeys || DEFAULT_FILTERS.pruneKeys;
         for (const keyPath of keys) {
@@ -3447,43 +3465,103 @@
         return parseBlocklist(getSetting('keyword_blocklist', ''));
     }
 
-    function videoRendererMatches(renderer, channels, keywords) {
-        if (!renderer || typeof renderer !== 'object') return false;
-        let title = '';
-        let channel = '';
+    function getAdAllowlist() {
+        if (!state.features.adAllowlist) return [];
+        return parseBlocklist(getSetting('ad_allowlist', ''));
+    }
+
+    function parseDurationSeconds(text) {
+        if (typeof text !== 'string') return -1;
+        var parts = text.trim().split(':').map(Number);
+        if (parts.some(isNaN)) return -1;
+        if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
+        if (parts.length === 2) return parts[0] * 60 + parts[1];
+        if (parts.length === 1) return parts[0];
+        return -1;
+    }
+
+    function extractRendererDuration(renderer) {
         try {
-            const t = renderer.title || {};
-            if (typeof t.simpleText === 'string') title = t.simpleText;
-            else if (Array.isArray(t.runs)) title = t.runs.map(r => r?.text || '').join('');
+            var lt = renderer.lengthText || {};
+            var raw = lt.simpleText || (Array.isArray(lt.runs) ? lt.runs.map(function(r) { return r?.text || ''; }).join('') : '');
+            if (raw) return parseDurationSeconds(raw);
+            if (renderer.thumbnailOverlays) {
+                for (var i = 0; i < renderer.thumbnailOverlays.length; i++) {
+                    var ov = renderer.thumbnailOverlays[i];
+                    var tr = ov?.thumbnailOverlayTimeStatusRenderer;
+                    if (tr && tr.text) {
+                        var txt = tr.text.simpleText || (Array.isArray(tr.text.runs) ? tr.text.runs.map(function(r) { return r?.text || ''; }).join('') : '');
+                        if (txt) return parseDurationSeconds(txt);
+                    }
+                }
+            }
         } catch (e) { /* ignore */ }
+        return -1;
+    }
+
+    function extractRendererChannel(renderer) {
         try {
-            const c = renderer.longBylineText || renderer.shortBylineText || renderer.ownerText || {};
-            if (Array.isArray(c.runs)) channel = c.runs.map(r => r?.text || '').join('');
-            else if (typeof c.simpleText === 'string') channel = c.simpleText;
+            var c = renderer.longBylineText || renderer.shortBylineText || renderer.ownerText || {};
+            if (Array.isArray(c.runs)) return c.runs.map(function(r) { return r?.text || ''; }).join('');
+            if (typeof c.simpleText === 'string') return c.simpleText;
         } catch (e) { /* ignore */ }
-        var titleLc = title.toLowerCase();
-        var channelLc = channel.toLowerCase();
-        for (var ci = 0; ci < channels.length; ci++) {
-            var ce = channels[ci];
-            if (ce.type === 'regex' ? ce.pattern.test(channel) : channelLc.includes(ce.value)) return true;
-        }
-        for (var ki = 0; ki < keywords.length; ki++) {
-            var ke = keywords[ki];
-            if (ke.type === 'regex' ? ke.pattern.test(title) : titleLc.includes(ke.value)) return true;
+        return '';
+    }
+
+    function matchesList(text, list) {
+        var lc = text.toLowerCase();
+        for (var i = 0; i < list.length; i++) {
+            var entry = list[i];
+            if (entry.type === 'regex' ? entry.pattern.test(text) : lc.includes(entry.value)) return true;
         }
         return false;
     }
 
-    function feedFilterWalk(value, channels, keywords, depth = 0) {
+    function isChannelAdAllowed(channel) {
+        if (!channel) return false;
+        var list = getAdAllowlist();
+        if (!list.length) return false;
+        return matchesList(channel, list);
+    }
+
+    function videoRendererMatches(renderer, channels, keywords) {
+        if (!renderer || typeof renderer !== 'object') return false;
+        var title = '';
+        try {
+            var t = renderer.title || {};
+            if (typeof t.simpleText === 'string') title = t.simpleText;
+            else if (Array.isArray(t.runs)) title = t.runs.map(function(r) { return r?.text || ''; }).join('');
+        } catch (e) { /* ignore */ }
+        var channel = extractRendererChannel(renderer);
+        var isWhitelist = state.features.whitelistMode;
+        if (isWhitelist && channels.length) {
+            if (!matchesList(channel, channels)) return true;
+        } else {
+            if (matchesList(channel, channels)) return true;
+        }
+        if (matchesList(title, keywords)) return true;
+        if (state.features.durationFilter) {
+            var dur = extractRendererDuration(renderer);
+            if (dur >= 0) {
+                var minDur = parseInt(getSetting('duration_min', ''), 10);
+                var maxDur = parseInt(getSetting('duration_max', ''), 10);
+                if (!isNaN(minDur) && minDur > 0 && dur < minDur) return true;
+                if (!isNaN(maxDur) && maxDur > 0 && dur > maxDur) return true;
+            }
+        }
+        return false;
+    }
+
+    function feedFilterWalk(value, channels, keywords, depth) {
+        if (depth === undefined) depth = 0;
         if (!value || depth > 16) return 0;
-        let dropped = 0;
+        var dropped = 0;
         if (Array.isArray(value)) {
-            for (let i = value.length - 1; i >= 0; i--) {
-                const item = value[i];
+            for (var i = value.length - 1; i >= 0; i--) {
+                var item = value[i];
                 if (!item || typeof item !== 'object') continue;
-                // Look for a video-like renderer inside common wrapper keys.
-                const candidate = item.videoRenderer || item.gridVideoRenderer ||
-                                  item.compactVideoRenderer || item.richItemRenderer?.content?.videoRenderer ||
+                var candidate = item.videoRenderer || item.gridVideoRenderer ||
+                                  item.compactVideoRenderer || (item.richItemRenderer && item.richItemRenderer.content && item.richItemRenderer.content.videoRenderer) ||
                                   item.reelItemRenderer || null;
                 if (candidate && videoRendererMatches(candidate, channels, keywords)) {
                     value.splice(i, 1);
@@ -3493,8 +3571,9 @@
                 dropped += feedFilterWalk(item, channels, keywords, depth + 1);
             }
         } else if (typeof value === 'object') {
-            for (const key of Object.keys(value)) {
-                dropped += feedFilterWalk(value[key], channels, keywords, depth + 1);
+            var keys = Object.keys(value);
+            for (var ki = 0; ki < keys.length; ki++) {
+                dropped += feedFilterWalk(value[keys[ki]], channels, keywords, depth + 1);
             }
         }
         return dropped;
@@ -3506,6 +3585,24 @@
         // shares the same filtering. This engine slot exists so the
         // feature can be observed in diagnostics and so future hooks
         // (e.g. SPA DOM sweep for already-rendered tiles) can attach here.
+        try {
+            document.addEventListener('ytab:block-channel', function () {
+                try {
+                    var channelEl = document.querySelector('#owner #channel-name a, ytd-video-owner-renderer #channel-name a, #upload-info #channel-name a');
+                    var channelName = channelEl ? channelEl.textContent.trim() : '';
+                    if (!channelName) return;
+                    var existing = getSetting('channel_blocklist', '');
+                    var lines = existing ? existing.split(/\r?\n/).map(function(l) { return l.trim(); }) : [];
+                    if (lines.some(function(l) { return l.toLowerCase() === channelName.toLowerCase(); })) return;
+                    lines.push(channelName);
+                    setSetting('channel_blocklist', lines.filter(Boolean).join('\n'));
+                    if (!state.features.channelBlocker) {
+                        state.features.channelBlocker = true;
+                        setSetting('channelBlocker', true);
+                    }
+                } catch (e) { /* ignore */ }
+            });
+        } catch (e) { /* ignore */ }
     }
 
     /* =========================================================================
@@ -5098,13 +5195,21 @@
             surface.appendChild(createBlocklistEditor(
                 'Blocked Channels',
                 'channel_blocklist',
-                'One channel name per line. Substring match (case-insensitive). Wrap in /slashes/ for regex, e.g. /^Exact Channel$/.'
+                state.features.whitelistMode
+                    ? 'Whitelist mode active: only videos from these channels will be shown.'
+                    : 'One channel name per line. Substring match (case-insensitive). Wrap in /slashes/ for regex, e.g. /^Exact Channel$/.'
             ));
             surface.appendChild(createBlocklistEditor(
                 'Blocked Keywords',
                 'keyword_blocklist',
                 'One keyword per line. Substring match (case-insensitive). Wrap in /slashes/ for regex, e.g. /sponsor|promo/i.'
             ));
+            surface.appendChild(createBlocklistEditor(
+                'Ad-Allowed Channels',
+                'ad_allowlist',
+                'Ads will play on videos from these channels. One per line. Supports regex.'
+            ));
+            surface.appendChild(createDurationFilterEditor());
         }
         return createCollapsibleSection(section, surface, group.sectionId);
     }
@@ -5133,6 +5238,41 @@
             }, 400);
         });
         wrap.append(label, helpEl, ta);
+        return wrap;
+    }
+
+    function createDurationFilterEditor() {
+        const wrap = document.createElement('div');
+        wrap.className = `${CSS_PREFIX}-field`;
+        wrap.style.marginTop = '12px';
+        const label = document.createElement('label');
+        label.className = `${CSS_PREFIX}-field-label`;
+        label.textContent = 'Duration Filter (seconds)';
+        const helpEl = document.createElement('p');
+        helpEl.className = `${CSS_PREFIX}-field-help`;
+        helpEl.textContent = 'Hide videos shorter than min or longer than max. Leave blank to skip.';
+        const row = document.createElement('div');
+        row.style.cssText = 'display:flex;gap:12px;margin-top:6px;';
+        function makeInput(key, placeholder) {
+            const inp = document.createElement('input');
+            inp.type = 'number';
+            inp.min = '0';
+            inp.placeholder = placeholder;
+            inp.className = `${CSS_PREFIX}-input`;
+            inp.style.cssText = 'width:100px;';
+            inp.value = getSetting(key, '');
+            let timer = null;
+            inp.addEventListener('input', () => {
+                if (timer) clearTimeout(timer);
+                timer = setTimeout(() => {
+                    timer = null;
+                    setSetting(key, inp.value);
+                }, 400);
+            });
+            return inp;
+        }
+        row.append(makeInput('duration_min', 'Min (sec)'), makeInput('duration_max', 'Max (sec)'));
+        wrap.append(label, helpEl, row);
         return wrap;
     }
 
