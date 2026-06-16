@@ -10,12 +10,16 @@ const repoRoot = path.resolve(__dirname, '..');
 const bridgeSource = fs.readFileSync(path.join(repoRoot, 'extension', 'bridge.js'), 'utf8');
 
 const ALLOWED_KEY = '__ytab_ext_settings__';
+const LOCAL_META_KEY = '__ytab_ext_settings_meta__';
+const SYNC_META_KEY = '__ytab_ext_settings_sync_meta__';
+const SYNC_CHUNK_PREFIX = '__ytab_ext_settings_sync_chunk_';
 const EVT_REQ = 'ytab:page-request';
 const EVT_RES = 'ytab:page-response';
 const EVT_SYNC = 'ytab:settings-changed';
 
-function createBridgeEnv() {
-    const storageData = {};
+function createBridgeEnv(options = {}) {
+    const storageData = { ...(options.localStorage || {}) };
+    const syncStorageData = { ...(options.syncStorage || {}) };
     const responses = [];
     const dispatched = [];
     const listeners = {};
@@ -38,6 +42,28 @@ function createBridgeEnv() {
         }
     };
 
+    function storageGet(area, keys, cb) {
+        const result = {};
+        const list = Array.isArray(keys) ? keys : [keys];
+        for (const k of list) {
+            if (k in area) result[k] = area[k];
+        }
+        cb(result);
+    }
+
+    function storageSet(area, items, cb) {
+        Object.assign(area, items);
+        if (cb) cb();
+    }
+
+    function storageRemove(area, keys, cb) {
+        const list = Array.isArray(keys) ? keys : [keys];
+        for (const key of list) {
+            delete area[key];
+        }
+        if (cb) cb();
+    }
+
     const mockChrome = {
         runtime: {
             lastError: null,
@@ -48,15 +74,21 @@ function createBridgeEnv() {
         storage: {
             local: {
                 get(keys, cb) {
-                    const result = {};
-                    for (const k of keys) {
-                        if (k in storageData) result[k] = storageData[k];
-                    }
-                    cb(result);
+                    storageGet(storageData, keys, cb);
                 },
                 set(items, cb) {
-                    Object.assign(storageData, items);
-                    if (cb) cb();
+                    storageSet(storageData, items, cb);
+                }
+            },
+            sync: {
+                get(keys, cb) {
+                    storageGet(syncStorageData, keys, cb);
+                },
+                set(items, cb) {
+                    storageSet(syncStorageData, items, cb);
+                },
+                remove(keys, cb) {
+                    storageRemove(syncStorageData, keys, cb);
                 }
             },
             onChanged: {
@@ -110,6 +142,7 @@ function createBridgeEnv() {
         responses,
         dispatched,
         storageData,
+        syncStorageData,
         localStorageData,
         mockChrome,
         messageListener,
@@ -117,6 +150,33 @@ function createBridgeEnv() {
         pagehideListener,
         flush: () => new Promise(r => setTimeout(r, 200))
     };
+}
+
+function buildSyncStorage(value, updatedAt = 1000) {
+    const serialized = JSON.stringify(value);
+    const out = {
+        [SYNC_META_KEY]: {
+            version: 1,
+            updatedAt,
+            chunkCount: Math.ceil(serialized.length / (7 * 1024)),
+            byteLength: serialized.length,
+            oversized: false
+        }
+    };
+    for (let i = 0; i < out[SYNC_META_KEY].chunkCount; i++) {
+        out[`${SYNC_CHUNK_PREFIX}${i}`] = serialized.slice(i * 7 * 1024, (i + 1) * 7 * 1024);
+    }
+    return out;
+}
+
+function readSyncedPayload(env) {
+    const meta = env.syncStorageData[SYNC_META_KEY];
+    if (!meta || meta.oversized) return null;
+    let serialized = '';
+    for (let i = 0; i < meta.chunkCount; i++) {
+        serialized += env.syncStorageData[`${SYNC_CHUNK_PREFIX}${i}`];
+    }
+    return JSON.parse(serialized);
 }
 
 test('rejects requests with non-allowlisted storage key', () => {
@@ -229,6 +289,80 @@ test('write debouncing: rapid writes coalesce into one storage.local.set call', 
 
     assert.equal(setCalls.length, 1);
     assert.deepEqual(setCalls[0][ALLOWED_KEY], { a: 2 });
+});
+
+test('valid writes mirror to chrome.storage.sync using bounded chunks', async () => {
+    const env = createBridgeEnv();
+    const value = {
+        channel_blocklist: 'Channel '.repeat(1200),
+        feature_overrides: { channelBlocker: true, keywordBlocker: true }
+    };
+
+    env.sendRequest({ id: 'sync1', op: 'set', key: ALLOWED_KEY, value });
+
+    await env.flush();
+
+    const r = env.responses.find(r => r.id === 'sync1');
+    assert.ok(r);
+    assert.equal(r.ok, true);
+    assert.deepEqual(env.storageData[ALLOWED_KEY], value);
+    assert.ok(env.storageData[LOCAL_META_KEY].updatedAt > 0);
+    const meta = env.syncStorageData[SYNC_META_KEY];
+    assert.ok(meta);
+    assert.equal(meta.oversized, false);
+    assert.ok(meta.chunkCount >= 2, 'expected payload to span multiple sync chunks');
+    assert.deepEqual(readSyncedPayload(env), value);
+});
+
+test('oversized sync payloads still save locally and write an oversized sync tombstone', async () => {
+    const env = createBridgeEnv();
+    const value = { channel_blocklist: 'x'.repeat(110 * 1024) };
+
+    env.sendRequest({ id: 'big1', op: 'set', key: ALLOWED_KEY, value });
+
+    await env.flush();
+
+    const r = env.responses.find(r => r.id === 'big1');
+    assert.ok(r);
+    assert.equal(r.ok, true);
+    assert.deepEqual(env.storageData[ALLOWED_KEY], value);
+    const meta = env.syncStorageData[SYNC_META_KEY];
+    assert.ok(meta);
+    assert.equal(meta.oversized, true);
+    assert.equal(meta.chunkCount, 0);
+    assert.equal(env.syncStorageData[`${SYNC_CHUNK_PREFIX}0`], undefined);
+});
+
+test('startup hydration applies a newer chrome.storage.sync snapshot', async () => {
+    const remote = { enabled: false, keyword_blocklist: 'promo\nsponsored' };
+    const env = createBridgeEnv({
+        syncStorage: buildSyncStorage(remote, 2000)
+    });
+
+    await env.flush();
+
+    assert.deepEqual(env.storageData[ALLOWED_KEY], remote);
+    assert.equal(env.storageData[LOCAL_META_KEY].updatedAt, 2000);
+    assert.equal(env.localStorageData[ALLOWED_KEY], JSON.stringify(remote));
+    const syncEvents = env.dispatched.filter(d => d.type === EVT_SYNC);
+    assert.ok(syncEvents.some(d => d.detail[ALLOWED_KEY].keyword_blocklist === remote.keyword_blocklist));
+});
+
+test('startup hydration keeps local settings when local metadata is newer than sync', async () => {
+    const localValue = { enabled: true, channel_blocklist: 'local' };
+    const remote = { enabled: false, channel_blocklist: 'remote' };
+    const env = createBridgeEnv({
+        localStorage: {
+            [ALLOWED_KEY]: localValue,
+            [LOCAL_META_KEY]: { updatedAt: 3000 }
+        },
+        syncStorage: buildSyncStorage(remote, 2000)
+    });
+
+    await env.flush();
+
+    assert.deepEqual(env.storageData[ALLOWED_KEY], localValue);
+    assert.equal(env.localStorageData[ALLOWED_KEY], JSON.stringify(localValue));
 });
 
 test('service-worker message relay dispatches correct event types', () => {

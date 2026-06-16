@@ -17,8 +17,9 @@
      * Storage strategy:
      *   - localStorage is the read path (sync, no-latency at document-start).
      *   - A CustomEvent bridge asks the ISOLATED-world content script to mirror
-     *     writes into chrome.storage.local. When the storage area changes
-     *     (e.g. user edited settings on another subdomain), the bridge pushes
+     *     writes into chrome.storage.local and eligible settings into
+     *     chrome.storage.sync chunks. When either storage area changes (e.g.
+     *     user edited settings on another signed-in browser), the bridge pushes
      *     an update back and we refresh localStorage so subsequent reads win.
      *
      * Network strategy:
@@ -124,7 +125,7 @@
      * ===================================================================== */
 
     const SCRIPT_NAME = 'YoutubeAdblock';
-    const SCRIPT_VERSION = '0.5.0';
+    const SCRIPT_VERSION = '0.5.1';
     const PROJECT_URL = 'https://github.com/SysAdminDoc/YoutubeAdblock';
     const ISSUES_URL = `${PROJECT_URL}/issues`;
     const FILTER_URL_DEFAULT = 'https://raw.githubusercontent.com/SysAdminDoc/YoutubeAdblock/refs/heads/main/youtube-adblock-filters.txt';

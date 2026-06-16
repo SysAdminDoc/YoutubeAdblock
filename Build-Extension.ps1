@@ -66,8 +66,9 @@ $gmShim = @'
      * Storage strategy:
      *   - localStorage is the read path (sync, no-latency at document-start).
      *   - A CustomEvent bridge asks the ISOLATED-world content script to mirror
-     *     writes into chrome.storage.local. When the storage area changes
-     *     (e.g. user edited settings on another subdomain), the bridge pushes
+     *     writes into chrome.storage.local and eligible settings into
+     *     chrome.storage.sync chunks. When either storage area changes (e.g.
+     *     user edited settings on another signed-in browser), the bridge pushes
      *     an update back and we refresh localStorage so subsequent reads win.
      *
      * Network strategy:
