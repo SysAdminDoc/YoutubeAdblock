@@ -39,12 +39,14 @@ function createTestHarness(options = {}) {
 
     const storage = { ...(options.storage || {}) };
     const querySelector = options.querySelector || (() => noopEl());
+    const documentReadyState = options.documentReadyState || 'complete';
+    const performanceNow = options.performanceNow ?? 0;
 
     const sandbox = {
         window: {},
         self: {},
         document: {
-            readyState: 'complete',
+            readyState: documentReadyState,
             addEventListener: noop,
             removeEventListener: noop,
             createElement,
@@ -78,6 +80,7 @@ function createTestHarness(options = {}) {
         URL: globalThis.URL,
         matchMedia: () => ({ matches: false }),
         getComputedStyle: () => ({}),
+        performance: { now: () => performanceNow },
         requestAnimationFrame: noop,
         fetch: noop,
         __YTAB_STORAGE_KEY: undefined,
@@ -106,6 +109,8 @@ function createTestHarness(options = {}) {
         audioTrackHasOriginalMarker,
         pickOriginalAudioTrack,
         applyOriginalAudioTrack,
+        getInjectionTimingStatus,
+        buildDiagnosticsReport,
         matchesInterceptPattern,
         replaceAdKeys,
         responseTextMightContainAds,
@@ -432,6 +437,26 @@ test('applyOriginalAudioTrack uses the player API when enabled', () => {
 
     assert.equal(h.applyOriginalAudioTrack(player), true);
     assert.equal(selected, tracks[1]);
+});
+
+// ========== Userscript-manager diagnostics ==========
+
+test('injection diagnostics flag late userscript-manager startup', () => {
+    const h = createTestHarness({ documentReadyState: 'interactive', performanceNow: 2400 });
+    const status = h.getInjectionTimingStatus();
+
+    assert.equal(status.likelyLate, true);
+    assert.match(status.description, /Allow User Scripts|document-start/);
+    assert.match(h.buildDiagnosticsReport(), /Injection status: Late injection suspected/);
+});
+
+test('injection diagnostics confirm document-start startup separately from rule breakage', () => {
+    const h = createTestHarness({ documentReadyState: 'loading', performanceNow: 24 });
+    const status = h.getInjectionTimingStatus();
+
+    assert.equal(status.likelyLate, false);
+    assert.equal(status.title, 'Document-start confirmed');
+    assert.match(status.description, /refresh rules or check engine health/i);
 });
 
 // ========== Extension context-menu channel block ==========

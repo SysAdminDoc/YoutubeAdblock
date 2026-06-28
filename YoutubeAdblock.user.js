@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         YoutubeAdblock
 // @namespace    https://github.com/SysAdminDoc
-// @version      0.5.8
+// @version      0.5.9
 // @description  YouTube ad blocker with remote rules, anti-detect hardening, toString-hiding proxies, DeArrow + RYD, volume boost, UI cleanup, and an in-page Control Center
 // @author       SysAdminDoc
 // @license      MIT
@@ -41,7 +41,7 @@
      * ===================================================================== */
 
     const SCRIPT_NAME = 'YoutubeAdblock';
-    const SCRIPT_VERSION = '0.5.8';
+    const SCRIPT_VERSION = '0.5.9';
     const PROJECT_URL = 'https://github.com/SysAdminDoc/YoutubeAdblock';
     const ISSUES_URL = `${PROJECT_URL}/issues`;
     const FILTER_URL_DEFAULT = 'https://raw.githubusercontent.com/SysAdminDoc/YoutubeAdblock/refs/heads/main/youtube-adblock-filters.txt';
@@ -56,6 +56,11 @@
     const STATS_UI_REFRESH_MS = 5000;
     const CSS_PREFIX = 'ytab';
     const IS_EXTENSION_BUILD = typeof __YTAB_STORAGE_KEY !== 'undefined';
+    const SCRIPT_EVAL_READY_STATE = (typeof document !== 'undefined' && document.readyState) ? document.readyState : 'unknown';
+    const SCRIPT_EVAL_ELAPSED_MS = (typeof performance !== 'undefined' && typeof performance.now === 'function')
+        ? Math.round(performance.now())
+        : null;
+    const LATE_INJECTION_THRESHOLD_MS = 1500;
     const DEFAULT_STATS = {
         blocked: 0,
         pruned: 0,
@@ -902,6 +907,36 @@
             label: 'Protected',
             tone: 'success',
             description: 'Built-in rules are active, so protection still works even without a remote list.'
+        };
+    }
+
+    function getInjectionTimingStatus() {
+        const readyState = SCRIPT_EVAL_READY_STATE || 'unknown';
+        const elapsedMs = Number.isFinite(SCRIPT_EVAL_ELAPSED_MS) ? SCRIPT_EVAL_ELAPSED_MS : null;
+        const lateByReadyState = readyState !== 'loading' && readyState !== 'unknown';
+        const lateByTime = elapsedMs !== null && elapsedMs > LATE_INJECTION_THRESHOLD_MS;
+        const likelyLate = lateByReadyState || lateByTime;
+        const elapsedText = elapsedMs === null ? 'unknown timing' : `${elapsedMs}ms after navigation start`;
+
+        if (!likelyLate) {
+            return {
+                title: 'Document-start confirmed',
+                tone: 'success',
+                likelyLate: false,
+                readyState,
+                elapsedMs,
+                description: `YoutubeAdblock evaluated while the document was ${readyState} (${elapsedText}), so manager setup looks correct. If ads still appear, refresh rules or check engine health instead of reinstalling.`
+            };
+        }
+
+        const product = IS_EXTENSION_BUILD ? 'extension content script' : 'userscript manager';
+        return {
+            title: 'Late injection suspected',
+            tone: 'warn',
+            likelyLate: true,
+            readyState,
+            elapsedMs,
+            description: `YoutubeAdblock evaluated after document-start (${readyState}, ${elapsedText}). This usually points to ${product} setup, such as Chrome's "Allow User Scripts" toggle, a disabled manager, or a manager that missed @run-at document-start. Reload YouTube after fixing setup; rule refreshes cannot recover player responses that loaded before the script.`
         };
     }
 
@@ -5335,6 +5370,11 @@
             createMetricTile('Feed Filtered', 'feedFiltered')
         );
 
+        const injectionStatus = getInjectionTimingStatus();
+        const injectionNote = injectionStatus.likelyLate
+            ? createNote('Manager Setup Warning', injectionStatus.description, 'warn')
+            : null;
+
         // Degraded-protection warning. Engines that threw during install or
         // lost a native to another script's lock are otherwise invisible —
         // the user sees "Protection On" while core interception is dead.
@@ -5383,7 +5423,8 @@
             diagnosticsJump
         );
 
-        if (healthNote) surface.append(hero, facts, healthNote, metrics, actions);
+        const notes = [injectionNote, healthNote].filter(Boolean);
+        if (notes.length) surface.append(hero, facts, ...notes, metrics, actions);
         else surface.append(hero, facts, metrics, actions);
         section.appendChild(surface);
         return section;
@@ -5869,7 +5910,7 @@
     function createDiagnosticsSection(query = '') {
         if (query && !matchesSettingsQuery(
             query,
-            'diagnostics recovery reset defaults reset counters copy diagnostics issues local only',
+            'diagnostics recovery reset defaults reset counters copy diagnostics issues local only document-start injection userscript manager setup',
             state.filterError
         )) {
             return null;
@@ -5884,6 +5925,13 @@
         const surface = createSurface();
         const groups = document.createElement('div');
         groups.className = `${CSS_PREFIX}-action-groups`;
+
+        const injectionStatus = getInjectionTimingStatus();
+        const setupGroup = createActionGroup(
+            'Install Timing',
+            'Separate userscript-manager setup problems from YouTube rule breakage before changing settings.'
+        );
+        setupGroup.appendChild(createNote(injectionStatus.title, injectionStatus.description, injectionStatus.tone));
 
         const diagnosticsGroup = createActionGroup(
             'Share a Snapshot',
@@ -5951,7 +5999,7 @@
         recoveryActions.append(resetStats, restore);
         recoveryGroup.appendChild(recoveryActions);
 
-        groups.append(diagnosticsGroup, recoveryGroup);
+        groups.append(setupGroup, diagnosticsGroup, recoveryGroup);
         surface.appendChild(groups);
         return createCollapsibleSection(section, surface, SECTION_IDS.diagnostics);
     }
@@ -6460,6 +6508,7 @@
             : 'none';
         const coverage = sanitizeFilterCoverage(state.filters?.coverage);
         const uaHint = typeof navigator !== 'undefined' ? (navigator.userAgent || 'unknown') : 'unknown';
+        const injectionStatus = getInjectionTimingStatus();
         return [
             `${SCRIPT_NAME} v${SCRIPT_VERSION}`,
             `Captured: ${new Date().toISOString()}`,
@@ -6467,6 +6516,10 @@
             `Surface: ${getSiteLabel()} / ${getSurfaceLabel()}`,
             `Build: ${IS_EXTENSION_BUILD ? 'extension' : 'userscript'}`,
             `UA: ${uaHint}`,
+            `Injection status: ${injectionStatus.title}`,
+            `Injection readyState: ${injectionStatus.readyState}`,
+            `Injection elapsed: ${injectionStatus.elapsedMs === null ? 'unknown' : injectionStatus.elapsedMs + 'ms'}`,
+            `Injection guidance: ${injectionStatus.description}`,
             `Protection enabled: ${isEnabled()}`,
             `Filter source: ${getFilterSourceLabel()}`,
             `Filter URL: ${resolveFilterUrl()}`,
@@ -6679,7 +6732,12 @@
 
         if (!getSetting('welcomed', false)) {
             setSetting('welcomed', true);
-            showToast(`YoutubeAdblock is active. ${getControlCenterAccessHint()}`, 'success');
+            const injectionStatus = getInjectionTimingStatus();
+            if (injectionStatus.likelyLate) {
+                showToast(`YoutubeAdblock loaded late. Open Diagnostics for setup steps. ${getControlCenterAccessHint()}`, 'warn');
+            } else {
+                showToast(`YoutubeAdblock is active. ${getControlCenterAccessHint()}`, 'success');
+            }
         }
 
         // Stats counter update interval (panel only repaints when open)

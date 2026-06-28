@@ -1,6 +1,6 @@
 # YoutubeAdblock
 
-![Version](https://img.shields.io/badge/version-0.5.8-58A6FF)
+![Version](https://img.shields.io/badge/version-0.5.9-58A6FF)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
 > A document-start YouTube ad blocker with a split-context proxy engine, remote rule support, and a premium Control Center for tuning protection.
@@ -176,6 +176,9 @@ The proxy engine strips these fields from YouTube API responses before they reac
 
 **Ads still showing after install?**
 Make sure no other YouTube ad-blocker userscripts are running simultaneously — they can conflict with the proxy engine. Disable competing scripts and reload.
+
+**Diagnostics says YoutubeAdblock loaded late?**
+Chrome MV3 userscript managers can miss `document-start` unless user scripts are explicitly allowed. Open `chrome://extensions`, select Tampermonkey or Violentmonkey, enable **Allow User Scripts** if Chrome shows it, confirm the script is enabled for YouTube, then reload YouTube. If Diagnostics says document-start is confirmed but ads still show, use **Refresh Rules** instead of reinstalling.
 
 **YouTube detects my ad blocker?**
 Ensure the Anti-Detect setting is enabled. If YouTube recently changed their detection, check for a script update or open an issue.
