@@ -1,6 +1,6 @@
 # YoutubeAdblock
 
-![Version](https://img.shields.io/badge/version-0.5.9-58A6FF)
+![Version](https://img.shields.io/badge/version-0.5.10-58A6FF)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
 > A document-start YouTube ad blocker with a split-context proxy engine, remote rule support, and a premium Control Center for tuning protection.
@@ -25,7 +25,7 @@ Optional browser shortcuts can be bound from `chrome://extensions/shortcuts`; no
 
 Because the MV3 manifest intentionally includes both `background.service_worker` and `background.scripts` for Chrome + Firefox compatibility, the unpacked extension target is Chromium 121 or newer.
 
-For a full local release gate, run `powershell -NoProfile -ExecutionPolicy Bypass -File .\Build-Release.ps1`. It regenerates the extension, runs syntax checks and tests, validates generated DNR output, cleans stale artifacts, and writes current `.user.js`, `.zip`, and signed `.crx` artifacts into `dist/`. If you only need a packaged Chromium artifact, run `powershell -ExecutionPolicy Bypass -File .\Build-CRX.ps1`. Keep in mind that Chrome generally does **not** allow normal local-file `.crx` installs outside developer-mode, Linux self-hosting, or managed-policy flows, so the unpacked install path remains the best default for most users.
+For a full local release gate, run `powershell -NoProfile -ExecutionPolicy Bypass -File .\Build-Release.ps1`. It regenerates the extension, runs syntax checks and tests, validates generated DNR output, signs or verifies the filter manifest, cleans stale artifacts, and writes current `.user.js`, `.zip`, and signed `.crx` artifacts into `dist/`. If you only need a packaged Chromium artifact, run `powershell -ExecutionPolicy Bypass -File .\Build-CRX.ps1`. Keep in mind that Chrome generally does **not** allow normal local-file `.crx` installs outside developer-mode, Linux self-hosting, or managed-policy flows, so the unpacked install path remains the best default for most users.
 
 ### Firefox (MV3 extension)
 
@@ -149,7 +149,7 @@ All settings persist via `GM_setValue`. Open the userscript menu and choose `You
 
 ### Filter List
 
-The default remote filter list is hosted in this repo at [`youtube-adblock-filters.txt`](https://raw.githubusercontent.com/SysAdminDoc/YoutubeAdblock/refs/heads/main/youtube-adblock-filters.txt). It uses uBO-compatible filter syntax and is parsed on fetch. The userscript build can point the Rule Library field at any compatible raw list URL; the extension build works best with sources that allow direct browser fetches from YouTube pages, so the recommended GitHub-hosted source is the safest default there. If a refresh fails, YoutubeAdblock keeps the last working rules or the built-in fallback active so protection does not drop unexpectedly.
+The default remote filter list is hosted in this repo at [`youtube-adblock-filters.txt`](https://raw.githubusercontent.com/SysAdminDoc/YoutubeAdblock/refs/heads/main/youtube-adblock-filters.txt). It uses uBO-compatible filter syntax and is verified against the bundled Ed25519 public key before it replaces active rules. The userscript build can point the Rule Library field at any compatible raw list URL; custom sources are allowed but shown as unsigned in diagnostics. The extension build works best with sources that allow direct browser fetches from YouTube pages, so the recommended GitHub-hosted source is the safest default there. If a refresh fails or signature verification fails, YoutubeAdblock keeps the last working rules or the built-in fallback active so protection does not drop unexpectedly.
 
 ### Pruned API Fields
 

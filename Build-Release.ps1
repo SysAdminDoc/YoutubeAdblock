@@ -89,6 +89,7 @@ $manifestPath = Join-Path $repoRootAbs 'extension\manifest.json'
 $mainPath = Join-Path $repoRootAbs 'extension\main.js'
 $networkSourcePath = Join-Path $repoRootAbs 'extension\rules\network-rules-source.json'
 $networkOutputPath = Join-Path $repoRootAbs 'extension\rules\network-blocks.json'
+$filterSignScriptPath = Join-Path $repoRootAbs 'tools\sign-filter-manifest.mjs'
 
 if (-not (Test-Path -LiteralPath $sourcePath)) { throw "Missing userscript: $sourcePath" }
 if (-not (Test-Path -LiteralPath $manifestPath)) { throw "Missing manifest: $manifestPath" }
@@ -128,6 +129,7 @@ Test-JsonEqual $networkOutputPath $expectedDnrJson 'extension/rules/network-bloc
 
 $node = Get-Command -Name node -ErrorAction SilentlyContinue
 if (-not $node) { throw 'Node.js is required for release checks.' }
+Invoke-Checked { & node $filterSignScriptPath --repo-root $repoRootAbs } 'Filter manifest signing/verification failed.'
 Invoke-Checked { & node --check $sourcePath } 'node --check failed on YoutubeAdblock.user.js'
 Invoke-Checked { & node --check $mainPath } 'node --check failed on extension/main.js'
 Invoke-Checked { & node --check (Join-Path $repoRootAbs 'extension\background.js') } 'node --check failed on extension/background.js'

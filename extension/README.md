@@ -129,8 +129,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\Build-Release.ps1
 ```
 
 That command regenerates generated files, runs syntax checks and tests,
-validates DNR freshness, cleans stale artifacts, and writes current artifacts
-to `dist/`. For manual steps:
+validates DNR freshness, signs or verifies the filter manifest, cleans stale
+artifacts, and writes current artifacts to `dist/`. For manual steps:
 
 1. Regenerate the extension engine:
 

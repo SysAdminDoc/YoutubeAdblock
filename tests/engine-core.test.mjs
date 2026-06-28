@@ -8,6 +8,9 @@ import vm from 'node:vm';
 const __dirname = path.dirname(url.fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, '..');
 const userscriptSource = fs.readFileSync(path.join(repoRoot, 'YoutubeAdblock.user.js'), 'utf8');
+const filterText = fs.readFileSync(path.join(repoRoot, 'youtube-adblock-filters.txt'), 'utf8');
+const filterManifest = JSON.parse(fs.readFileSync(path.join(repoRoot, 'youtube-adblock-filters.manifest.json'), 'utf8'));
+const filterSignature = fs.readFileSync(path.join(repoRoot, 'youtube-adblock-filters.txt.sig'), 'utf8');
 
 // Extract the IIFE body, strip the header, and expose internal functions
 // via a module-return pattern so tests can call them without a browser env.
@@ -67,6 +70,10 @@ function createTestHarness(options = {}) {
         clearInterval: noop,
         Object, Array, Set, Map, WeakMap, Proxy, Reflect, RegExp, JSON,
         Number, Math, String, Date, Error, TypeError, Promise,
+        TextEncoder: globalThis.TextEncoder,
+        crypto: globalThis.crypto,
+        atob: globalThis.atob,
+        btoa: globalThis.btoa,
         Headers: function Headers() { this.get = () => ''; this.delete = noop; },
         Response: function Response(body, init) { this.body = body; this.status = init?.status || 200; },
         Request: function Request(url) { this.url = url; },
@@ -100,6 +107,9 @@ function createTestHarness(options = {}) {
         pruneObject,
         sanitizeFilterPayload,
         parseUBOFilterList,
+        sanitizeFilterManifest,
+        normalizeFilterTextForSignature,
+        verifyEd25519Signature,
         parseBlocklist,
         extractRendererChannelIdentity,
         videoRendererMatches,
@@ -337,6 +347,32 @@ test('parseUBOFilterList reports supported and unsupported scriptlet coverage', 
     assert.equal(supported.get('set'), 1);
     assert.equal(supported.get('json-prune'), 1);
     assert.equal(unsupported.get('trusted-replace-fetch-response'), 1);
+});
+
+// ========== Signed filter manifest ==========
+
+test('signed filter manifest accepts the committed filter list', async () => {
+    const manifest = harness.sanitizeFilterManifest(filterManifest);
+
+    assert.ok(manifest);
+    assert.equal(manifest.sha256, filterManifest.sha256);
+    assert.equal(
+        await harness.verifyEd25519Signature(filterText, filterSignature, filterManifest.publicKey),
+        true
+    );
+});
+
+test('signed filter manifest rejects tampered filter content', async () => {
+    assert.equal(
+        await harness.verifyEd25519Signature(`${filterText}\n! tampered`, filterSignature, filterManifest.publicKey),
+        false
+    );
+});
+
+test('signed filter manifest rejects untrusted public keys', () => {
+    const manifest = { ...filterManifest, publicKey: filterManifest.publicKey.replace(/.$/, 'A') };
+
+    assert.equal(harness.sanitizeFilterManifest(manifest), null);
 });
 
 // ========== injectNoAdFlag ==========

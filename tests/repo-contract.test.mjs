@@ -15,9 +15,13 @@ const userscript = read('YoutubeAdblock.user.js');
 const manifest = JSON.parse(read(path.join('extension', 'manifest.json')));
 const rules = JSON.parse(read(path.join('extension', 'rules', 'network-blocks.json')));
 const networkRuleSource = JSON.parse(read(path.join('extension', 'rules', 'network-rules-source.json')));
+const filterManifest = JSON.parse(read('youtube-adblock-filters.manifest.json'));
+const filterSignature = read('youtube-adblock-filters.txt.sig').trim();
+const gitignore = read('.gitignore');
 const buildExtension = read('Build-Extension.ps1');
 const buildRelease = read('Build-Release.ps1');
 const buildCrx = read('Build-CRX.ps1');
+const signFilterManifest = read(path.join('tools', 'sign-filter-manifest.mjs'));
 const background = read(path.join('extension', 'background.js'));
 const extensionReadme = read(path.join('extension', 'README.md'));
 const generatedMain = read(path.join('extension', 'main.js'));
@@ -72,12 +76,24 @@ test('one-command release gate runs local checks and packages fresh artifacts', 
     assert.match(buildRelease, /node --check/);
     assert.match(buildRelease, /node --test/);
     assert.match(buildRelease, /network-blocks\.json/);
+    assert.match(buildRelease, /sign-filter-manifest\.mjs/);
     assert.match(buildRelease, /YoutubeAdblock-v\$version\.user\.js/);
     assert.match(buildRelease, /YoutubeAdblock-extension-v\$version\.zip/);
     assert.match(buildRelease, /YoutubeAdblock-extension-v\$version\.xpi/);
     assert.match(buildRelease, /Build-CRX\.ps1/);
     assert.match(readme, /Build-Release\.ps1/);
     assert.match(extensionReadme, /Build-Release\.ps1/);
+});
+
+test('filter manifest signer keeps remote rules signed without committing private keys', () => {
+    assert.match(signFilterManifest, /Ed25519/);
+    assert.match(signFilterManifest, /YoutubeAdblock-filter-signing-private\.pem/);
+    assert.match(signFilterManifest, /verifyCommittedManifest/);
+    assert.equal(filterManifest.algorithm, 'Ed25519');
+    assert.equal(filterManifest.signedContent, 'youtube-adblock-filters.txt');
+    assert.match(filterSignature, /^[A-Za-z0-9+/]+={0,2}$/);
+    assert(userscript.includes(filterManifest.publicKey), 'userscript must embed the trusted filter public key');
+    assert.match(gitignore, /\*\.pem/);
 });
 
 test('extension README reflects the current iconless manifest', () => {
@@ -95,6 +111,7 @@ test('extension keyboard commands are opt-in with no default shortcuts', () => {
     }
     assert.doesNotMatch(readme, /Ctrl\+Shift\+Y|Command\+Shift\+Y|Cmd\+Shift\+Y/);
     assert.doesNotMatch(extensionReadme, /Ctrl\+Shift\+Y|Command\+Shift\+Y|Cmd\+Shift\+Y/);
+    assert.doesNotMatch(userscript, /Ctrl\s*\+\s*Shift\s*\+\s*Y|Command\s*\+\s*Shift\s*\+\s*Y|Cmd\s*\+\s*Shift\s*\+\s*Y/);
     assert.match(readme, /chrome:\/\/extensions\/shortcuts/);
     assert.match(extensionReadme, /chrome:\/\/extensions\/shortcuts/);
 });

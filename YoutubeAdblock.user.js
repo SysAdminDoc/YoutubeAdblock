@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         YoutubeAdblock
 // @namespace    https://github.com/SysAdminDoc
-// @version      0.5.9
+// @version      0.5.10
 // @description  YouTube ad blocker with remote rules, anti-detect hardening, toString-hiding proxies, DeArrow + RYD, volume boost, UI cleanup, and an in-page Control Center
 // @author       SysAdminDoc
 // @license      MIT
@@ -41,12 +41,21 @@
      * ===================================================================== */
 
     const SCRIPT_NAME = 'YoutubeAdblock';
-    const SCRIPT_VERSION = '0.5.9';
+    const SCRIPT_VERSION = '0.5.10';
     const PROJECT_URL = 'https://github.com/SysAdminDoc/YoutubeAdblock';
     const ISSUES_URL = `${PROJECT_URL}/issues`;
     const FILTER_URL_DEFAULT = 'https://raw.githubusercontent.com/SysAdminDoc/YoutubeAdblock/refs/heads/main/youtube-adblock-filters.txt';
+    const FILTER_MANIFEST_URL_DEFAULT = 'https://raw.githubusercontent.com/SysAdminDoc/YoutubeAdblock/refs/heads/main/youtube-adblock-filters.manifest.json';
+    const FILTER_SIGNATURE_URL_DEFAULT = 'https://raw.githubusercontent.com/SysAdminDoc/YoutubeAdblock/refs/heads/main/youtube-adblock-filters.txt.sig';
+    const FILTER_PUBLIC_KEY_BASE64 = 'MCowBQYDK2VwAyEAdkjPuIDzXFI9UPn5w4t4selqoqbT4WCinGI58a2/a6E=';
     const FILTER_URL_MIRRORS = [
         'https://cdn.jsdelivr.net/gh/SysAdminDoc/YoutubeAdblock@main/youtube-adblock-filters.txt',
+    ];
+    const FILTER_MANIFEST_URL_MIRRORS = [
+        'https://cdn.jsdelivr.net/gh/SysAdminDoc/YoutubeAdblock@main/youtube-adblock-filters.manifest.json',
+    ];
+    const FILTER_SIGNATURE_URL_MIRRORS = [
+        'https://cdn.jsdelivr.net/gh/SysAdminDoc/YoutubeAdblock@main/youtube-adblock-filters.txt.sig',
     ];
     const FILTER_CACHE_TTL = 4 * 60 * 60 * 1000; // 4 hours
     const FILTER_MAX_BYTES = 5 * 1024 * 1024; // 5MB safety cap on remote lists
@@ -485,6 +494,8 @@
         filterSource: 'built-in',
         filterSyncing: false,
         filterError: '',
+        filterIntegrity: 'built-in',
+        filterIntegrityMessage: 'Built-in fallback rules are bundled with the script.',
         filterRequestPromise: null,
         filterRequestId: 0,
         activeFilterRequestUrl: '',
@@ -585,6 +596,8 @@
         const cached = sanitizeFilterPayload(getSetting('filters_cache', null));
         const cacheTime = getSetting('filters_cache_time', 0);
         const cacheUrl = getSetting('filters_cache_url', FILTER_URL_DEFAULT);
+        const cachedIntegrity = getSetting('filters_integrity', '');
+        const cachedIntegrityMessage = getSetting('filters_integrity_message', '');
         const featureOverrides = getFeatureOverrides();
         const rawStats = getSetting('stats', DEFAULT_STATS);
         // Type-safe stats hydration: silently coerce non-numeric values
@@ -617,15 +630,21 @@
             state.filterSource = (cacheMatchesCurrentUrl && Date.now() - state.lastFilterUpdate < FILTER_CACHE_TTL)
                 ? 'cached'
                 : 'stale';
+            state.filterIntegrity = cachedIntegrity || 'cached';
+            state.filterIntegrityMessage = cachedIntegrityMessage || 'Cached rules are active; refresh to re-check signature status.';
         } else {
             state.filters = DEFAULT_FILTERS;
             state.filterSource = 'built-in';
+            state.filterIntegrity = 'built-in';
+            state.filterIntegrityMessage = 'Built-in fallback rules are bundled with the script.';
             // Discard any malformed cache so a subsequent successful fetch
             // starts clean rather than layering onto corrupt data.
             try {
                 setSetting('filters_cache', null);
                 setSetting('filters_cache_time', 0);
                 setSetting('filters_cache_url', FILTER_URL_DEFAULT);
+                setSetting('filters_integrity', state.filterIntegrity);
+                setSetting('filters_integrity_message', state.filterIntegrityMessage);
             } catch (e) { /* ignore */ }
         }
 
@@ -754,20 +773,13 @@
         return 'Current Page';
     }
 
-    function getOpenShortcutLabel() {
-        const platform = typeof navigator !== 'undefined' ? (navigator.platform || navigator.userAgent || '') : '';
-        return /(Mac|iPhone|iPad|iPod)/i.test(platform)
-            ? 'Cmd + Shift + Y'
-            : 'Ctrl + Shift + Y';
-    }
-
     function getControlCenterAccessLabel() {
-        return IS_EXTENSION_BUILD ? getOpenShortcutLabel() : 'Userscript Menu';
+        return IS_EXTENSION_BUILD ? 'Toolbar Button' : 'Userscript Menu';
     }
 
     function getControlCenterAccessHint() {
         return IS_EXTENSION_BUILD
-            ? `Click the toolbar button or press ${getOpenShortcutLabel()} from any YouTube tab.`
+            ? 'Click the toolbar button from any YouTube tab. Optional shortcuts can be bound in browser extension settings.'
             : 'Open the Control Center from your userscript manager menu any time.';
     }
 
@@ -822,6 +834,37 @@
                 return 'success';
             case 'cached':
             case 'stale':
+                return 'info';
+            default:
+                return 'neutral';
+        }
+    }
+
+    function getFilterIntegrityLabel() {
+        switch (state.filterIntegrity) {
+            case 'verified':
+                return 'Verified';
+            case 'unsigned-custom':
+                return 'Unsigned Custom';
+            case 'failed':
+                return 'Verification Failed';
+            case 'cached':
+                return 'Cached';
+            case 'built-in':
+                return 'Built-In';
+            default:
+                return 'Unknown';
+        }
+    }
+
+    function getFilterIntegrityTone() {
+        switch (state.filterIntegrity) {
+            case 'verified':
+                return 'success';
+            case 'unsigned-custom':
+            case 'failed':
+                return 'warn';
+            case 'cached':
                 return 'info';
             default:
                 return 'neutral';
@@ -1263,6 +1306,155 @@
         return url;
     }
 
+    function addCacheBust(url) {
+        return url + (url.includes('?') ? '&' : '?') + '_=' + Date.now();
+    }
+
+    function normalizeFilterTextForSignature(text) {
+        return String(text || '').replace(/\r\n?/g, '\n');
+    }
+
+    function isSignedDefaultFilterUrl(url) {
+        return url === FILTER_URL_DEFAULT || FILTER_URL_MIRRORS.includes(url);
+    }
+
+    function getSignedFilterCompanionUrls(url) {
+        const mirrorIndex = FILTER_URL_MIRRORS.indexOf(url);
+        if (url === FILTER_URL_DEFAULT) {
+            return {
+                manifestUrl: FILTER_MANIFEST_URL_DEFAULT,
+                signatureUrl: FILTER_SIGNATURE_URL_DEFAULT
+            };
+        }
+        if (mirrorIndex >= 0) {
+            return {
+                manifestUrl: FILTER_MANIFEST_URL_MIRRORS[mirrorIndex],
+                signatureUrl: FILTER_SIGNATURE_URL_MIRRORS[mirrorIndex]
+            };
+        }
+        return null;
+    }
+
+    function base64ToBytes(value) {
+        const clean = String(value || '').replace(/\s+/g, '').replace(/-/g, '+').replace(/_/g, '/');
+        const padded = clean + '='.repeat((4 - clean.length % 4) % 4);
+        const binary = atob(padded);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+        return bytes;
+    }
+
+    function bytesToBase64Url(bytes) {
+        let binary = '';
+        for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+        return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+    }
+
+    async function sha256Base64Url(text) {
+        if (!crypto?.subtle || typeof TextEncoder !== 'function') {
+            throw new Error('WebCrypto SHA-256 is unavailable.');
+        }
+        const bytes = new TextEncoder().encode(normalizeFilterTextForSignature(text));
+        const digest = await crypto.subtle.digest('SHA-256', bytes);
+        return bytesToBase64Url(new Uint8Array(digest));
+    }
+
+    function sanitizeFilterManifest(value) {
+        if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+        if (value.schemaVersion !== 1 || value.algorithm !== 'Ed25519') return null;
+        if (value.signedContent !== 'youtube-adblock-filters.txt') return null;
+        if (value.signatureFile !== 'youtube-adblock-filters.txt.sig') return null;
+        if (value.publicKey !== FILTER_PUBLIC_KEY_BASE64) return null;
+        if (typeof value.sha256 !== 'string' || !value.sha256.trim()) return null;
+        if (!Number.isFinite(Number(value.bytes)) || Number(value.bytes) <= 0) return null;
+        return {
+            sha256: value.sha256.trim(),
+            bytes: Math.floor(Number(value.bytes)),
+            updated: typeof value.updated === 'string' ? value.updated.trim().slice(0, 80) : ''
+        };
+    }
+
+    async function verifyEd25519Signature(text, signatureBase64, publicKeyBase64 = FILTER_PUBLIC_KEY_BASE64) {
+        if (!crypto?.subtle || typeof TextEncoder !== 'function') {
+            throw new Error('WebCrypto Ed25519 verification is unavailable.');
+        }
+        const key = await crypto.subtle.importKey(
+            'spki',
+            base64ToBytes(publicKeyBase64),
+            { name: 'Ed25519' },
+            false,
+            ['verify']
+        );
+        const data = new TextEncoder().encode(normalizeFilterTextForSignature(text));
+        return crypto.subtle.verify({ name: 'Ed25519' }, key, base64ToBytes(signatureBase64), data);
+    }
+
+    function gmFetchText(url, timeout = FILTER_FETCH_TIMEOUT_MS) {
+        return new Promise((resolve, reject) => {
+            GM_xmlhttpRequest({
+                method: 'GET',
+                url,
+                timeout,
+                onload(resp) {
+                    if (resp.status && (resp.status < 200 || resp.status >= 300)) {
+                        const err = new Error(`Remote filter request returned HTTP ${resp.status}.`);
+                        err.retryMirror = true;
+                        reject(err);
+                        return;
+                    }
+                    resolve(resp.responseText || '');
+                },
+                onerror() {
+                    const err = new Error('Remote filter request failed.');
+                    err.retryMirror = true;
+                    reject(err);
+                },
+                ontimeout() {
+                    const err = new Error('Remote filter request timed out.');
+                    err.retryMirror = true;
+                    reject(err);
+                }
+            });
+        });
+    }
+
+    async function fetchFilterTextWithIntegrity(fetchUrl) {
+        const text = await gmFetchText(addCacheBust(fetchUrl));
+        if (!isSignedDefaultFilterUrl(fetchUrl)) {
+            return {
+                text,
+                integrity: 'unsigned-custom',
+                message: 'Custom Rule Library source loaded without signature verification.'
+            };
+        }
+
+        const companions = getSignedFilterCompanionUrls(fetchUrl);
+        if (!companions) throw new Error('Signed filter companion URLs are unavailable.');
+        const manifestRaw = await gmFetchText(addCacheBust(companions.manifestUrl));
+        let manifest;
+        try {
+            manifest = sanitizeFilterManifest(jsonParseRaw(manifestRaw));
+        } catch (e) {
+            manifest = null;
+        }
+        if (!manifest) throw new Error('Signed filter manifest is invalid.');
+
+        const canonicalText = normalizeFilterTextForSignature(text);
+        const expectedBytes = new TextEncoder().encode(canonicalText).length;
+        if (manifest.bytes !== expectedBytes) throw new Error('Signed filter byte count does not match the downloaded list.');
+        const digest = await sha256Base64Url(canonicalText);
+        if (digest !== manifest.sha256) throw new Error('Signed filter hash does not match the downloaded list.');
+
+        const signature = await gmFetchText(addCacheBust(companions.signatureUrl));
+        const verified = await verifyEd25519Signature(canonicalText, signature);
+        if (!verified) throw new Error('Signed filter verification failed.');
+        return {
+            text: canonicalText,
+            integrity: 'verified',
+            message: `Default Rule Library verified with Ed25519${manifest.updated ? ` (${manifest.updated})` : ''}.`
+        };
+    }
+
     function fetchFilters(force = false) {
         const url = resolveFilterUrl();
         // Fresh cache skips the network call unless forced. Stale cache and
@@ -1309,7 +1501,6 @@
 
             function attemptFetch() {
                 const fetchUrl = urls[urlIndex];
-                const cacheBusted = fetchUrl + (fetchUrl.includes('?') ? '&' : '?') + '_=' + Date.now();
 
                 const tryNextMirror = () => {
                     urlIndex++;
@@ -1327,18 +1518,11 @@
                     }
                 };
 
-                GM_xmlhttpRequest({
-                    method: 'GET',
-                    url: cacheBusted,
-                    timeout: FILTER_FETCH_TIMEOUT_MS,
-                    onload(resp) {
-                        try {
-                            const text = resp.responseText || '';
+                fetchFilterTextWithIntegrity(fetchUrl).then(result => {
+                    try {
+                            const text = result.text || '';
                             if (text.length > FILTER_MAX_BYTES) {
                                 throw new Error(`Remote filter list exceeds ${Math.round(FILTER_MAX_BYTES / 1024 / 1024)}MB limit.`);
-                            }
-                            if (resp.status && (resp.status < 200 || resp.status >= 300)) {
-                                throw new Error(`Remote filter request returned HTTP ${resp.status}.`);
                             }
 
                             let data;
@@ -1355,10 +1539,14 @@
                             state.filterSource = 'remote';
                             state.lastFilterUpdate = Date.now();
                             state.filterError = '';
+                            state.filterIntegrity = result.integrity;
+                            state.filterIntegrityMessage = result.message;
                             try {
                                 setSetting('filters_cache', data);
                                 setSetting('filters_cache_time', Date.now());
                                 setSetting('filters_cache_url', url);
+                                setSetting('filters_integrity', state.filterIntegrity);
+                                setSetting('filters_integrity_message', state.filterIntegrityMessage);
                             } catch (e) { /* quota errors are non-fatal */ }
                             const overrides = getFeatureOverrides();
                             state.features = normalizeFeatures(data.features);
@@ -1372,11 +1560,16 @@
                             resolve(data);
                             refreshSettingsUI(true);
                             const applied = data.filterCount || data.cosmeticSelectors?.length || 0;
-                            showToast(`Rule refresh complete. ${formatNumber(applied)} rules active (${data.version || '?'}).`, 'success');
+                            const suffix = result.integrity === 'unsigned-custom'
+                                ? ' Unsigned custom source.'
+                                : ' Signature verified.';
+                            showToast(`Rule refresh complete. ${formatNumber(applied)} rules active (${data.version || '?'}).${suffix}`, 'success');
                         } catch (e) {
                             console.warn(`[${SCRIPT_NAME}] Filter parse error:`, e);
                             if (isStaleRequest()) { finish(); resolve(state.filters); return; }
                             const detail = e && e.message ? e.message : '';
+                            state.filterIntegrity = 'failed';
+                            state.filterIntegrityMessage = detail || 'Remote rules could not be verified or parsed.';
                             state.filterError = detail
                                 ? `Rule library problem: ${detail} Your current rules stayed active.`
                                 : 'The remote list could not be parsed. Your current rules stayed active.';
@@ -1385,9 +1578,21 @@
                             refreshSettingsUI(true);
                             showToast(state.filterError, 'error');
                         }
-                    },
-                    onerror() { tryNextMirror(); },
-                    ontimeout() { tryNextMirror(); }
+                }).catch(e => {
+                    if (e && e.retryMirror) {
+                        tryNextMirror();
+                        return;
+                    }
+                    console.warn(`[${SCRIPT_NAME}] Filter integrity error:`, e);
+                    if (isStaleRequest()) { finish(); resolve(state.filters); return; }
+                    const detail = e && e.message ? e.message : 'Remote rules could not be verified.';
+                    state.filterIntegrity = 'failed';
+                    state.filterIntegrityMessage = detail;
+                    state.filterError = `Rule library problem: ${detail} Your current rules stayed active.`;
+                    finish();
+                    resolve(state.filters);
+                    refreshSettingsUI(true);
+                    showToast(state.filterError, 'error');
                 });
             }
 
@@ -5546,6 +5751,7 @@
         details.append(
             createPill(`Version ${state.filters?.version || '?'}`, 'neutral'),
             createPill(`Synced ${formatTimestamp(state.lastFilterUpdate)}`, 'neutral'),
+            createPill(`Integrity ${getFilterIntegrityLabel()}`, getFilterIntegrityTone()),
             createPill(`${formatNumber(getRuleCount())} Rules`, 'neutral'),
             createPill(`${formatNumber(coverage.appliedSelectors)} Selectors`, 'neutral'),
             createPill(`${formatNumber(coverage.appliedPrunePaths)} Prune Paths`, 'neutral'),
@@ -5558,6 +5764,18 @@
         let note;
         if (state.filterError) {
             note = createNote('Refresh Problem', state.filterError, 'warn');
+        } else if (state.filterIntegrity === 'verified') {
+            note = createNote(
+                'Signature Verified',
+                state.filterIntegrityMessage || 'The recommended remote list was verified before it replaced your active rules.',
+                'success'
+            );
+        } else if (state.filterIntegrity === 'unsigned-custom') {
+            note = createNote(
+                'Unsigned Custom Source',
+                state.filterIntegrityMessage || 'Custom Rule Library sources are allowed, but they are not verified by the bundled Ed25519 key.',
+                'warn'
+            );
         } else if (!isDefaultFilterUrl()) {
             note = createNote(
                 'Custom Source Active',
@@ -6522,6 +6740,8 @@
             `Injection guidance: ${injectionStatus.description}`,
             `Protection enabled: ${isEnabled()}`,
             `Filter source: ${getFilterSourceLabel()}`,
+            `Filter integrity: ${getFilterIntegrityLabel()}`,
+            `Filter integrity detail: ${state.filterIntegrityMessage || 'none'}`,
             `Filter URL: ${resolveFilterUrl()}`,
             `Filter version: ${state.filters?.version || 'unknown'}`,
             `Last sync: ${state.lastFilterUpdate ? new Date(state.lastFilterUpdate).toISOString() : 'never'}`,
