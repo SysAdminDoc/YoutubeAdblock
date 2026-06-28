@@ -125,7 +125,7 @@
      * ===================================================================== */
 
     const SCRIPT_NAME = 'YoutubeAdblock';
-    const SCRIPT_VERSION = '0.5.19';
+    const SCRIPT_VERSION = '0.5.20';
     const PROJECT_URL = 'https://github.com/SysAdminDoc/YoutubeAdblock';
     const ISSUES_URL = `${PROJECT_URL}/issues`;
     const FILTER_URL_DEFAULT = 'https://raw.githubusercontent.com/SysAdminDoc/YoutubeAdblock/refs/heads/main/youtube-adblock-filters.txt';
@@ -161,7 +161,8 @@
         ssapSkipped: 0,
         sponsorSkipped: 0,
         dearrowReplaced: 0,
-        feedFiltered: 0
+        feedFiltered: 0,
+        ssaiDetected: 0
     };
     const SPONSORBLOCK_API = 'https://sponsor.ajay.app/api/skipSegments';
     const SPONSORBLOCK_CATEGORIES = [
@@ -346,11 +347,17 @@
                 ssapSkipped: 'SSAP Skips',
                 sponsorSkipped: 'Sponsor Skips',
                 dearrowReplaced: 'DeArrow Replaced',
-                feedFiltered: 'Feed Filtered'
+                feedFiltered: 'Feed Filtered',
+                ssaiDetected: 'SSAI Signals'
             },
             managerSetupWarning: 'Manager Setup Warning',
             protectionDegraded: 'Protection Degraded',
             coexistenceDetected: 'Coexistence Detected',
+            ssaiDetectedTitle: 'Server-Side Ad Detected',
+            ssaiDetectedBody: (lastSeen, url) => {
+                const locationText = url ? ` Last URL: ${url}.` : '';
+                return `A PlayerResponse reported serverStitchedAd at ${formatTimestamp(lastSeen)}. JSON pruning cannot remove ads already stitched into the media stream; manifest scrub, DNR, SSAP auto-skip, and video fast-forward remain active as fallback layers.${locationText}`;
+            },
             degradedBody: (engineList, lockedList, preProxied) => {
                 let body = `Some engines could not fully install: ${engineList}.`;
                 if (lockedList) body += ` Locked natives: ${lockedList}.`;
@@ -686,6 +693,7 @@
             droppedUnsafeSelectors: 'Dropped unsafe selectors',
             supportedScriptlets: 'Supported scriptlets',
             unsupportedScriptlets: 'Unsupported scriptlets',
+            ssaiSignals: 'SSAI signals',
             webpackSignatureSource: 'Webpack signature source',
             webpackSignatureVersion: 'Webpack signature version',
             webpackSignatureTokens: 'Webpack signature tokens',
@@ -999,7 +1007,13 @@
         engineHealth: {},
         // Labels of natives safeOverride could not replace (e.g.
         // 'window.fetch'). Drives the degraded-protection warning.
-        overrideFailures: []
+        overrideFailures: [],
+        // Ephemeral SSAI detection state. Server-stitched ads are media-level
+        // signals, not JSON fields we can prune away, so keep enough context
+        // to warn the user and include useful diagnostics.
+        ssaiLastSeen: 0,
+        ssaiLastUrl: '',
+        ssaiLastKey: ''
     };
 
     // Cap simultaneously visible toasts so a flurry of errors doesn't fill
@@ -2160,8 +2174,98 @@
         return false;
     }
 
+    const SSAI_SIGNAL_KEY = 'serverStitchedAd';
+    const SSAI_SIGNAL_DEDUPE_MS = 10000;
+
+    function positiveSsaiSignal(value) {
+        return value === true || value === 1 || value === 'true';
+    }
+
+    function findServerStitchedAdSignal(value, depth = 0, seen) {
+        if (!value || typeof value !== 'object' || depth > 8) return false;
+        if (!seen) seen = new WeakSet();
+        if (seen.has(value)) return false;
+        seen.add(value);
+
+        for (const key of Object.keys(value)) {
+            const child = value[key];
+            if (key === SSAI_SIGNAL_KEY && positiveSsaiSignal(child)) return true;
+            if (child && typeof child === 'object' && findServerStitchedAdSignal(child, depth + 1, seen)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    function looksLikePlayerResponse(value) {
+        return !!(value && typeof value === 'object' && (
+            Object.prototype.hasOwnProperty.call(value, SSAI_SIGNAL_KEY) ||
+            value.videoDetails ||
+            value.streamingData ||
+            value.playabilityStatus ||
+            value.adPlacements ||
+            value.playerAds ||
+            value.adSlots
+        ));
+    }
+
+    function extractPlayerVideoId(value) {
+        if (!value || typeof value !== 'object') return '';
+        return String(
+            value.videoDetails?.videoId ||
+            value.videoId ||
+            value.currentVideoEndpoint?.watchEndpoint?.videoId ||
+            ''
+        ).slice(0, 32);
+    }
+
+    function detectServerStitchedAdSignal(obj) {
+        if (!obj || typeof obj !== 'object') return null;
+        const candidates = [];
+        if (looksLikePlayerResponse(obj)) candidates.push(obj);
+        if (looksLikePlayerResponse(obj.playerResponse)) candidates.push(obj.playerResponse);
+        if (looksLikePlayerResponse(obj.response?.playerResponse)) candidates.push(obj.response.playerResponse);
+
+        for (const candidate of candidates) {
+            if (findServerStitchedAdSignal(candidate)) {
+                return {
+                    videoId: extractPlayerVideoId(candidate)
+                };
+            }
+        }
+        return null;
+    }
+
+    function summarizeRequestContext(context) {
+        const raw = typeof context === 'string' ? context : context?.url;
+        if (!raw) return '';
+        try {
+            const parsed = new URL(raw, typeof location !== 'undefined' ? location.href : undefined);
+            return `${parsed.hostname}${parsed.pathname}`;
+        } catch (e) {
+            return String(raw).slice(0, 120);
+        }
+    }
+
+    function recordServerStitchedAdSignal(obj, context) {
+        const signal = detectServerStitchedAdSignal(obj);
+        if (!signal) return false;
+
+        const now = Date.now();
+        const url = summarizeRequestContext(context);
+        const key = `${signal.videoId || 'unknown'}|${url || 'unknown'}`;
+        if (state.ssaiLastKey !== key || now - state.ssaiLastSeen > SSAI_SIGNAL_DEDUPE_MS) {
+            incrementStat('ssaiDetected');
+        }
+        state.ssaiLastSeen = now;
+        state.ssaiLastUrl = url;
+        state.ssaiLastKey = key;
+        return true;
+    }
+
     function pruneObject(obj, context) {
         if (!obj || typeof obj !== 'object') return false;
+        recordServerStitchedAdSignal(obj, context);
         if (state.features.adAllowlist && obj.videoDetails && (obj.videoDetails.author || obj.videoDetails.channelId)) {
             if (isChannelAdAllowed({
                 name: obj.videoDetails.author || '',
@@ -2333,6 +2437,7 @@
         for (const key of Object.keys(state.filters?.replaceKeys || DEFAULT_FILTERS.replaceKeys)) {
             set.add(`"${key}"`);
         }
+        set.add(`"${SSAI_SIGNAL_KEY}"`);
         adHintsCompiled = [...set];
         return adHintsCompiled;
     }
@@ -6312,7 +6417,8 @@
             createMetricTile(STRINGS.ui.metrics.ssapSkipped, 'ssapSkipped'),
             createMetricTile(STRINGS.ui.metrics.sponsorSkipped, 'sponsorSkipped'),
             createMetricTile(STRINGS.ui.metrics.dearrowReplaced, 'dearrowReplaced'),
-            createMetricTile(STRINGS.ui.metrics.feedFiltered, 'feedFiltered')
+            createMetricTile(STRINGS.ui.metrics.feedFiltered, 'feedFiltered'),
+            createMetricTile(STRINGS.ui.metrics.ssaiDetected, 'ssaiDetected')
         );
 
         const injectionStatus = getInjectionTimingStatus();
@@ -6342,6 +6448,9 @@
                 'info'
             );
         }
+        const ssaiNote = state.ssaiLastSeen
+            ? createNote(STRINGS.ui.ssaiDetectedTitle, STRINGS.ui.ssaiDetectedBody(state.ssaiLastSeen, state.ssaiLastUrl), 'warn')
+            : null;
 
         const actions = document.createElement('nav');
         actions.className = `${CSS_PREFIX}-summary-actions`;
@@ -6364,7 +6473,7 @@
             diagnosticsJump
         );
 
-        const notes = [injectionNote, healthNote].filter(Boolean);
+        const notes = [injectionNote, healthNote, ssaiNote].filter(Boolean);
         if (notes.length) surface.append(hero, facts, ...notes, metrics, actions);
         else surface.append(hero, facts, metrics, actions);
         section.appendChild(surface);
@@ -7644,6 +7753,7 @@
             `${report.droppedUnsafeSelectors}: ${coverage.droppedUnsafeSelectors}`,
             `${report.supportedScriptlets}: ${formatScriptletCoverage(coverage.supportedScriptlets)}`,
             `${report.unsupportedScriptlets}: ${formatScriptletCoverage(coverage.unsupportedScriptlets)}`,
+            `${report.ssaiSignals}: detected=${state.stats.ssaiDetected || 0}, lastSeen=${state.ssaiLastSeen ? new Date(state.ssaiLastSeen).toISOString() : STRINGS.common.never}, lastUrl=${state.ssaiLastUrl || STRINGS.common.none}`,
             `${report.webpackSignatureSource}: ${state.webpackSignatureSource || STRINGS.common.unknown}`,
             `${report.webpackSignatureVersion}: ${state.webpackSignatureVersion || STRINGS.common.unknown}`,
             `${report.webpackSignatureTokens}: ${(state.webpackSignatureDatabase?.tokens || []).length}`,
@@ -7655,7 +7765,7 @@
             `${report.engineHealth}: ${Object.entries(state.engineHealth || {}).map(([name, status]) => `${name}=${status}`).join(', ') || STRINGS.common.notInstalled}`,
             `${report.lockedNatives}: ${(state.overrideFailures || []).join(', ') || STRINGS.common.none}`,
             `${report.preProxied}: ${(state.preProxiedNatives || []).join(', ') || STRINGS.common.none}`,
-            `${report.stats}: blocked=${state.stats.blocked}, pruned=${state.stats.pruned}, ssapSkipped=${state.stats.ssapSkipped}, sponsorSkipped=${state.stats.sponsorSkipped}`,
+            `${report.stats}: blocked=${state.stats.blocked}, pruned=${state.stats.pruned}, ssapSkipped=${state.stats.ssapSkipped}, sponsorSkipped=${state.stats.sponsorSkipped}, ssaiDetected=${state.stats.ssaiDetected || 0}`,
             `${report.enabledFeatures}: ${enabledFeatures}`,
             `${report.disabledFeatures}: ${disabledFeatures}`
         ].join('\n');

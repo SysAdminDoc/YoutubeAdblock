@@ -127,6 +127,7 @@ function createTestHarness(options = {}) {
         responseTextMightContainAds,
         scrubAdManifestText,
         manifestTextMightContainAds,
+        detectServerStitchedAdSignal,
         injectNoAdFlag,
         rewriteRequestBodyText,
         handleExtensionBlockChannel,
@@ -464,6 +465,40 @@ test('manifest scrub removes DASH ad representations with ctier segments', () =>
     assert.equal(result.changed, true);
     assert.match(result.text, /id="main"/);
     assert.doesNotMatch(result.text, /ad-sabr|ctier=SR/);
+});
+
+// ========== Server-side ad detection ==========
+
+test('server-stitched ad signal is measured without treating it as pruned JSON', () => {
+    const h = createTestHarness();
+    const playerResponse = {
+        playerResponse: {
+            videoDetails: { videoId: 'abc123' },
+            streamingData: { formats: [{ itag: 18 }] },
+            serverStitchedAd: true
+        }
+    };
+
+    const signal = h.detectServerStitchedAdSignal(playerResponse);
+    assert.ok(signal);
+    assert.equal(signal.videoId, 'abc123');
+    assert.equal(h.pruneObject(playerResponse, 'https://www.youtube.com/youtubei/v1/player'), false);
+    assert.equal(h.state.stats.ssaiDetected, 1);
+    assert.match(h.buildDiagnosticsReport(), /SSAI signals: detected=1/);
+    assert.match(h.buildDiagnosticsReport(), /lastUrl=www\.youtube\.com\/youtubei\/v1\/player/);
+});
+
+test('server-stitched ad signal de-duplicates repeated parses for the same video and endpoint', () => {
+    const h = createTestHarness();
+    const playerResponse = {
+        videoDetails: { videoId: 'dedupe1' },
+        serverStitchedAd: true
+    };
+
+    h.pruneObject(playerResponse, '/youtubei/v1/player');
+    h.pruneObject(playerResponse, '/youtubei/v1/player');
+
+    assert.equal(h.state.stats.ssaiDetected, 1);
 });
 
 // ========== Signed filter manifest ==========

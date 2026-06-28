@@ -2,6 +2,13 @@
 
 All notable changes to YoutubeAdblock are documented here.
 
+## [0.5.20] - 2026-06-28
+
+### Added
+- Added PlayerResponse `serverStitchedAd` detection with de-duplicated
+  SSAI counters, a Control Center warning, and copied diagnostics context for
+  server-side ads that JSON pruning cannot remove.
+
 ## [0.5.19] - 2026-06-28
 
 ### Added

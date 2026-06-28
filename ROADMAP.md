@@ -5,7 +5,6 @@ Forward-looking scope for the split-context YouTube ad blocker (userscript + Chr
 ## Planned Features
 
 ### Blocking Engine
-- Server-side ad detection heuristic: measure PlayerResponse `serverStitchedAd` flag and warn in Control Center when SSAI ads can't be pruned.
 - `Trusted Types` full coverage audit: eliminate remaining string-HTML code paths in the Control Center.
 
 ### Control Center

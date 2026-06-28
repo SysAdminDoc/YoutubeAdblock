@@ -1,6 +1,6 @@
 # YoutubeAdblock
 
-![Version](https://img.shields.io/badge/version-0.5.19-58A6FF)
+![Version](https://img.shields.io/badge/version-0.5.20-58A6FF)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
 > A document-start YouTube ad blocker with a split-context proxy engine, remote rule support, and a premium Control Center for tuning protection.
@@ -77,6 +77,7 @@ If you trigger the extension while you are not already on YouTube, YoutubeAdbloc
 | Property Traps | Prevents YouTube from reading/writing ad-related player properties | Enabled |
 | CSS Cosmetic Filters | 150+ selectors hiding ad containers, banners, and promotions | Enabled |
 | SSAP Auto-Skip | Automatically clicks the skip button on skippable video ads | Enabled |
+| SSAI Signal Warning | Measures PlayerResponse `serverStitchedAd` signals, shows a Control Center warning when ads are stitched into the media stream, and includes the last signal in diagnostics | Enabled |
 | Anti-Detect Bypass | Defeats YouTube's abnormality/adblock detection system | Enabled |
 | Iframe Fetch-Lift Defense | Rebridges `contentWindow.fetch`, `XMLHttpRequest`, and `JSON.parse` in same-origin iframes so YouTube can't lift pristine globals | Enabled |
 | Aggressive Anti-Stall | Fast-forwards 17-second bound timers YouTube uses to stall playback when a blocker is suspected | Enabled |
