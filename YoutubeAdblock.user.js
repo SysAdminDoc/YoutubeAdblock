@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         YoutubeAdblock
 // @namespace    https://github.com/SysAdminDoc
-// @version      0.5.3
+// @version      0.5.4
 // @description  YouTube ad blocker with remote rules, anti-detect hardening, toString-hiding proxies, DeArrow + RYD, volume boost, UI cleanup, and an in-page Control Center
 // @author       SysAdminDoc
 // @license      MIT
@@ -41,7 +41,7 @@
      * ===================================================================== */
 
     const SCRIPT_NAME = 'YoutubeAdblock';
-    const SCRIPT_VERSION = '0.5.3';
+    const SCRIPT_VERSION = '0.5.4';
     const PROJECT_URL = 'https://github.com/SysAdminDoc/YoutubeAdblock';
     const ISSUES_URL = `${PROJECT_URL}/issues`;
     const FILTER_URL_DEFAULT = 'https://raw.githubusercontent.com/SysAdminDoc/YoutubeAdblock/refs/heads/main/youtube-adblock-filters.txt';
@@ -1324,8 +1324,11 @@
 
     function pruneObject(obj, context) {
         if (!obj || typeof obj !== 'object') return false;
-        if (state.features.adAllowlist && obj.videoDetails && obj.videoDetails.author) {
-            if (isChannelAdAllowed(obj.videoDetails.author)) return false;
+        if (state.features.adAllowlist && obj.videoDetails && (obj.videoDetails.author || obj.videoDetails.channelId)) {
+            if (isChannelAdAllowed({
+                name: obj.videoDetails.author || '',
+                channelId: obj.videoDetails.channelId || ''
+            })) return false;
         }
         let pruned = false;
         const keys = state.filters?.pruneKeys || DEFAULT_FILTERS.pruneKeys;
@@ -3434,8 +3437,63 @@
      * so filters apply across every intercepted surface.
      * ===================================================================== */
 
-    function parseBlocklist(raw) {
+    function normalizeChannelId(value) {
+        if (typeof value !== 'string') return '';
+        var match = value.match(/\b(UC[A-Za-z0-9_-]{20,})\b/);
+        return match ? match[1].toLowerCase() : '';
+    }
+
+    function normalizeChannelHandle(value) {
+        if (typeof value !== 'string') return '';
+        var match = value.match(/(^|[\/\s])@([A-Za-z0-9._-]{2,})\b/);
+        return match ? `@${match[2].toLowerCase()}` : '';
+    }
+
+    function normalizeChannelPath(value) {
+        if (typeof value !== 'string') return '';
+        var text = value.trim();
+        if (!text) return '';
+        var path = '';
+        try {
+            if (/^https?:\/\//i.test(text)) {
+                path = new URL(text).pathname;
+            } else if (/^(www\.)?(youtube\.com|m\.youtube\.com|music\.youtube\.com)\//i.test(text)) {
+                path = new URL(`https://${text}`).pathname;
+            } else {
+                path = text;
+            }
+        } catch (e) {
+            path = text;
+        }
+        path = String(path || '').split(/[?#]/)[0].replace(/\/+$/, '');
+        if (!path) return '';
+        if (!path.startsWith('/')) path = `/${path}`;
+        var channelId = normalizeChannelId(path);
+        if (channelId) return `/channel/${channelId}`;
+        var handle = normalizeChannelHandle(path);
+        if (handle) return `/${handle}`;
+        var custom = path.match(/^\/(c|user)\/([^/]+)$/i);
+        if (custom) return `/${custom[1].toLowerCase()}/${custom[2].toLowerCase()}`;
+        return '';
+    }
+
+    function parseChannelEntry(raw) {
+        var channelId = normalizeChannelId(raw);
+        var handle = normalizeChannelHandle(raw);
+        var path = normalizeChannelPath(raw);
+        var hasStableKey = !!(channelId || handle || path);
+        return {
+            type: 'channel',
+            value: hasStableKey ? '' : raw.toLowerCase(),
+            channelId,
+            handle,
+            path
+        };
+    }
+
+    function parseBlocklist(raw, options) {
         if (typeof raw !== 'string' || !raw) return [];
+        const channelMode = !!(options && options.channel);
         const entries = [];
         for (const line of raw.split(/\r?\n/)) {
             const trimmed = line.trim();
@@ -3448,6 +3506,8 @@
                 } catch (e) {
                     entries.push({ type: 'string', value: trimmed.toLowerCase() });
                 }
+            } else if (channelMode) {
+                entries.push(parseChannelEntry(trimmed));
             } else {
                 entries.push({ type: 'string', value: trimmed.toLowerCase() });
             }
@@ -3457,7 +3517,7 @@
 
     function getChannelBlocklist() {
         if (!state.features.channelBlocker) return [];
-        return parseBlocklist(getSetting('channel_blocklist', ''));
+        return parseBlocklist(getSetting('channel_blocklist', ''), { channel: true });
     }
 
     function getKeywordBlocklist() {
@@ -3467,7 +3527,7 @@
 
     function getAdAllowlist() {
         if (!state.features.adAllowlist) return [];
-        return parseBlocklist(getSetting('ad_allowlist', ''));
+        return parseBlocklist(getSetting('ad_allowlist', ''), { channel: true });
     }
 
     function parseDurationSeconds(text) {
@@ -3508,20 +3568,141 @@
         return '';
     }
 
+    function addUnique(list, value) {
+        if (!value || list.includes(value)) return;
+        list.push(value);
+    }
+
+    function collectEndpointIdentity(endpoint, identity) {
+        if (!endpoint || typeof endpoint !== 'object' || !identity) return;
+        try {
+            var browse = endpoint.browseEndpoint || {};
+            addUnique(identity.channelIds, normalizeChannelId(browse.browseId || ''));
+            addUnique(identity.paths, normalizeChannelPath(browse.canonicalBaseUrl || ''));
+            addUnique(identity.handles, normalizeChannelHandle(browse.canonicalBaseUrl || ''));
+            var webUrl = endpoint.commandMetadata && endpoint.commandMetadata.webCommandMetadata
+                ? endpoint.commandMetadata.webCommandMetadata.url
+                : '';
+            addUnique(identity.paths, normalizeChannelPath(webUrl || ''));
+            addUnique(identity.handles, normalizeChannelHandle(webUrl || ''));
+        } catch (e) { /* ignore */ }
+    }
+
+    function collectTextEndpointIdentity(textObj, identity) {
+        if (!textObj || typeof textObj !== 'object') return;
+        try {
+            if (!Array.isArray(textObj.runs)) return;
+            for (var i = 0; i < textObj.runs.length; i++) {
+                collectEndpointIdentity(textObj.runs[i]?.navigationEndpoint, identity);
+            }
+        } catch (e) { /* ignore */ }
+    }
+
+    function extractRendererChannelIdentity(renderer) {
+        var identity = {
+            name: extractRendererChannel(renderer),
+            channelIds: [],
+            handles: [],
+            paths: []
+        };
+        if (!renderer || typeof renderer !== 'object') return identity;
+        addUnique(identity.channelIds, normalizeChannelId(renderer.channelId || ''));
+        collectTextEndpointIdentity(renderer.longBylineText, identity);
+        collectTextEndpointIdentity(renderer.shortBylineText, identity);
+        collectTextEndpointIdentity(renderer.ownerText, identity);
+        collectEndpointIdentity(renderer.navigationEndpoint, identity);
+        collectEndpointIdentity(renderer.ownerEndpoint, identity);
+        try {
+            collectEndpointIdentity(
+                renderer.channelThumbnailSupportedRenderers?.channelThumbnailWithLinkRenderer?.navigationEndpoint,
+                identity
+            );
+        } catch (e) { /* ignore */ }
+        return identity;
+    }
+
     function matchesList(text, list) {
+        if (!text) return false;
+        text = String(text);
         var lc = text.toLowerCase();
         for (var i = 0; i < list.length; i++) {
             var entry = list[i];
-            if (entry.type === 'regex' ? entry.pattern.test(text) : lc.includes(entry.value)) return true;
+            if (entry.type === 'regex') {
+                entry.pattern.lastIndex = 0;
+                if (entry.pattern.test(text)) return true;
+            } else if (lc.includes(entry.value)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    function normalizeChannelIdentity(channel) {
+        if (!channel || typeof channel === 'string') {
+            return {
+                name: channel || '',
+                channelIds: [],
+                handles: [],
+                paths: []
+            };
+        }
+        return {
+            name: channel.name || channel.author || '',
+            channelIds: Array.isArray(channel.channelIds)
+                ? channel.channelIds
+                : [normalizeChannelId(channel.channelId || '')].filter(Boolean),
+            handles: Array.isArray(channel.handles)
+                ? channel.handles
+                : [normalizeChannelHandle(channel.handle || '')].filter(Boolean),
+            paths: Array.isArray(channel.paths)
+                ? channel.paths
+                : [normalizeChannelPath(channel.path || channel.url || '')].filter(Boolean)
+        };
+    }
+
+    function channelIdentityCandidates(identity) {
+        identity = normalizeChannelIdentity(identity);
+        return [identity.name]
+            .concat(identity.channelIds || [])
+            .concat(identity.handles || [])
+            .concat(identity.paths || [])
+            .filter(Boolean);
+    }
+
+    function matchesChannelEntry(identity, entry) {
+        identity = normalizeChannelIdentity(identity);
+        if (!entry) return false;
+        if (entry.type === 'regex') {
+            var candidates = channelIdentityCandidates(identity);
+            for (var i = 0; i < candidates.length; i++) {
+                entry.pattern.lastIndex = 0;
+                if (entry.pattern.test(candidates[i])) return true;
+            }
+            return false;
+        }
+        if (entry.type === 'channel') {
+            if (entry.channelId && (identity.channelIds || []).includes(entry.channelId)) return true;
+            if (entry.handle && (identity.handles || []).includes(entry.handle)) return true;
+            if (entry.path && (identity.paths || []).includes(entry.path)) return true;
+            if (entry.value && String(identity.name || '').toLowerCase().includes(entry.value)) return true;
+            return false;
+        }
+        return matchesList(identity.name || '', [entry]);
+    }
+
+    function matchesChannelList(identity, list) {
+        for (var i = 0; i < list.length; i++) {
+            if (matchesChannelEntry(identity, list[i])) return true;
         }
         return false;
     }
 
     function isChannelAdAllowed(channel) {
-        if (!channel) return false;
+        var identity = normalizeChannelIdentity(channel);
+        if (!identity.name && !identity.channelIds.length && !identity.handles.length && !identity.paths.length) return false;
         var list = getAdAllowlist();
         if (!list.length) return false;
-        return matchesList(channel, list);
+        return matchesChannelList(identity, list);
     }
 
     function videoRendererMatches(renderer, channels, keywords) {
@@ -3532,12 +3713,12 @@
             if (typeof t.simpleText === 'string') title = t.simpleText;
             else if (Array.isArray(t.runs)) title = t.runs.map(function(r) { return r?.text || ''; }).join('');
         } catch (e) { /* ignore */ }
-        var channel = extractRendererChannel(renderer);
+        var channelIdentity = extractRendererChannelIdentity(renderer);
         var isWhitelist = state.features.whitelistMode;
         if (isWhitelist && channels.length) {
-            if (!matchesList(channel, channels)) return true;
+            if (!matchesChannelList(channelIdentity, channels)) return true;
         } else {
-            if (matchesList(channel, channels)) return true;
+            if (matchesChannelList(channelIdentity, channels)) return true;
         }
         if (matchesList(title, keywords)) return true;
         if (state.features.durationFilter) {
@@ -3584,10 +3765,15 @@
             var channelEl = document.querySelector('#owner #channel-name a, ytd-video-owner-renderer #channel-name a, #upload-info #channel-name a');
             var channelName = channelEl ? channelEl.textContent.trim() : '';
             if (!channelName) return;
+            var channelLine = '';
+            try {
+                channelLine = channelEl && (channelEl.href || channelEl.getAttribute('href')) || '';
+            } catch (e) { channelLine = ''; }
+            channelLine = channelLine || channelName;
             var existing = getSetting('channel_blocklist', '');
             var lines = existing ? existing.split(/\r?\n/).map(function(l) { return l.trim(); }) : [];
-            if (lines.some(function(l) { return l.toLowerCase() === channelName.toLowerCase(); })) return;
-            lines.push(channelName);
+            if (lines.some(function(l) { return l.toLowerCase() === channelLine.toLowerCase(); })) return;
+            lines.push(channelLine);
             setSetting('channel_blocklist', lines.filter(Boolean).join('\n'));
             if (!state.features.channelBlocker) {
                 state.features.channelBlocker = true;
@@ -5198,8 +5384,8 @@
                 'Blocked Channels',
                 'channel_blocklist',
                 state.features.whitelistMode
-                    ? 'Whitelist mode active: only videos from these channels will be shown.'
-                    : 'One channel name per line. Substring match (case-insensitive). Wrap in /slashes/ for regex, e.g. /^Exact Channel$/.'
+                    ? 'Whitelist mode active: only videos from these channels will be shown. Supports names, UC IDs, @handles, channel URLs, and regex.'
+                    : 'One channel per line. Supports names, UC IDs, @handles, channel URLs, and regex, e.g. /^Exact Channel$/.'
             ));
             surface.appendChild(createBlocklistEditor(
                 'Blocked Keywords',
@@ -5209,11 +5395,125 @@
             surface.appendChild(createBlocklistEditor(
                 'Ad-Allowed Channels',
                 'ad_allowlist',
-                'Ads will play on videos from these channels. One per line. Supports regex.'
+                'Ads will play on videos from these channels. Supports names, UC IDs, @handles, channel URLs, and regex.'
             ));
             surface.appendChild(createDurationFilterEditor());
+            surface.appendChild(createBlocklistPortabilityTools());
         }
         return createCollapsibleSection(section, surface, group.sectionId);
+    }
+
+    const PORTABLE_TEXT_SETTINGS = new Set([
+        'channel_blocklist',
+        'keyword_blocklist',
+        'ad_allowlist',
+        'duration_min',
+        'duration_max',
+        'filter_url'
+    ]);
+
+    function normalizeBlocklistText(raw) {
+        if (typeof raw !== 'string') raw = String(raw || '');
+        var seen = new Set();
+        var lines = [];
+        for (const line of raw.split(/\r?\n/)) {
+            var trimmed = line.trim();
+            if (!trimmed) continue;
+            var key = trimmed.toLowerCase();
+            if (seen.has(key)) continue;
+            seen.add(key);
+            lines.push(trimmed);
+        }
+        return lines.join('\n');
+    }
+
+    function readPortableSettings() {
+        return {
+            enabled: isEnabled(),
+            filter_url: resolveFilterUrl(),
+            channel_blocklist: String(getSetting('channel_blocklist', '')),
+            keyword_blocklist: String(getSetting('keyword_blocklist', '')),
+            ad_allowlist: String(getSetting('ad_allowlist', '')),
+            duration_min: String(getSetting('duration_min', '')),
+            duration_max: String(getSetting('duration_max', '')),
+            feature_overrides: getFeatureOverrides()
+        };
+    }
+
+    function buildSettingsExportPayload() {
+        return {
+            app: SCRIPT_NAME,
+            version: 1,
+            appVersion: SCRIPT_VERSION,
+            exportedAt: new Date().toISOString(),
+            settings: readPortableSettings()
+        };
+    }
+
+    function buildSettingsExportJson() {
+        return JSON.stringify(buildSettingsExportPayload(), null, 2);
+    }
+
+    function sanitizeImportedFeatureOverrides(value) {
+        if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+        var clean = {};
+        for (const [key, enabled] of Object.entries(value)) {
+            if (key in DEFAULT_FILTERS.features) clean[key] = !!enabled;
+        }
+        return clean;
+    }
+
+    function applyImportedSettings(settings) {
+        if (!settings || typeof settings !== 'object') return 0;
+        var changed = 0;
+        for (const key of PORTABLE_TEXT_SETTINGS) {
+            if (!(key in settings)) continue;
+            var value = String(settings[key] == null ? '' : settings[key]);
+            if (key === 'filter_url' && value && !isValidHttpUrl(value)) continue;
+            if (key === 'channel_blocklist' || key === 'keyword_blocklist' || key === 'ad_allowlist') {
+                value = normalizeBlocklistText(value);
+            }
+            setSetting(key, value);
+            changed++;
+        }
+        if (typeof settings.enabled === 'boolean') {
+            setSetting('enabled', settings.enabled);
+            state.enabled = settings.enabled;
+            changed++;
+        }
+        var overrides = sanitizeImportedFeatureOverrides(settings.feature_overrides);
+        if (overrides) {
+            setSetting('feature_overrides', overrides);
+            state.features = normalizeFeatures({ ...(state.filters?.features || {}), ...overrides });
+            changed++;
+        }
+        return changed;
+    }
+
+    function importSettingsPayload(raw, mode) {
+        if (mode === 'text') {
+            var text = normalizeBlocklistText(raw);
+            setSetting('channel_blocklist', text);
+            if (text) {
+                var overrides = getFeatureOverrides();
+                overrides.channelBlocker = true;
+                setSetting('feature_overrides', overrides);
+                state.features.channelBlocker = true;
+            }
+            return { ok: true, count: 1, mode: 'text' };
+        }
+        var parsed;
+        try {
+            parsed = JSON.parse(String(raw || ''));
+        } catch (e) {
+            return { ok: false, error: 'Import JSON could not be parsed.' };
+        }
+        var settings = parsed && typeof parsed === 'object'
+            ? (parsed.settings && typeof parsed.settings === 'object' ? parsed.settings : parsed)
+            : null;
+        var count = applyImportedSettings(settings);
+        if (!count) return { ok: false, error: 'Import JSON did not contain supported YoutubeAdblock settings.' };
+        return { ok: true, count, mode: 'json' };
     }
 
     function createBlocklistEditor(title, storageKey, help) {
@@ -5242,6 +5542,76 @@
         wrap.append(label, helpEl, ta);
         return wrap;
     }
+
+    function createBlocklistPortabilityTools() {
+        const wrap = createActionGroup(
+            'Import / Export',
+            'Move blocklists and local settings between installs without changing your cached rule library.'
+        );
+        const payload = document.createElement('textarea');
+        payload.className = `${CSS_PREFIX}-blocklist-textarea`;
+        payload.rows = 5;
+        payload.spellcheck = false;
+        payload.placeholder = 'Paste YoutubeAdblock JSON here, or paste plain channel names / @handles / UC IDs for channel import.';
+
+        const actions = document.createElement('div');
+        actions.className = `${CSS_PREFIX}-btn-row`;
+
+        const copyJson = document.createElement('button');
+        copyJson.className = `${CSS_PREFIX}-btn ${CSS_PREFIX}-btn-secondary`;
+        copyJson.type = 'button';
+        copyJson.textContent = 'Copy JSON';
+        copyJson.addEventListener('click', async () => {
+            const text = buildSettingsExportJson();
+            payload.value = text;
+            const copied = await copyTextToClipboard(text);
+            showToast(copied ? 'Settings JSON copied.' : 'Clipboard unavailable. JSON is in the import box.', copied ? 'success' : 'warn');
+        });
+
+        const copyText = document.createElement('button');
+        copyText.className = `${CSS_PREFIX}-btn ${CSS_PREFIX}-btn-secondary`;
+        copyText.type = 'button';
+        copyText.textContent = 'Copy Channel Text';
+        copyText.addEventListener('click', async () => {
+            const text = String(getSetting('channel_blocklist', ''));
+            payload.value = text;
+            const copied = await copyTextToClipboard(text);
+            showToast(copied ? 'Channel blocklist copied.' : 'Clipboard unavailable. Channel text is in the import box.', copied ? 'success' : 'warn');
+        });
+
+        const importJson = document.createElement('button');
+        importJson.className = `${CSS_PREFIX}-btn ${CSS_PREFIX}-btn-primary`;
+        importJson.type = 'button';
+        importJson.textContent = 'Import JSON';
+        importJson.addEventListener('click', () => {
+            const result = importSettingsPayload(payload.value, 'json');
+            if (!result.ok) {
+                showToast(result.error, 'error');
+                return;
+            }
+            loadState();
+            updateCosmeticCSS();
+            updateClutterCSS();
+            refreshSettingsUI(true);
+            showToast(`Imported ${result.count} settings.`, 'success');
+        });
+
+        const importText = document.createElement('button');
+        importText.className = `${CSS_PREFIX}-btn ${CSS_PREFIX}-btn-secondary`;
+        importText.type = 'button';
+        importText.textContent = 'Import Channel Text';
+        importText.addEventListener('click', () => {
+            const result = importSettingsPayload(payload.value, 'text');
+            loadState();
+            refreshSettingsUI(true);
+            showToast(result.ok ? 'Channel blocklist imported.' : result.error, result.ok ? 'success' : 'error');
+        });
+
+        actions.append(copyJson, copyText, importJson, importText);
+        wrap.append(payload, actions);
+        return wrap;
+    }
+
 
     function createDurationFilterEditor() {
         const wrap = document.createElement('div');
@@ -5880,6 +6250,9 @@
             `Prune keys: ${(state.filters?.pruneKeys || []).length}`,
             `Cosmetic selectors: ${(state.filters?.cosmeticSelectors || []).length}`,
             `Intercept patterns: ${(state.filters?.interceptPatterns || []).join(' · ') || 'none'}`,
+            `Channel block entries: ${parseBlocklist(getSetting('channel_blocklist', ''), { channel: true }).length}`,
+            `Keyword block entries: ${parseBlocklist(getSetting('keyword_blocklist', '')).length}`,
+            `Ad-allow entries: ${parseBlocklist(getSetting('ad_allowlist', ''), { channel: true }).length}`,
             `Trapped roots: ${trappedRoots}`,
             `Engine health: ${Object.entries(state.engineHealth || {}).map(([name, status]) => `${name}=${status}`).join(', ') || 'not installed'}`,
             `Locked natives: ${(state.overrideFailures || []).join(', ') || 'none'}`,

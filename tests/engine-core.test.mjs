@@ -97,6 +97,12 @@ function createTestHarness(options = {}) {
         pruneObject,
         sanitizeFilterPayload,
         parseUBOFilterList,
+        parseBlocklist,
+        extractRendererChannelIdentity,
+        videoRendererMatches,
+        normalizeBlocklistText,
+        buildSettingsExportPayload,
+        importSettingsPayload,
         matchesInterceptPattern,
         replaceAdKeys,
         responseTextMightContainAds,
@@ -393,4 +399,85 @@ test('extension block-channel handler avoids duplicate channel names', () => {
 
     assert.equal(h.__storage.ytab_channel_blocklist, 'Existing Channel');
     assert.equal(h.__storage.ytab_channelBlocker, undefined);
+});
+
+test('channel blocklist parser recognizes names, UC IDs, handles, and URLs', () => {
+    const entries = harness.parseBlocklist([
+        'Legacy Name',
+        'UCabcdefghijklmnopqrstuv',
+        '@Creator.Handle',
+        'https://www.youtube.com/@OtherCreator',
+        'https://www.youtube.com/channel/UCzzzzzzzzzzzzzzzzzzzzzz'
+    ].join('\n'), { channel: true });
+
+    assert.equal(entries[0].value, 'legacy name');
+    assert.equal(entries[1].channelId, 'ucabcdefghijklmnopqrstuv');
+    assert.equal(entries[2].handle, '@creator.handle');
+    assert.equal(entries[3].handle, '@othercreator');
+    assert.equal(entries[3].path, '/@othercreator');
+    assert.equal(entries[4].channelId, 'uczzzzzzzzzzzzzzzzzzzzzz');
+    assert.equal(entries[4].path, '/channel/uczzzzzzzzzzzzzzzzzzzzzz');
+});
+
+test('video renderer matching uses stable channel IDs and handles', () => {
+    const h = createTestHarness();
+    const renderer = {
+        title: { simpleText: 'Review' },
+        shortBylineText: {
+            runs: [{
+                text: 'Mutable Display Name',
+                navigationEndpoint: {
+                    browseEndpoint: {
+                        browseId: 'UCabcdefghijklmnopqrstuv',
+                        canonicalBaseUrl: '/@StableHandle'
+                    },
+                    commandMetadata: {
+                        webCommandMetadata: { url: '/@StableHandle' }
+                    }
+                }
+            }]
+        }
+    };
+
+    assert.equal(
+        h.videoRendererMatches(renderer, h.parseBlocklist('@stablehandle', { channel: true }), []),
+        true
+    );
+    assert.equal(
+        h.videoRendererMatches(renderer, h.parseBlocklist('UCabcdefghijklmnopqrstuv', { channel: true }), []),
+        true
+    );
+});
+
+test('settings export and JSON import preserve blocklists and feature overrides', () => {
+    const h = createTestHarness({
+        storage: {
+            ytab_channel_blocklist: '@creator\nUCabcdefghijklmnopqrstuv',
+            ytab_keyword_blocklist: 'spoiler',
+            ytab_feature_overrides: { channelBlocker: true, keywordBlocker: true }
+        }
+    });
+
+    const payload = h.buildSettingsExportPayload();
+    assert.equal(payload.settings.channel_blocklist, '@creator\nUCabcdefghijklmnopqrstuv');
+    assert.equal(payload.settings.feature_overrides.channelBlocker, true);
+
+    const target = createTestHarness();
+    const result = target.importSettingsPayload(JSON.stringify(payload), 'json');
+    assert.equal(result.ok, true);
+    assert.equal(target.__storage.ytab_channel_blocklist, '@creator\nUCabcdefghijklmnopqrstuv');
+    assert.equal(target.__storage.ytab_keyword_blocklist, 'spoiler');
+    assert.equal(target.__storage.ytab_feature_overrides.channelBlocker, true);
+    assert.equal(target.__storage.ytab_feature_overrides.keywordBlocker, true);
+});
+
+test('plain text import normalizes channel entries and enables channel blocker', () => {
+    const h = createTestHarness();
+
+    const result = h.importSettingsPayload(' @Creator \n@creator\nUCabcdefghijklmnopqrstuv\n', 'text');
+
+    assert.equal(result.ok, true);
+    assert.equal(h.__storage.ytab_channel_blocklist, '@Creator\nUCabcdefghijklmnopqrstuv');
+    assert.equal(h.__storage.ytab_feature_overrides.channelBlocker, true);
+    assert.equal(h.state.features.channelBlocker, true);
 });
