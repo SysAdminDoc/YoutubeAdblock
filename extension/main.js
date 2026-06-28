@@ -125,7 +125,7 @@
      * ===================================================================== */
 
     const SCRIPT_NAME = 'YoutubeAdblock';
-    const SCRIPT_VERSION = '0.5.2';
+    const SCRIPT_VERSION = '0.5.3';
     const PROJECT_URL = 'https://github.com/SysAdminDoc/YoutubeAdblock';
     const ISSUES_URL = `${PROJECT_URL}/issues`;
     const FILTER_URL_DEFAULT = 'https://raw.githubusercontent.com/SysAdminDoc/YoutubeAdblock/refs/heads/main/youtube-adblock-filters.txt';
@@ -3663,6 +3663,23 @@
         return dropped;
     }
 
+    function handleExtensionBlockChannel() {
+        try {
+            var channelEl = document.querySelector('#owner #channel-name a, ytd-video-owner-renderer #channel-name a, #upload-info #channel-name a');
+            var channelName = channelEl ? channelEl.textContent.trim() : '';
+            if (!channelName) return;
+            var existing = getSetting('channel_blocklist', '');
+            var lines = existing ? existing.split(/\r?\n/).map(function(l) { return l.trim(); }) : [];
+            if (lines.some(function(l) { return l.toLowerCase() === channelName.toLowerCase(); })) return;
+            lines.push(channelName);
+            setSetting('channel_blocklist', lines.filter(Boolean).join('\n'));
+            if (!state.features.channelBlocker) {
+                state.features.channelBlocker = true;
+                setSetting('channelBlocker', true);
+            }
+        } catch (e) { /* ignore */ }
+    }
+
     function installFeedFilter() {
         // No-op install point — the blocklist walk is inlined into
         // pruneObject so every intercept surface (JSON.parse, fetch, XHR)
@@ -3670,22 +3687,7 @@
         // feature can be observed in diagnostics and so future hooks
         // (e.g. SPA DOM sweep for already-rendered tiles) can attach here.
         try {
-            document.addEventListener('ytab:block-channel', function () {
-                try {
-                    var channelEl = document.querySelector('#owner #channel-name a, ytd-video-owner-renderer #channel-name a, #upload-info #channel-name a');
-                    var channelName = channelEl ? channelEl.textContent.trim() : '';
-                    if (!channelName) return;
-                    var existing = getSetting('channel_blocklist', '');
-                    var lines = existing ? existing.split(/\r?\n/).map(function(l) { return l.trim(); }) : [];
-                    if (lines.some(function(l) { return l.toLowerCase() === channelName.toLowerCase(); })) return;
-                    lines.push(channelName);
-                    setSetting('channel_blocklist', lines.filter(Boolean).join('\n'));
-                    if (!state.features.channelBlocker) {
-                        state.features.channelBlocker = true;
-                        setSetting('channelBlocker', true);
-                    }
-                } catch (e) { /* ignore */ }
-            });
+            document.addEventListener('ytab:block-channel', handleExtensionBlockChannel);
         } catch (e) { /* ignore */ }
     }
 

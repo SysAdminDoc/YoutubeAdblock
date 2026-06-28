@@ -368,13 +368,13 @@ test('startup hydration keeps local settings when local metadata is newer than s
 test('service-worker message relay dispatches correct event types', () => {
     const env = createBridgeEnv();
     const types = [];
-    for (const t of ['ytab:open-panel', 'ytab:toggle-protection', 'ytab:refresh-rules']) {
+    for (const t of ['ytab:open-panel', 'ytab:toggle-protection', 'ytab:refresh-rules', 'ytab:block-channel']) {
         env.messageListener({ type: t });
     }
     const relayed = env.dispatched.filter(d =>
-        ['ytab:open-panel', 'ytab:toggle-protection', 'ytab:refresh-rules'].includes(d.type)
+        ['ytab:open-panel', 'ytab:toggle-protection', 'ytab:refresh-rules', 'ytab:block-channel'].includes(d.type)
     );
-    assert.equal(relayed.length, 3);
+    assert.equal(relayed.length, 4);
 });
 
 test('service-worker message relay ignores malformed messages', () => {

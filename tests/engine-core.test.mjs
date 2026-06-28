@@ -11,7 +11,7 @@ const userscriptSource = fs.readFileSync(path.join(repoRoot, 'YoutubeAdblock.use
 
 // Extract the IIFE body, strip the header, and expose internal functions
 // via a module-return pattern so tests can call them without a browser env.
-function createTestHarness() {
+function createTestHarness(options = {}) {
     // Build a minimal sandbox with enough globals for the IIFE to
     // evaluate. Stubs must cover the init path (DOM reads, GM_*,
     // menu commands) without a real browser.
@@ -37,6 +37,9 @@ function createTestHarness() {
     };
     const createElement = () => noopEl();
 
+    const storage = { ...(options.storage || {}) };
+    const querySelector = options.querySelector || (() => noopEl());
+
     const sandbox = {
         window: {},
         self: {},
@@ -47,7 +50,7 @@ function createTestHarness() {
             createElement,
             createTextNode: (t) => ({ textContent: t }),
             getElementById: () => noopEl(),
-            querySelector: () => noopEl(),
+            querySelector,
             querySelectorAll: () => [],
             body: { ...noopEl(), classList: { add: noop, remove: noop, contains: () => false }, children: [] },
             head: noopEl(),
@@ -79,8 +82,8 @@ function createTestHarness() {
         fetch: noop,
         __YTAB_STORAGE_KEY: undefined,
         // GM_* stubs for the userscript init path
-        GM_getValue: (key, def) => def,
-        GM_setValue: noop,
+        GM_getValue: (key, def) => Object.prototype.hasOwnProperty.call(storage, key) ? storage[key] : def,
+        GM_setValue: (key, val) => { storage[key] = val; },
         GM_registerMenuCommand: noop,
         GM_unregisterMenuCommand: noop,
         GM_xmlhttpRequest: noop,
@@ -99,6 +102,7 @@ function createTestHarness() {
         responseTextMightContainAds,
         injectNoAdFlag,
         rewriteRequestBodyText,
+        handleExtensionBlockChannel,
         normalizeFeatures,
         DEFAULT_FILTERS,
         state,
@@ -118,6 +122,7 @@ function createTestHarness() {
         // as long as the function definitions were captured.
         if (!exported) throw new Error('Failed to extract test functions: ' + e.message + '\n' + e.stack);
     }
+    exported.__storage = storage;
     return exported;
 }
 
@@ -359,4 +364,33 @@ test('rewriteRequestBodyText returns null for non-player bodies', () => {
     assert.equal(harness.rewriteRequestBodyText('not json'), null);
     assert.equal(harness.rewriteRequestBodyText(null), null);
     assert.equal(harness.rewriteRequestBodyText(''), null);
+});
+
+// ========== Extension context-menu channel block ==========
+
+test('extension block-channel handler adds current channel and enables blocker', () => {
+    const h = createTestHarness({
+        storage: { ytab_channel_blocklist: 'Existing Channel' },
+        querySelector: () => ({ textContent: '  New Channel  ' })
+    });
+
+    h.state.features.channelBlocker = false;
+    h.handleExtensionBlockChannel();
+
+    assert.equal(h.__storage.ytab_channel_blocklist, 'Existing Channel\nNew Channel');
+    assert.equal(h.__storage.ytab_channelBlocker, true);
+    assert.equal(h.state.features.channelBlocker, true);
+});
+
+test('extension block-channel handler avoids duplicate channel names', () => {
+    const h = createTestHarness({
+        storage: { ytab_channel_blocklist: 'Existing Channel' },
+        querySelector: () => ({ textContent: 'existing channel' })
+    });
+
+    h.state.features.channelBlocker = true;
+    h.handleExtensionBlockChannel();
+
+    assert.equal(h.__storage.ytab_channel_blocklist, 'Existing Channel');
+    assert.equal(h.__storage.ytab_channelBlocker, undefined);
 });

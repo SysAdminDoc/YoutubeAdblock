@@ -193,5 +193,8 @@ chrome.contextMenus.onClicked.addListener((info) => {
         case 'ytab-refresh-rules':
             sendToActiveTab({ type: 'ytab:refresh-rules' });
             break;
+        case 'ytab-block-channel':
+            sendToActiveTab({ type: 'ytab:block-channel' });
+            break;
     }
 });
