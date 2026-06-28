@@ -2,6 +2,13 @@
 
 All notable changes to YoutubeAdblock are documented here.
 
+## [0.5.12] - 2026-06-28
+
+### Fixed
+- Fixed the Firefox release contract so local XPI output is explicitly
+  development-only and unsigned. README and extension docs no longer promise a
+  signed persistent Firefox XPI unless AMO/web-ext signing is actually wired.
+
 ## [0.5.11] - 2026-06-28
 
 ### Added

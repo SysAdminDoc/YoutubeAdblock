@@ -40,12 +40,6 @@ Evidence and competitive context: see RESEARCH.md (consolidated; older inline re
 ### P2 — larger bets / parity
 
 ### P3 — polish / niche
-- [ ] P3 — DeArrow casual mode
-  Why: vote-aware title replacement (only community-confirmed clickbait) shipped ecosystem-wide Feb 2025; softer default than full DeArrow.
-  Evidence: wiki.sponsor.ajay.app/w/DeArrow/Casual_mode.
-  Touches: DeArrow engine + feature group (sub-toggle).
-  Acceptance: casual mode toggle replaces only vote-qualified titles. Gated on the P0 DeArrow permission outcome.
-  Complexity: S
 - [ ] P3 — Extract UI strings for i18n
   Why: ~100 hardcoded English strings block any localization; extraction is the prerequisite, shipping translations is not yet justified by user demand.
   Evidence: FEATURE_GROUPS + panel builders (~lines 220–435, 4320–5115).
@@ -56,18 +50,6 @@ Evidence and competitive context: see RESEARCH.md (consolidated; older inline re
 ### Audit-Surfaced Items
 
 ### P0 - release trust
-- [ ] P0 - Reconcile the v0.5.11 release state before publishing
-  Why: The working tree reports v0.5.11 while `HEAD`/`origin/main` remains tagged v0.5.10, so release docs, manifests, generated files, artifacts, and tags can drift.
-  Evidence: `git log -10`, `git status --short`, `README.md:3`, `YoutubeAdblock.user.js:4`, `extension/manifest.json:3`.
-  Touches: versioned files, generated extension output, changelog, tags, GitHub release assets.
-  Acceptance: clean working tree; pushed commit/tag/version all match; latest release assets correspond to the same version shown in README and manifests.
-  Complexity: M
-- [ ] P0 - Fix the Firefox signed-XPI release path
-  Why: README promises a signed persistent XPI, but the local release script currently creates an `.xpi` ZIP artifact rather than proving AMO/web-ext signing.
-  Evidence: `README.md:32`, `Build-Release.ps1:157`, Mozilla extension signing requirements.
-  Touches: `Build-Release.ps1`, `extension/README.md`, `README.md`, release checklist.
-  Acceptance: either release builds invoke and verify the real signing path, or docs clearly label generated XPI output as unsigned/development-only.
-  Complexity: M
 
 ### P1 - permission and packaging hardening
 - [ ] P1 - Remove inactive DeArrow thumbnail permission from the extension build

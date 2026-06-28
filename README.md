@@ -1,6 +1,6 @@
 # YoutubeAdblock
 
-![Version](https://img.shields.io/badge/version-0.5.11-58A6FF)
+![Version](https://img.shields.io/badge/version-0.5.12-58A6FF)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
 > A document-start YouTube ad blocker with a split-context proxy engine, remote rule support, and a premium Control Center for tuning protection.
@@ -29,7 +29,7 @@ For a full local release gate, run `npm ci` once, then run `powershell -NoProfil
 
 ### Firefox (MV3 extension)
 
-**Signed XPI (persistent install):** Download the latest `.xpi` from [Releases](https://github.com/SysAdminDoc/YoutubeAdblock/releases), open it in Firefox, and confirm the install. The extension persists across restarts. This also works on **Firefox for Android** (128+).
+**Persistent install:** This repo does not publish a signed XPI yet. Firefox requires AMO or `web-ext sign` signing for persistent extension installs, so the persistent Firefox path today is the userscript install with Tampermonkey or Violentmonkey.
 
 **Temporary install (development):**
 

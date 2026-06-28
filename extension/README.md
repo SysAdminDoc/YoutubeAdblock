@@ -106,8 +106,12 @@ outside developer-mode or managed-policy flows.
 1. Build as above.
 2. Visit `about:debugging#/runtime/this-firefox`.
 3. Click **Load Temporary Add-on…** and select `extension/manifest.json`.
-4. The add-on is unloaded when Firefox closes; re-load per session, or
-   sign the extension through `web-ext sign` for a persistent install.
+4. The add-on is unloaded when Firefox closes; re-load per session.
+
+Persistent Firefox installs require Mozilla signing through AMO or
+`web-ext sign`. The local release gate can produce an unsigned development XPI
+only when `-Artifacts Xpi` is explicitly requested; do not publish that file as
+a signed install asset.
 
 ## Keyboard commands
 
@@ -152,5 +156,6 @@ to `dist/`. For manual steps:
    powershell -NoProfile -ExecutionPolicy Bypass -File .\Build-CRX.ps1
    ```
 
-4. Attach the generated userscript, unpacked-extension zip, XPI, or CRX
-   artifacts to GitHub Releases manually.
+4. Attach the generated userscript, unpacked-extension zip, or CRX artifacts to
+   GitHub Releases manually. If `-Artifacts Xpi` was requested, treat the
+   generated `.unsigned.xpi` as a development artifact only.

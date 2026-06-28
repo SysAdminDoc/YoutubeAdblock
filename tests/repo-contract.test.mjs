@@ -81,10 +81,19 @@ test('one-command release gate runs local checks and packages fresh artifacts', 
     assert.match(buildRelease, /sign-filter-manifest\.mjs/);
     assert.match(buildRelease, /YoutubeAdblock-v\$version\.user\.js/);
     assert.match(buildRelease, /YoutubeAdblock-extension-v\$version\.zip/);
-    assert.match(buildRelease, /YoutubeAdblock-extension-v\$version\.xpi/);
+    assert.match(buildRelease, /YoutubeAdblock-extension-v\$version\.unsigned\.xpi/);
     assert.match(buildRelease, /Build-CRX\.ps1/);
     assert.match(readme, /Build-Release\.ps1/);
     assert.match(extensionReadme, /Build-Release\.ps1/);
+});
+
+test('Firefox XPI docs do not claim unsigned local artifacts are signed releases', () => {
+    assert.match(buildRelease, /unsigned development XPI/);
+    assert.match(readme, /does not publish a signed XPI yet/);
+    assert.match(readme, /requires AMO or `web-ext sign` signing/);
+    assert.doesNotMatch(readme, /Download the latest `\.xpi` from \[Releases\]/);
+    assert.match(extensionReadme, /unsigned development XPI/);
+    assert.match(extensionReadme, /do not publish that file as\s+a signed install asset/);
 });
 
 test('browser smoke matrix is wired into the local test suite', () => {

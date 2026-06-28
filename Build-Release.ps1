@@ -2,7 +2,9 @@
 #
 # Local release gate for YoutubeAdblock. Regenerates generated files, runs
 # syntax checks and tests, validates versions and generated outputs, then
-# writes fresh install artifacts to dist/.
+# writes fresh install artifacts to dist/. Optional XPI output is unsigned and
+# intended for development only; persistent Firefox installs require AMO/web-ext
+# signing outside this local gate.
 
 [CmdletBinding()]
 param(
@@ -155,7 +157,9 @@ if ($artifactSet.Contains('Zip') -or $artifactSet.Contains('Xpi')) {
         Write-ZipArtifact $packDir (Join-Path $outputDirAbs "YoutubeAdblock-extension-v$version.zip")
     }
     if ($artifactSet.Contains('Xpi')) {
-        Write-ZipArtifact $packDir (Join-Path $outputDirAbs "YoutubeAdblock-extension-v$version.xpi")
+        $unsignedXpiPath = Join-Path $outputDirAbs "YoutubeAdblock-extension-v$version.unsigned.xpi"
+        Write-ZipArtifact $packDir $unsignedXpiPath
+        Write-Warning "Wrote unsigned development XPI only: $unsignedXpiPath. Persistent Firefox installs require AMO/web-ext signing."
     }
     Remove-DirectoryIfPresent $packRoot
 }
