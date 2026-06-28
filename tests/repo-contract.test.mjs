@@ -88,6 +88,17 @@ test('extension README reflects the current iconless manifest', () => {
     assert.match(extensionReadme, /default toolbar icon/i);
 });
 
+test('extension keyboard commands are opt-in with no default shortcuts', () => {
+    for (const [name, command] of Object.entries(manifest.commands || {})) {
+        assert.equal('suggested_key' in command, false,
+            `${name} should not ship a default suggested_key`);
+    }
+    assert.doesNotMatch(readme, /Ctrl\+Shift\+Y|Command\+Shift\+Y|Cmd\+Shift\+Y/);
+    assert.doesNotMatch(extensionReadme, /Ctrl\+Shift\+Y|Command\+Shift\+Y|Cmd\+Shift\+Y/);
+    assert.match(readme, /chrome:\/\/extensions\/shortcuts/);
+    assert.match(extensionReadme, /chrome:\/\/extensions\/shortcuts/);
+});
+
 test('extension settings sync only rebuilds the panel when mirrored settings actually changed', () => {
     assert.match(userscript, /refreshSettingsUI\(settingsChanged\)/);
 });

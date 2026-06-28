@@ -76,8 +76,7 @@ it works cleanly without adding broader extension fetch permissions.
 
 3. Visit `chrome://extensions`, enable **Developer mode**, click
    **Load unpacked**, and select the `extension/` folder.
-4. Click the toolbar icon (or press `Ctrl+Shift+Y`) to open the Control
-   Center.
+4. Click the toolbar icon to open the Control Center.
 
 If you trigger the extension while you are not already on YouTube,
 YoutubeAdblock opens a YouTube tab and carries the action there automatically.
@@ -114,11 +113,11 @@ outside developer-mode or managed-policy flows.
 
 | Command | Default shortcut | Effect |
 |---------|------------------|--------|
-| Open Control Center | `Ctrl+Shift+Y` (Win/Linux), `Cmd+Shift+Y` (Mac) | Opens the in-page protection workspace |
+| Open Control Center | *(unbound)* | Opens the in-page protection workspace |
 | Pause or Resume Protection | *(unbound)* | Toggles the master switch |
 | Refresh Rules | *(unbound)* | Forces a rule-list refresh |
 
-Re-bind from `chrome://extensions/shortcuts` or
+Bind optional shortcuts from `chrome://extensions/shortcuts` or
 `about:addons` → gear → *Manage Extension Shortcuts*.
 
 ## Local release workflow

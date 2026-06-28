@@ -1,6 +1,6 @@
 # YoutubeAdblock
 
-![Version](https://img.shields.io/badge/version-0.5.7-58A6FF)
+![Version](https://img.shields.io/badge/version-0.5.8-58A6FF)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
 > A document-start YouTube ad blocker with a split-context proxy engine, remote rule support, and a premium Control Center for tuning protection.
@@ -19,7 +19,9 @@
 1. Clone or download the repo, then run `powershell -ExecutionPolicy Bypass -File .\Build-Extension.ps1` to regenerate [extension/main.js](extension/main.js) from the userscript
 2. Visit `chrome://extensions`, enable **Developer mode**, and click **Load unpacked**
 3. Select the [extension/](extension/) folder
-4. Click the YoutubeAdblock toolbar button (or press `Ctrl+Shift+Y`) to open the Control Center
+4. Click the YoutubeAdblock toolbar button to open the Control Center
+
+Optional browser shortcuts can be bound from `chrome://extensions/shortcuts`; no global shortcut is assigned by default.
 
 Because the MV3 manifest intentionally includes both `background.service_worker` and `background.scripts` for Chrome + Firefox compatibility, the unpacked extension target is Chromium 121 or newer.
 
