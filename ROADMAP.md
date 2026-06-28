@@ -54,15 +54,3 @@ Evidence and competitive context: see RESEARCH.md (consolidated; older inline re
 ### P1 - permission and packaging hardening
 
 ### P2 - validation and migration
-- [ ] P2 - Validate real userscript-manager and mobile install paths
-  Why: Browser smoke tests use local fixtures; README claims Tampermonkey MV3, Violentmonkey, Firefox Android, and Safari Userscripts behavior that still needs real manager/device validation.
-  Evidence: `README.md:43`, `README.md:52`, `tests/browser-smoke.test.mjs`, Tampermonkey MV3 issue threads.
-  Touches: manual QA checklist, browser-smoke fixtures, README support matrix.
-  Acceptance: documented pass/fail matrix for Chrome Tampermonkey MV3, Violentmonkey, Firefox Android, and Safari Userscripts with any unsupported feature caveats reflected in README.
-  Complexity: M
-- [ ] P2 - Add BlockTube/FilterTube migration importers
-  Why: Channel/title filtering competitors accumulate large user blocklists; plain-text import helps, but named migration importers reduce lossy moves and support requests.
-  Evidence: BlockTube feature set, current blocklist import/export controls in `YoutubeAdblock.user.js:6035`.
-  Touches: blocklist import parser, Control Center copy, diagnostics, unit tests.
-  Acceptance: users can paste/export common BlockTube-style JSON/text lists and get normalized channel IDs, handles, names, regex entries, and keyword rules with a preview of rejected entries.
-  Complexity: M

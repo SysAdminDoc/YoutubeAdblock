@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         YoutubeAdblock
 // @namespace    https://github.com/SysAdminDoc
-// @version      0.5.15
+// @version      0.5.16
 // @description  YouTube ad blocker with remote rules, anti-detect hardening, toString-hiding proxies, DeArrow + RYD, volume boost, UI cleanup, and an in-page Control Center
 // @author       SysAdminDoc
 // @license      MIT
@@ -41,7 +41,7 @@
      * ===================================================================== */
 
     const SCRIPT_NAME = 'YoutubeAdblock';
-    const SCRIPT_VERSION = '0.5.15';
+    const SCRIPT_VERSION = '0.5.16';
     const PROJECT_URL = 'https://github.com/SysAdminDoc/YoutubeAdblock';
     const ISSUES_URL = `${PROJECT_URL}/issues`;
     const FILTER_URL_DEFAULT = 'https://raw.githubusercontent.com/SysAdminDoc/YoutubeAdblock/refs/heads/main/youtube-adblock-filters.txt';
@@ -5995,6 +5995,107 @@
         return lines.join('\n');
     }
 
+    const MIGRATION_MAX_ENTRIES = 5000;
+    const MIGRATION_MAX_REJECTED = 25;
+    const MIGRATION_CHANNEL_HINT_RE = /channel|author|creator|uploader/i;
+    const MIGRATION_KEYWORD_HINT_RE = /keyword|title|phrase|word|video/i;
+
+    function mergeBlocklistText(existing, incoming) {
+        return normalizeBlocklistText([existing, incoming].filter(Boolean).join('\n'));
+    }
+
+    function normalizeMigrationType(hint) {
+        hint = String(hint || '').trim();
+        if (!hint) return '';
+        if (MIGRATION_CHANNEL_HINT_RE.test(hint)) return 'channel';
+        if (MIGRATION_KEYWORD_HINT_RE.test(hint)) return 'keyword';
+        return '';
+    }
+
+    function looksLikeChannelEntry(value) {
+        return /^UC[A-Za-z0-9_-]{20,}$/.test(value)
+            || /^@[\w.-]{2,}$/.test(value)
+            || /^https?:\/\/(?:www\.)?(?:youtube\.com|m\.youtube\.com|music\.youtube\.com|youtubekids\.com)\/(?:@|channel\/|c\/|user\/)/i.test(value);
+    }
+
+    function addMigrationEntry(result, rawValue, hint) {
+        if (result.seen >= MIGRATION_MAX_ENTRIES) return;
+        if (rawValue == null) return;
+        var value = String(rawValue).trim();
+        if (!value || value.startsWith('#') || value.startsWith('//')) return;
+        var explicit = value.match(/^(channel|channelid|channelname|handle|author|creator|uploader|keyword|title|word|phrase|regex)\s*[:=]\s*(.+)$/i);
+        var target = normalizeMigrationType(hint);
+        if (explicit) {
+            value = explicit[2].trim();
+            target = normalizeMigrationType(explicit[1]) || target;
+        }
+        if (!value) return;
+        if (!target) target = looksLikeChannelEntry(value) ? 'channel' : 'channel';
+        if (target === 'channel') {
+            result.channels.push(value);
+            result.seen++;
+            return;
+        }
+        if (target === 'keyword') {
+            if (value.length > 200) {
+                if (result.rejected.length < MIGRATION_MAX_REJECTED) result.rejected.push(value.slice(0, 120));
+                return;
+            }
+            result.keywords.push(value);
+            result.seen++;
+            return;
+        }
+        if (result.rejected.length < MIGRATION_MAX_REJECTED) result.rejected.push(value.slice(0, 120));
+    }
+
+    function visitMigrationObject(node, result, hint, depth) {
+        if (!node || result.seen >= MIGRATION_MAX_ENTRIES || depth > 5) return;
+        if (Array.isArray(node)) {
+            for (const item of node) visitMigrationObject(item, result, hint, depth + 1);
+            return;
+        }
+        if (typeof node === 'string' || typeof node === 'number') {
+            addMigrationEntry(result, node, hint);
+            return;
+        }
+        if (typeof node !== 'object') return;
+
+        var ownHint = normalizeMigrationType(node.type || node.kind || node.category || node.listType || hint);
+        var channelCandidate = node.channelId || node.channelID || node.channelName || node.channel || node.author || node.creator || node.uploader || node.handle || node.url || (ownHint === 'channel' ? node.value : null);
+        var keywordCandidate = node.keyword || node.title || node.phrase || node.word || node.pattern || node.regex || node.name || (ownHint === 'keyword' ? node.value : null);
+        if (channelCandidate && (ownHint === 'channel' || !ownHint)) addMigrationEntry(result, channelCandidate, 'channel');
+        else if (keywordCandidate && ownHint === 'keyword') addMigrationEntry(result, keywordCandidate, 'keyword');
+
+        for (const [key, value] of Object.entries(node)) {
+            if (['type', 'kind', 'category', 'listType', 'value'].includes(key)) continue;
+            var keyHint = normalizeMigrationType(key) || ownHint;
+            if (typeof value === 'string' || typeof value === 'number') {
+                var valueHint = normalizeMigrationType(value);
+                if (valueHint && key && !['type', 'kind', 'category', 'listType'].includes(key)) addMigrationEntry(result, key, valueHint);
+                else addMigrationEntry(result, value, keyHint);
+            } else {
+                visitMigrationObject(value, result, keyHint, depth + 1);
+            }
+        }
+    }
+
+    function parseMigrationPayload(raw) {
+        var result = { channels: [], keywords: [], rejected: [], seen: 0 };
+        var text = String(raw || '').trim();
+        if (!text) return result;
+        try {
+            var parsed = JSON.parse(text);
+            visitMigrationObject(parsed, result, '', 0);
+        } catch (e) {
+            for (const line of text.split(/\r?\n/)) {
+                addMigrationEntry(result, line, '');
+            }
+        }
+        result.channels = normalizeBlocklistText(result.channels.join('\n'));
+        result.keywords = normalizeBlocklistText(result.keywords.join('\n'));
+        return result;
+    }
+
     function readPortableSettings() {
         return {
             enabled: isEnabled(),
@@ -6070,6 +6171,39 @@
             }
             return { ok: true, count: 1, mode: 'text' };
         }
+        if (mode === 'migration') {
+            var migrated = parseMigrationPayload(raw);
+            var changed = 0;
+            if (migrated.channels) {
+                setSetting('channel_blocklist', mergeBlocklistText(getSetting('channel_blocklist', ''), migrated.channels));
+                changed++;
+            }
+            if (migrated.keywords) {
+                setSetting('keyword_blocklist', mergeBlocklistText(getSetting('keyword_blocklist', ''), migrated.keywords));
+                changed++;
+            }
+            if (changed) {
+                var migrationOverrides = getFeatureOverrides();
+                if (migrated.channels) {
+                    migrationOverrides.channelBlocker = true;
+                    state.features.channelBlocker = true;
+                }
+                if (migrated.keywords) {
+                    migrationOverrides.keywordBlocker = true;
+                    state.features.keywordBlocker = true;
+                }
+                setSetting('feature_overrides', migrationOverrides);
+                return {
+                    ok: true,
+                    count: changed,
+                    channels: migrated.channels ? migrated.channels.split('\n').length : 0,
+                    keywords: migrated.keywords ? migrated.keywords.split('\n').length : 0,
+                    rejected: migrated.rejected,
+                    mode: 'migration'
+                };
+            }
+            return { ok: false, error: 'Migration import did not find supported channel or keyword entries.', rejected: migrated.rejected };
+        }
         var parsed;
         try {
             parsed = JSON.parse(String(raw || ''));
@@ -6120,7 +6254,7 @@
         payload.className = `${CSS_PREFIX}-blocklist-textarea`;
         payload.rows = 5;
         payload.spellcheck = false;
-        payload.placeholder = 'Paste YoutubeAdblock JSON here, or paste plain channel names / @handles / UC IDs for channel import.';
+        payload.placeholder = 'Paste YoutubeAdblock JSON, BlockTube/FilterTube-style JSON, or plain channel names / @handles / UC IDs. Use keyword: or title: prefixes for keyword text imports.';
 
         const actions = document.createElement('div');
         actions.className = `${CSS_PREFIX}-btn-row`;
@@ -6175,7 +6309,24 @@
             showToast(result.ok ? 'Channel blocklist imported.' : result.error, result.ok ? 'success' : 'error');
         });
 
-        actions.append(copyJson, copyText, importJson, importText);
+        const importMigration = document.createElement('button');
+        importMigration.className = `${CSS_PREFIX}-btn ${CSS_PREFIX}-btn-secondary`;
+        importMigration.type = 'button';
+        importMigration.textContent = 'Import Migration';
+        importMigration.addEventListener('click', () => {
+            const result = importSettingsPayload(payload.value, 'migration');
+            if (!result.ok) {
+                if (result.rejected && result.rejected.length) payload.value = `Rejected entries:\n${result.rejected.join('\n')}`;
+                showToast(result.error, 'error');
+                return;
+            }
+            loadState();
+            refreshSettingsUI(true);
+            if (result.rejected && result.rejected.length) payload.value = `Rejected entries:\n${result.rejected.join('\n')}`;
+            showToast(`Migration imported ${result.channels} channel and ${result.keywords} keyword entries${result.rejected && result.rejected.length ? `; ${result.rejected.length} rejected.` : '.'}`, 'success');
+        });
+
+        actions.append(copyJson, copyText, importJson, importText, importMigration);
         wrap.append(payload, actions);
         return wrap;
     }

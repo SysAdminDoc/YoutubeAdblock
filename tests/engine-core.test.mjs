@@ -114,6 +114,7 @@ function createTestHarness(options = {}) {
         extractRendererChannelIdentity,
         videoRendererMatches,
         normalizeBlocklistText,
+        parseMigrationPayload,
         buildSettingsExportPayload,
         importSettingsPayload,
         audioTrackHasOriginalMarker,
@@ -629,4 +630,41 @@ test('plain text import normalizes channel entries and enables channel blocker',
     assert.equal(h.__storage.ytab_channel_blocklist, '@Creator\nUCabcdefghijklmnopqrstuv');
     assert.equal(h.__storage.ytab_feature_overrides.channelBlocker, true);
     assert.equal(h.state.features.channelBlocker, true);
+});
+
+test('migration parser reads BlockTube-style maps and generic entries', () => {
+    const parsed = harness.parseMigrationPayload(JSON.stringify({
+        'UCabcdefghijklmnopqrstuv': 'channel',
+        '@Creator': 'channel',
+        'spoiler phrase': 'title',
+        blockedChannels: [{ type: 'channel', value: 'https://www.youtube.com/@OtherCreator' }],
+        blockedKeywords: [{ type: 'keyword', value: '/sponsor|promo/i' }]
+    }));
+
+    assert.equal(parsed.channels, 'UCabcdefghijklmnopqrstuv\n@Creator\nhttps://www.youtube.com/@OtherCreator');
+    assert.equal(parsed.keywords, 'spoiler phrase\n/sponsor|promo/i');
+});
+
+test('migration import merges channel and keyword entries and previews rejects', () => {
+    const h = createTestHarness({
+        storage: {
+            ytab_channel_blocklist: '@Existing',
+            ytab_keyword_blocklist: 'old keyword'
+        }
+    });
+    const longKeyword = `keyword:${'x'.repeat(240)}`;
+    const result = h.importSettingsPayload([
+        'channel:@Creator',
+        'keyword:spoiler phrase',
+        longKeyword
+    ].join('\n'), 'migration');
+
+    assert.equal(result.ok, true);
+    assert.equal(result.channels, 1);
+    assert.equal(result.keywords, 1);
+    assert.equal(result.rejected.length, 1);
+    assert.equal(h.__storage.ytab_channel_blocklist, '@Existing\n@Creator');
+    assert.equal(h.__storage.ytab_keyword_blocklist, 'old keyword\nspoiler phrase');
+    assert.equal(h.__storage.ytab_feature_overrides.channelBlocker, true);
+    assert.equal(h.__storage.ytab_feature_overrides.keywordBlocker, true);
 });

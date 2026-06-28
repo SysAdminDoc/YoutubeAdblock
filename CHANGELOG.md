@@ -2,6 +2,12 @@
 
 All notable changes to YoutubeAdblock are documented here.
 
+## [0.5.16] - 2026-06-28
+
+### Added
+- Added BlockTube/FilterTube-style migration import for channel and keyword
+  blocklists, including merge-safe normalization and rejected-entry previews.
+
 ## [0.5.15] - 2026-06-28
 
 ### Added
