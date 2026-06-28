@@ -15,6 +15,7 @@ const userscript = read('YoutubeAdblock.user.js');
 const manifest = JSON.parse(read(path.join('extension', 'manifest.json')));
 const rules = JSON.parse(read(path.join('extension', 'rules', 'network-blocks.json')));
 const networkRuleSource = JSON.parse(read(path.join('extension', 'rules', 'network-rules-source.json')));
+const webpackSignatures = JSON.parse(read('webpack-ad-signatures.json'));
 const filterManifest = JSON.parse(read('youtube-adblock-filters.manifest.json'));
 const filterSignature = read('youtube-adblock-filters.txt.sig').trim();
 const gitignore = read('.gitignore');
@@ -115,6 +116,16 @@ test('release gate verifies install artifacts before publishing', () => {
     assert.match(expectedExtensionId, /^[a-p]{32}$/);
     assert.match(readme, /writes SHA-256 checksums/);
     assert.match(extensionReadme, /pinned extension ID/);
+});
+
+test('webpack ad signatures are tracked as a refreshable JSON source', () => {
+    assert.match(userscript, /WEBPACK_SIGNATURE_URL_DEFAULT/);
+    assert.match(userscript, /webpack-ad-signatures\.json/);
+    assert.match(userscript, /fetchWebpackSignatureDatabase\(\)/);
+    assert.ok(Array.isArray(webpackSignatures.tokens));
+    assert.ok(webpackSignatures.tokens.includes('adPlacements'));
+    assert.ok(webpackSignatures.tokens.includes('playerLegacyDesktopWatchAdsRenderer'));
+    assert.equal(Number.isInteger(webpackSignatures.maxFactoryBytes), true);
 });
 
 test('Control Center user-visible strings resolve through the STRINGS table', () => {

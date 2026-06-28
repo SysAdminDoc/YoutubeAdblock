@@ -13,6 +13,7 @@ const extensionSource = fs.readFileSync(path.join(repoRoot, 'extension', 'main.j
 const filterText = fs.readFileSync(path.join(repoRoot, 'youtube-adblock-filters.txt'), 'utf8').replace(/\r\n?/g, '\n');
 const filterManifest = fs.readFileSync(path.join(repoRoot, 'youtube-adblock-filters.manifest.json'), 'utf8');
 const filterSignature = fs.readFileSync(path.join(repoRoot, 'youtube-adblock-filters.txt.sig'), 'utf8');
+const webpackSignatureJson = fs.readFileSync(path.join(repoRoot, 'webpack-ad-signatures.json'), 'utf8');
 
 const surfaces = [
     { name: 'www-watch', url: 'https://www.youtube.com/watch?v=smoketest01', width: 1366, height: 820 },
@@ -86,6 +87,10 @@ async function installRoutes(context) {
             await route.fulfill({ status: 200, contentType: 'text/plain', body: filterText });
             return;
         }
+        if (requestUrl.includes('webpack-ad-signatures.json')) {
+            await route.fulfill({ status: 200, contentType: 'application/json', body: webpackSignatureJson });
+            return;
+        }
         if (/^https:\/\/([^/]+\.)?(youtube\.com|youtube-nocookie\.com|youtubekids\.com)\//i.test(requestUrl)) {
             await route.fulfill({ status: 200, contentType: 'text/html', body: fixtureHtml(requestUrl) });
             return;
@@ -95,7 +100,7 @@ async function installRoutes(context) {
 }
 
 async function installUserscriptMode(page) {
-    await page.addInitScript(({ filterText, filterManifest, filterSignature }) => {
+    await page.addInitScript(({ filterText, filterManifest, filterSignature, webpackSignatureJson }) => {
         window.__ytabStore = {};
         window.__ytabMenus = [];
         window.GM_getValue = (key, def) => Object.prototype.hasOwnProperty.call(window.__ytabStore, key)
@@ -113,6 +118,7 @@ async function installUserscriptMode(page) {
                 let status = 200;
                 if (opts.url.includes('youtube-adblock-filters.manifest.json')) body = filterManifest;
                 else if (opts.url.includes('youtube-adblock-filters.txt.sig')) body = filterSignature;
+                else if (opts.url.includes('webpack-ad-signatures.json')) body = webpackSignatureJson;
                 else if (!opts.url.includes('youtube-adblock-filters.txt')) {
                     status = 404;
                     body = '';
@@ -120,7 +126,7 @@ async function installUserscriptMode(page) {
                 opts.onload?.({ status, statusText: status === 200 ? 'OK' : 'Not Found', responseText: body, readyState: 4 });
             }, 0);
         };
-    }, { filterText, filterManifest, filterSignature });
+    }, { filterText, filterManifest, filterSignature, webpackSignatureJson });
     await page.addInitScript({ content: userscriptSource });
 }
 

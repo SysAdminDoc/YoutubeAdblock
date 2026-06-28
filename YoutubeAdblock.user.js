@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         YoutubeAdblock
 // @namespace    https://github.com/SysAdminDoc
-// @version      0.5.17
+// @version      0.5.18
 // @description  YouTube ad blocker with remote rules, anti-detect hardening, toString-hiding proxies, DeArrow + RYD, volume boost, UI cleanup, and an in-page Control Center
 // @author       SysAdminDoc
 // @license      MIT
@@ -41,12 +41,13 @@
      * ===================================================================== */
 
     const SCRIPT_NAME = 'YoutubeAdblock';
-    const SCRIPT_VERSION = '0.5.17';
+    const SCRIPT_VERSION = '0.5.18';
     const PROJECT_URL = 'https://github.com/SysAdminDoc/YoutubeAdblock';
     const ISSUES_URL = `${PROJECT_URL}/issues`;
     const FILTER_URL_DEFAULT = 'https://raw.githubusercontent.com/SysAdminDoc/YoutubeAdblock/refs/heads/main/youtube-adblock-filters.txt';
     const FILTER_MANIFEST_URL_DEFAULT = 'https://raw.githubusercontent.com/SysAdminDoc/YoutubeAdblock/refs/heads/main/youtube-adblock-filters.manifest.json';
     const FILTER_SIGNATURE_URL_DEFAULT = 'https://raw.githubusercontent.com/SysAdminDoc/YoutubeAdblock/refs/heads/main/youtube-adblock-filters.txt.sig';
+    const WEBPACK_SIGNATURE_URL_DEFAULT = 'https://raw.githubusercontent.com/SysAdminDoc/YoutubeAdblock/refs/heads/main/webpack-ad-signatures.json';
     const FILTER_PUBLIC_KEY_BASE64 = 'MCowBQYDK2VwAyEAdkjPuIDzXFI9UPn5w4t4selqoqbT4WCinGI58a2/a6E=';
     const FILTER_URL_MIRRORS = [
         'https://cdn.jsdelivr.net/gh/SysAdminDoc/YoutubeAdblock@main/youtube-adblock-filters.txt',
@@ -181,6 +182,9 @@
             remoteRequestFailed: 'Remote filter request failed.',
             remoteRequestTimedOut: 'Remote filter request timed out.',
             ruleLibraryProblem: detail => `Rule library problem: ${detail} Your current rules stayed active.`,
+            webpackSignatureTooLarge: maxKb => `Remote webpack signature database exceeds ${maxKb}KB limit.`,
+            webpackSignatureInvalid: 'Remote webpack signature database did not contain usable tokens.',
+            webpackSignatureFetchFailed: 'Webpack signature refresh failed.',
             refreshComplete: (count, version, integrity) => {
                 const suffix = integrity === 'unsigned-custom'
                     ? ' Unsigned custom source.'
@@ -598,6 +602,10 @@
             droppedUnsafeSelectors: 'Dropped unsafe selectors',
             supportedScriptlets: 'Supported scriptlets',
             unsupportedScriptlets: 'Unsupported scriptlets',
+            webpackSignatureSource: 'Webpack signature source',
+            webpackSignatureVersion: 'Webpack signature version',
+            webpackSignatureTokens: 'Webpack signature tokens',
+            webpackSignatureError: 'Webpack signature error',
             channelBlockEntries: 'Channel block entries',
             keywordBlockEntries: 'Keyword block entries',
             adAllowEntries: 'Ad-allow entries',
@@ -863,6 +871,13 @@
         filterRequestPromise: null,
         filterRequestId: 0,
         activeFilterRequestUrl: '',
+        webpackSignatureDatabase: null,
+        webpackSignatureMatcher: null,
+        webpackSignatureSource: 'built-in',
+        webpackSignatureVersion: '',
+        webpackSignatureUpdated: '',
+        webpackSignatureError: '',
+        webpackSignatureSyncing: false,
         proxiesInstalled: false,
         overlayEl: null,
         panelEl: null,
@@ -1022,6 +1037,8 @@
         // for browser extensions (see installDeArrow). Forcing the runtime
         // flag keeps a userscript-era override from re-enabling it here.
         if (IS_EXTENSION_BUILD) state.features.dearrow = false;
+
+        hydrateWebpackSignatureDatabase();
     }
 
     function saveStats() {
@@ -3486,8 +3503,8 @@
      * `.push`-es factories into before execution. Proxying that array's
      * push at document-start lets us inspect module source before the
      * module runs, which catches ad-related modules that relocate
-     * between YT builds. Factories whose source matches
-     * WEBPACK_AD_SIGNATURES are replaced with a no-op module (empty
+     * between YT builds. Factories whose source matches the local or
+     * refreshed webpack signature database are replaced with a no-op module (empty
      * exports) before the chunk executes, so the ad-rendering code never
      * runs; each replacement counts toward the `pruned` stat.
      * ===================================================================== */
@@ -3497,7 +3514,119 @@
         'webpackChunk_www_youtube_com',
         'webpackChunkytmusic_app'
     ];
-    const WEBPACK_AD_SIGNATURES = /\b(adPlacements|adBreakHeartbeatParams|onAbnormalityDetected|getAdBlockedState|adSlots|playerLegacyDesktopWatchAdsRenderer)\b/;
+    const WEBPACK_SIGNATURE_MAX_BYTES = 64 * 1024;
+    const WEBPACK_SIGNATURE_MAX_TOKENS = 100;
+    const WEBPACK_SIGNATURE_MAX_TOKEN_LENGTH = 120;
+    const WEBPACK_SIGNATURE_TOKEN_RE = /^[A-Za-z_$][\w$]*$/;
+    const DEFAULT_WEBPACK_SIGNATURE_DATABASE = {
+        version: 'built-in',
+        updated: '2026-06-28',
+        maxFactoryBytes: 200000,
+        tokens: [
+            'adPlacements',
+            'adBreakHeartbeatParams',
+            'onAbnormalityDetected',
+            'getAdBlockedState',
+            'adSlots',
+            'playerLegacyDesktopWatchAdsRenderer'
+        ]
+    };
+
+    function sanitizeWebpackSignatureDatabase(value, mergeDefaults = true) {
+        const source = value && typeof value === 'object' && !Array.isArray(value)
+            ? value
+            : {};
+        const rawTokens = Array.isArray(source.tokens)
+            ? source.tokens
+            : (Array.isArray(source.factorySourceTokens) ? source.factorySourceTokens : []);
+        const tokens = [];
+        const pushToken = token => {
+            if (tokens.length >= WEBPACK_SIGNATURE_MAX_TOKENS) return;
+            const normalized = String(token || '').trim();
+            if (!normalized || normalized.length > WEBPACK_SIGNATURE_MAX_TOKEN_LENGTH) return;
+            if (!WEBPACK_SIGNATURE_TOKEN_RE.test(normalized)) return;
+            if (!tokens.includes(normalized)) tokens.push(normalized);
+        };
+        if (mergeDefaults) {
+            for (const token of DEFAULT_WEBPACK_SIGNATURE_DATABASE.tokens) pushToken(token);
+        }
+        for (const token of rawTokens) pushToken(token);
+        if (!tokens.length) return null;
+
+        const maxFactoryBytesRaw = Number(source.maxFactoryBytes);
+        const maxFactoryBytes = Number.isFinite(maxFactoryBytesRaw)
+            ? Math.min(500000, Math.max(1000, Math.floor(maxFactoryBytesRaw)))
+            : DEFAULT_WEBPACK_SIGNATURE_DATABASE.maxFactoryBytes;
+        return {
+            version: typeof source.version === 'string' && source.version.trim()
+                ? source.version.trim().slice(0, 80)
+                : DEFAULT_WEBPACK_SIGNATURE_DATABASE.version,
+            updated: typeof source.updated === 'string' && source.updated.trim()
+                ? source.updated.trim().slice(0, 80)
+                : DEFAULT_WEBPACK_SIGNATURE_DATABASE.updated,
+            maxFactoryBytes,
+            tokens
+        };
+    }
+
+    function compileWebpackSignatureMatcher(database) {
+        const tokens = database && Array.isArray(database.tokens) ? database.tokens : [];
+        if (!tokens.length) return null;
+        const escaped = tokens.map(token => token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+        return new RegExp(`\\b(?:${escaped.join('|')})\\b`);
+    }
+
+    function applyWebpackSignatureDatabase(database, source) {
+        const clean = sanitizeWebpackSignatureDatabase(database);
+        const effective = clean || sanitizeWebpackSignatureDatabase(DEFAULT_WEBPACK_SIGNATURE_DATABASE, false);
+        state.webpackSignatureDatabase = effective;
+        state.webpackSignatureMatcher = compileWebpackSignatureMatcher(effective);
+        state.webpackSignatureSource = source || 'built-in';
+        state.webpackSignatureVersion = effective.version;
+        state.webpackSignatureUpdated = effective.updated;
+    }
+
+    function hydrateWebpackSignatureDatabase() {
+        const cached = sanitizeWebpackSignatureDatabase(getSetting('webpack_signature_cache', null));
+        if (cached) {
+            applyWebpackSignatureDatabase(cached, 'cached');
+            return;
+        }
+        applyWebpackSignatureDatabase(DEFAULT_WEBPACK_SIGNATURE_DATABASE, 'built-in');
+    }
+
+    function webpackFactoryMatchesAdSignature(src) {
+        const database = state.webpackSignatureDatabase || sanitizeWebpackSignatureDatabase(DEFAULT_WEBPACK_SIGNATURE_DATABASE, false);
+        const maxBytes = database.maxFactoryBytes || DEFAULT_WEBPACK_SIGNATURE_DATABASE.maxFactoryBytes;
+        const matcher = state.webpackSignatureMatcher || compileWebpackSignatureMatcher(database);
+        return !!(src && src.length < maxBytes && matcher && matcher.test(src));
+    }
+
+    function fetchWebpackSignatureDatabase() {
+        if (state.webpackSignatureSyncing) return Promise.resolve(state.webpackSignatureDatabase);
+        if (typeof GM_xmlhttpRequest !== 'function') return Promise.resolve(state.webpackSignatureDatabase);
+        state.webpackSignatureSyncing = true;
+        state.webpackSignatureError = '';
+        return gmFetchText(addCacheBust(WEBPACK_SIGNATURE_URL_DEFAULT), FILTER_FETCH_TIMEOUT_MS)
+            .then(text => {
+                if (text.length > WEBPACK_SIGNATURE_MAX_BYTES) {
+                    throw new Error(STRINGS.filters.webpackSignatureTooLarge(Math.round(WEBPACK_SIGNATURE_MAX_BYTES / 1024)));
+                }
+                const parsed = sanitizeWebpackSignatureDatabase(jsonParseRaw(text));
+                if (!parsed) throw new Error(STRINGS.filters.webpackSignatureInvalid);
+                applyWebpackSignatureDatabase(parsed, 'remote');
+                setSetting('webpack_signature_cache', parsed);
+                setSetting('webpack_signature_cache_time', Date.now());
+                return parsed;
+            })
+            .catch(e => {
+                state.webpackSignatureError = e && e.message ? e.message : STRINGS.filters.webpackSignatureFetchFailed;
+                return state.webpackSignatureDatabase;
+            })
+            .finally(() => {
+                state.webpackSignatureSyncing = false;
+            });
+    }
 
     function installWebpackChunkHook() {
         if (!state.features.webpackChunkHook) return;
@@ -3550,7 +3679,7 @@
                                 try {
                                     src = (state.originals.functionToString || Function.prototype.toString).call(factory);
                                 } catch (e) { continue; }
-                                if (src && src.length < 200000 && WEBPACK_AD_SIGNATURES.test(src)) {
+                                if (webpackFactoryMatchesAdSignature(src)) {
                                     // Replace the factory with a no-op that
                                     // still fulfills the module contract.
                                     // module.exports stays an empty object,
@@ -7338,6 +7467,10 @@
             `${report.droppedUnsafeSelectors}: ${coverage.droppedUnsafeSelectors}`,
             `${report.supportedScriptlets}: ${formatScriptletCoverage(coverage.supportedScriptlets)}`,
             `${report.unsupportedScriptlets}: ${formatScriptletCoverage(coverage.unsupportedScriptlets)}`,
+            `${report.webpackSignatureSource}: ${state.webpackSignatureSource || STRINGS.common.unknown}`,
+            `${report.webpackSignatureVersion}: ${state.webpackSignatureVersion || STRINGS.common.unknown}`,
+            `${report.webpackSignatureTokens}: ${(state.webpackSignatureDatabase?.tokens || []).length}`,
+            `${report.webpackSignatureError}: ${state.webpackSignatureError || STRINGS.common.none}`,
             `${report.channelBlockEntries}: ${parseBlocklist(getSetting('channel_blocklist', ''), { channel: true }).length}`,
             `${report.keywordBlockEntries}: ${parseBlocklist(getSetting('keyword_blocklist', '')).length}`,
             `${report.adAllowEntries}: ${parseBlocklist(getSetting('ad_allowlist', ''), { channel: true }).length}`,
@@ -7488,6 +7621,7 @@
             installProxies();
             injectSettingsCSS();
             fetchFilters();
+            fetchWebpackSignatureDatabase();
         }, { once: true });
     } else {
         installProxies();
@@ -7495,6 +7629,7 @@
 
         // Phase 2: Background filter fetch
         fetchFilters();
+        fetchWebpackSignatureDatabase();
     }
 
     function safeRegisterMenu(label, fn) {

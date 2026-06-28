@@ -2,6 +2,13 @@
 
 All notable changes to YoutubeAdblock are documented here.
 
+## [0.5.18] - 2026-06-28
+
+### Added
+- Added a refreshable webpack ad-signature database backed by
+  `webpack-ad-signatures.json`, with sanitized token loading, cached startup
+  fallback, diagnostics output, and browser-smoke fixture coverage.
+
 ## [0.5.17] - 2026-06-28
 
 ### Changed

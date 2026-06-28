@@ -129,7 +129,11 @@ function createTestHarness(options = {}) {
         rewriteRequestBodyText,
         handleExtensionBlockChannel,
         normalizeFeatures,
+        sanitizeWebpackSignatureDatabase,
+        compileWebpackSignatureMatcher,
+        webpackFactoryMatchesAdSignature,
         DEFAULT_FILTERS,
+        DEFAULT_WEBPACK_SIGNATURE_DATABASE,
         state,
     });
     `;
@@ -374,6 +378,47 @@ test('parseUBOFilterList supports safe response replacements and bundled bypass 
     assert.equal(supported.get('trusted-prevent-dom-bypass'), 3);
     assert.equal(supported.get('nano-stb'), 1);
     assert.equal(unsupported.get('trusted-rpnt'), 1);
+});
+
+// ========== Webpack signature database ==========
+
+test('webpack signature database sanitizes remote tokens and preserves defaults', () => {
+    const db = harness.sanitizeWebpackSignatureDatabase({
+        version: 'remote-test',
+        updated: '2026-06-28',
+        maxFactoryBytes: 50000,
+        tokens: [
+            'paidAdRendererFactory',
+            'bad-token',
+            'adSlots',
+            'x'.repeat(160)
+        ]
+    });
+
+    assert.equal(db.version, 'remote-test');
+    assert.equal(db.maxFactoryBytes, 50000);
+    assert.ok(db.tokens.includes('adPlacements'), 'built-in tokens should stay active');
+    assert.ok(db.tokens.includes('paidAdRendererFactory'), 'safe remote tokens should be accepted');
+    assert.equal(db.tokens.includes('bad-token'), false);
+});
+
+test('webpack factory matcher uses the active token database and size guard', () => {
+    const h = createTestHarness({
+        storage: {
+            ytab_webpack_signature_cache: {
+                version: 'cached-test',
+                updated: '2026-06-28',
+                maxFactoryBytes: 80,
+                tokens: ['paidAdRendererFactory']
+            }
+        }
+    });
+
+    assert.equal(h.state.webpackSignatureSource, 'cached');
+    assert.equal(h.state.webpackSignatureVersion, 'cached-test');
+    assert.equal(h.webpackFactoryMatchesAdSignature('function(){return paidAdRendererFactory && true;}'), true);
+    assert.equal(h.webpackFactoryMatchesAdSignature('function(){return ordinaryRenderer && true;}'), false);
+    assert.equal(h.webpackFactoryMatchesAdSignature(`function(){return ${'paidAdRendererFactory'.repeat(8)};}`), false);
 });
 
 // ========== Signed filter manifest ==========

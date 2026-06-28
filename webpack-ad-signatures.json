@@ -1,0 +1,13 @@
+{
+  "version": "2026.06.28",
+  "updated": "2026-06-28",
+  "maxFactoryBytes": 200000,
+  "tokens": [
+    "adPlacements",
+    "adBreakHeartbeatParams",
+    "onAbnormalityDetected",
+    "getAdBlockedState",
+    "adSlots",
+    "playerLegacyDesktopWatchAdsRenderer"
+  ]
+}
