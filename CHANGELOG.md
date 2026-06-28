@@ -2,6 +2,12 @@
 
 All notable changes to YoutubeAdblock are documented here.
 
+## [0.5.17] - 2026-06-28
+
+### Changed
+- Extracted Control Center, diagnostics, toast, menu, and feature-toggle copy
+  into a central `STRINGS` table as the prerequisite for future localization.
+
 ## [0.5.16] - 2026-06-28
 
 ### Added

@@ -40,12 +40,6 @@ Evidence and competitive context: see RESEARCH.md (consolidated; older inline re
 ### P2 — larger bets / parity
 
 ### P3 — polish / niche
-- [ ] P3 — Extract UI strings for i18n
-  Why: ~100 hardcoded English strings block any localization; extraction is the prerequisite, shipping translations is not yet justified by user demand.
-  Evidence: FEATURE_GROUPS + panel builders (~lines 220–435, 4320–5115).
-  Touches: YoutubeAdblock.user.js (central STRINGS table), build script unaffected.
-  Acceptance: all user-visible strings resolve through one table; English-only behavior unchanged.
-  Complexity: L
 
 ### Audit-Surfaced Items
 

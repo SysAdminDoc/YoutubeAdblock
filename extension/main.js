@@ -125,7 +125,7 @@
      * ===================================================================== */
 
     const SCRIPT_NAME = 'YoutubeAdblock';
-    const SCRIPT_VERSION = '0.5.16';
+    const SCRIPT_VERSION = '0.5.17';
     const PROJECT_URL = 'https://github.com/SysAdminDoc/YoutubeAdblock';
     const ISSUES_URL = `${PROJECT_URL}/issues`;
     const FILTER_URL_DEFAULT = 'https://raw.githubusercontent.com/SysAdminDoc/YoutubeAdblock/refs/heads/main/youtube-adblock-filters.txt';
@@ -189,6 +189,517 @@
         clutter: `${CSS_PREFIX}-section-clutter`,
         blocklist: `${CSS_PREFIX}-section-blocklist`,
         diagnostics: `${CSS_PREFIX}-section-diagnostics`
+    };
+    const STRINGS = {
+        common: {
+            none: 'none',
+            unknown: 'unknown',
+            never: 'never',
+            notInstalled: 'not installed',
+            notSyncedYet: 'Not synced yet',
+            unknownShort: '?'
+        },
+        sites: {
+            youtube: 'YouTube',
+            music: 'YouTube Music',
+            tv: 'YouTube TV',
+            mobile: 'YouTube Mobile',
+            noCookie: 'YouTube No-Cookie',
+            kids: 'YouTube Kids'
+        },
+        surfaces: {
+            watch: 'Watch Page',
+            shorts: 'Shorts Feed',
+            search: 'Search Results',
+            playlist: 'Playlist',
+            subscriptions: 'Subscriptions',
+            history: 'History',
+            library: 'Library',
+            channel: 'Channel',
+            live: 'Live Stream',
+            browse: 'Browse',
+            home: 'Home',
+            current: 'Current Page'
+        },
+        access: {
+            toolbarButton: 'Toolbar Button',
+            userscriptMenu: 'Userscript Menu',
+            extensionHint: 'Click the toolbar button from any YouTube tab. Optional shortcuts can be bound in browser extension settings.',
+            userscriptHint: 'Open the Control Center from your userscript manager menu any time.'
+        },
+        filters: {
+            sourceLabels: {
+                remote: 'Remote list',
+                cached: 'Cached list',
+                stale: 'Cached list (stale)',
+                'built-in': 'Built-in fallback',
+                custom: 'Custom source'
+            },
+            integrityLabels: {
+                verified: 'Verified',
+                'unsigned-custom': 'Unsigned Custom',
+                failed: 'Verification Failed',
+                cached: 'Cached',
+                'built-in': 'Built-In',
+                unknown: 'Unknown'
+            },
+            cachedIntegrityMessage: 'Cached rules are active; refresh to re-check signature status.',
+            builtInIntegrityMessage: 'Built-in fallback rules are bundled with the script.',
+            signedCompanionsUnavailable: 'Signed filter companion URLs are unavailable.',
+            signedManifestInvalid: 'Signed filter manifest is invalid.',
+            signedByteMismatch: 'Signed filter byte count does not match the downloaded list.',
+            signedHashMismatch: 'Signed filter hash does not match the downloaded list.',
+            signedVerificationFailed: 'Signed filter verification failed.',
+            webCryptoShaUnavailable: 'WebCrypto SHA-256 is unavailable.',
+            webCryptoEd25519Unavailable: 'WebCrypto Ed25519 verification is unavailable.',
+            defaultVerified: updated => `Default Rule Library verified with Ed25519${updated ? ` (${updated})` : ''}.`,
+            customSourceLoadedWithoutSignature: 'Custom Rule Library source loaded without signature verification.',
+            allSourcesUnreachable: 'All filter sources (primary + mirrors) were unreachable. Your current rules stayed active.',
+            remoteUnreachable: 'The remote list was unreachable, so YoutubeAdblock stayed on the last known rule set.',
+            remoteTooLarge: maxMb => `Remote filter list exceeds ${maxMb}MB limit.`,
+            invalidJsonSchema: 'Invalid JSON filter schema.',
+            noUsableRules: 'The remote list produced no usable rules.',
+            couldNotVerifyOrParse: 'Remote rules could not be verified or parsed.',
+            remoteParseFailed: 'The remote list could not be parsed. Your current rules stayed active.',
+            remoteVerificationFailed: 'Remote rules could not be verified.',
+            remoteRequestFailed: 'Remote filter request failed.',
+            remoteRequestTimedOut: 'Remote filter request timed out.',
+            ruleLibraryProblem: detail => `Rule library problem: ${detail} Your current rules stayed active.`,
+            refreshComplete: (count, version, integrity) => {
+                const suffix = integrity === 'unsigned-custom'
+                    ? ' Unsigned custom source.'
+                    : ' Signature verified.';
+                return `Rule refresh complete. ${formatNumber(count)} rules active (${version || STRINGS.common.unknownShort}).${suffix}`;
+            }
+        },
+        protectionSummary: {
+            paused: {
+                label: 'Paused',
+                tone: 'warn',
+                description: 'Every blocking engine is paused until you turn protection back on.'
+            },
+            refreshing: {
+                label: 'Refreshing…',
+                tone: 'info',
+                description: 'Pulling the latest rule set while keeping your current protection active.'
+            },
+            protected: 'Protected',
+            remoteDescription: 'Remote rules are live and the fallback remains ready if the source goes away.',
+            cachedDescription: 'Cached rules are active while YoutubeAdblock waits for a fresher remote copy.',
+            staleDescription: 'Previously saved rules are active while YoutubeAdblock refreshes in the background.',
+            builtInDescription: 'Built-in rules are active, so protection still works even without a remote list.'
+        },
+        injectionTiming: {
+            confirmedTitle: 'Document-start confirmed',
+            lateTitle: 'Late injection suspected',
+            confirmedDescription: (readyState, elapsedText) => `YoutubeAdblock evaluated while the document was ${readyState} (${elapsedText}), so manager setup looks correct. If ads still appear, refresh rules or check engine health instead of reinstalling.`,
+            extensionProduct: 'extension content script',
+            userscriptProduct: 'userscript manager',
+            lateDescription: (readyState, elapsedText, product) => `YoutubeAdblock evaluated after document-start (${readyState}, ${elapsedText}). This usually points to ${product} setup, such as Chrome's "Allow User Scripts" toggle, a disabled manager, or a manager that missed @run-at document-start. Reload YouTube after fixing setup; rule refreshes cannot recover player responses that loaded before the script.`
+        },
+        toastTitles: {
+            info: 'Heads Up',
+            success: 'Updated',
+            error: 'Needs Attention',
+            warn: 'Check This'
+        },
+        sponsorBlock: {
+            highlightTitle: timeText => `Jump to highlight (${timeText})`,
+            highlightSymbol: '★'
+        },
+        ryd: {
+            dislikeLabel: label => `Dislike (${label})`
+        },
+        volumeBoost: {
+            tag: 'Boost',
+            title: 'YoutubeAdblock volume boost'
+        },
+        ui: {
+            controlCenter: 'Control Center',
+            headerDescription: 'Pause protection, refresh the rule library, and adjust modules without leaving YouTube.',
+            findSetting: 'Find a setting',
+            findSettingPlaceholder: 'Find a setting…',
+            closeControlCenter: 'Close the YoutubeAdblock Control Center',
+            footerHint: 'Search or scroll. Changes save instantly. Press Esc to close.',
+            quickActions: 'Quick actions',
+            protectionOn: 'Protection On',
+            protectionPaused: 'Protection Paused',
+            masterSwitch: 'Master Switch',
+            masterSwitchPause: 'Pause every blocking engine without uninstalling the script.',
+            masterSwitchResume: 'Resume blocking instantly with your saved settings intact.',
+            toggleProtection: 'Toggle YoutubeAdblock protection',
+            ruleLibrary: 'Rule Library',
+            diagnostics: 'Diagnostics',
+            currentPage: 'Current Page',
+            currentPageDetail: 'Context for this tab.',
+            recommendedSourceActive: 'Recommended source active.',
+            customSourceActive: 'Custom source active.',
+            lastSync: 'Last Sync',
+            activeRulesDetail: count => `${formatNumber(count)} active rules.`,
+            metrics: {
+                blocked: 'Ads Blocked',
+                pruned: 'Responses Pruned',
+                ssapSkipped: 'SSAP Skips',
+                sponsorSkipped: 'Sponsor Skips',
+                dearrowReplaced: 'DeArrow Replaced',
+                feedFiltered: 'Feed Filtered'
+            },
+            managerSetupWarning: 'Manager Setup Warning',
+            protectionDegraded: 'Protection Degraded',
+            coexistenceDetected: 'Coexistence Detected',
+            degradedBody: (engineList, lockedList, preProxied) => {
+                let body = `Some engines could not fully install: ${engineList}.`;
+                if (lockedList) body += ` Locked natives: ${lockedList}.`;
+                if (preProxied.length) body += ` Pre-proxied by another extension: ${preProxied.join(', ')}.`;
+                return body + ' Another extension or YouTube may have claimed these first. Remaining engines are still active; reloading the page usually wins the race back.';
+            },
+            coexistenceBody: preProxied => `Another extension already hooked: ${preProxied.join(', ')}. YoutubeAdblock replaced them with its own proxies. If you see unexpected behavior, try disabling the other blocker.`,
+            refreshing: 'Refreshing…',
+            refreshRules: 'Refresh Rules',
+            ruleLibraryDescription: 'Choose the source that feeds cosmetic selectors and remote rule updates. YoutubeAdblock keeps your last working rules or the built-in fallback ready if a refresh fails.',
+            sourceUrl: 'Source URL',
+            filterHelpExtension: 'Point this at a raw EasyList or uBO-style source. Extension installs work best with hosts that allow direct browser fetches from YouTube pages.',
+            filterHelpUserscript: 'Point this at a raw EasyList or uBO-style source. Refreshing applies new rules without dropping your current protection.',
+            filterPlaceholder: 'https://example.com/youtube-filters.txt…',
+            invalidFilterUrl: 'Enter a valid http or https URL before refreshing the Rule Library.',
+            useRecommendedSource: 'Use Recommended Source',
+            recommendedSourceToast: 'The recommended Rule Library is active again.',
+            ruleVersionPill: version => `Version ${version || STRINGS.common.unknownShort}`,
+            syncedPill: timestamp => `Synced ${formatTimestamp(timestamp)}`,
+            integrityPill: label => `Integrity ${label}`,
+            rulesPill: count => `${formatNumber(count)} Rules`,
+            selectorsPill: count => `${formatNumber(count)} Selectors`,
+            prunePathsPill: count => `${formatNumber(count)} Prune Paths`,
+            networkOnlyPill: count => `${formatNumber(count)} Network-Only`,
+            unsupportedScriptletsPill: count => `${formatNumber(count)} Unsupported Scriptlets`,
+            refreshProblem: 'Refresh Problem',
+            signatureVerified: 'Signature Verified',
+            verifiedFilterNote: 'The recommended remote list was verified before it replaced your active rules.',
+            unsignedCustomSource: 'Unsigned Custom Source',
+            unsignedCustomNote: 'Custom Rule Library sources are allowed, but they are not verified by the bundled Ed25519 key.',
+            customSourceTitle: 'Custom Source Active',
+            customSourceExtensionNote: 'Keep the source raw text, refresh after edits, and use a host that allows direct browser fetches from YouTube pages.',
+            customSourceUserscriptNote: 'Keep the source raw text and refresh after edits so the new rules load.',
+            recommendedSourceTitle: 'Recommended Source Active',
+            recommendedSourceNote: 'The recommended remote list is live, and the built-in fallback stays ready if the source ever goes offline.',
+            fallbackReady: 'Fallback Ready',
+            fallbackReadyNote: 'Protection is still running with cached or built-in rules. Refresh when you want a newer remote copy.',
+            onPill: (enabled, total) => `${enabled}/${total} On`,
+            unavailableDearrowExtension: 'Unavailable in the extension build: the DeArrow API requires explicit permission for browser extensions. Use the userscript build for this feature.',
+            sponsorAttribution: 'Segment data from SponsorBlock, licensed CC BY-NC-SA 4.0.',
+            sponsorAttributionLink: 'sponsor.ajay.app',
+            enhanceAttribution: 'Title/thumbnail data from DeArrow (CC BY-NC-SA 4.0); dislike counts from Return YouTube Dislike.',
+            dearrowAttributionLink: 'dearrow.ajay.app',
+            rydAttributionLink: 'returnyoutubedislike.com',
+            blocklist: {
+                blockedChannels: 'Blocked Channels',
+                blockedChannelsWhitelistHelp: 'Whitelist mode active: only videos from these channels will be shown. Supports names, UC IDs, @handles, channel URLs, and regex.',
+                blockedChannelsHelp: 'One channel per line. Supports names, UC IDs, @handles, channel URLs, and regex, e.g. /^Exact Channel$/.',
+                blockedKeywords: 'Blocked Keywords',
+                blockedKeywordsHelp: 'One keyword per line. Substring match (case-insensitive). Wrap in /slashes/ for regex, e.g. /sponsor|promo/i.',
+                adAllowedChannels: 'Ad-Allowed Channels',
+                adAllowedChannelsHelp: 'Ads will play on videos from these channels. Supports names, UC IDs, @handles, channel URLs, and regex.',
+                importExport: 'Import / Export',
+                importExportHelp: 'Move blocklists and local settings between installs without changing your cached rule library.',
+                importPlaceholder: 'Paste YoutubeAdblock JSON, BlockTube/FilterTube-style JSON, or plain channel names / @handles / UC IDs. Use keyword: or title: prefixes for keyword text imports.',
+                copyJson: 'Copy JSON',
+                settingsJsonCopied: 'Settings JSON copied.',
+                settingsJsonClipboardFallback: 'Clipboard unavailable. JSON is in the import box.',
+                copyChannelText: 'Copy Channel Text',
+                channelBlocklistCopied: 'Channel blocklist copied.',
+                channelClipboardFallback: 'Clipboard unavailable. Channel text is in the import box.',
+                importJson: 'Import JSON',
+                importedSettings: count => `Imported ${count} settings.`,
+                importChannelText: 'Import Channel Text',
+                channelBlocklistImported: 'Channel blocklist imported.',
+                importMigration: 'Import Migration',
+                rejectedEntries: items => `Rejected entries:\n${items.join('\n')}`,
+                migrationImported: (channels, keywords, rejectedCount) => `Migration imported ${channels} channel and ${keywords} keyword entries${rejectedCount ? `; ${rejectedCount} rejected.` : '.'}`,
+                migrationNoSupportedEntries: 'Migration import did not find supported channel or keyword entries.',
+                importJsonParseError: 'Import JSON could not be parsed.',
+                importJsonNoSupportedSettings: 'Import JSON did not contain supported YoutubeAdblock settings.',
+                durationTitle: 'Duration Filter (seconds)',
+                durationHelp: 'Hide videos shorter than min or longer than max. Leave blank to skip.',
+                minPlaceholder: 'Min (sec)',
+                maxPlaceholder: 'Max (sec)'
+            },
+            diagnosticsSection: {
+                title: 'Diagnostics & Recovery',
+                description: 'Copy a clean snapshot for bug reports or reset local state without reinstalling the script.',
+                installTiming: 'Install Timing',
+                installTimingHelp: 'Separate userscript-manager setup problems from YouTube rule breakage before changing settings.',
+                shareSnapshot: 'Share a Snapshot',
+                shareSnapshotHelp: 'Copy the active Rule Library, module states, counters, and environment details, then open the repo issue tracker with clean context.',
+                copyDiagnostics: 'Copy Diagnostics',
+                openIssues: 'Open Issues',
+                resetLocalState: 'Reset Local State',
+                resetLocalStateHelp: 'Reset counters or restore the recommended defaults without reinstalling. Your cached rule library stays ready.',
+                localOnly: 'Local Only',
+                localOnlyHelp: 'These actions change only local settings and counters. They do not remove the script or erase your current cached rules.',
+                resetCounters: 'Reset Counters',
+                confirmReset: 'Confirm Reset',
+                countersReset: 'Session counters reset.',
+                restoreDefaults: 'Restore Defaults',
+                confirmRestore: 'Confirm Restore',
+                defaultsRestored: 'Recommended defaults restored. Your current rules stayed in place.'
+            },
+            searchEmptyTitle: 'No Matching Settings',
+            searchEmptyBody: query => `Nothing matches "${query}". Try terms like "rule", "shorts", "sponsor", or "reset".`,
+            armedAction: label => `${label} is armed. Click again to confirm.`,
+            featureToggle: (label, enabled) => `${label} ${enabled ? 'enabled' : 'disabled'}.`,
+            protectionResumed: 'Protection resumed across every engine.',
+            protectionPausedToast: 'Protection paused. YoutubeAdblock stays installed and ready to resume.',
+            diagnosticsCopied: 'Diagnostics copied. You can paste them into a bug report or note.',
+            diagnosticsClipboardFailed: 'Clipboard access was unavailable, so diagnostics could not be copied.',
+            stillLoading: 'Control Center is still loading. Try again in a moment.',
+            loadedLate: hint => `YoutubeAdblock loaded late. Open Diagnostics for setup steps. ${hint}`,
+            activeToast: hint => `YoutubeAdblock is active. ${hint}`,
+            youtubeChanged: 'YouTube may have changed its ad delivery. Try refreshing rules from the Control Center.'
+        },
+        featureGroups: {
+            core: {
+                title: 'Core Blocking',
+                description: 'Intercept the network and data paths that carry ad payloads before YouTube can render them.',
+                features: {
+                    jsonParsePrune: {
+                        label: 'JSON response pruning',
+                        desc: 'Removes ad payloads from parsed player responses before they are consumed.'
+                    },
+                    fetchIntercept: {
+                        label: 'fetch() interception',
+                        desc: 'Applies pruning to player and browse requests handled through fetch().'
+                    },
+                    xhrIntercept: {
+                        label: 'XMLHttpRequest interception',
+                        desc: 'Catches older request paths that still deliver ad-related responses.'
+                    },
+                    setUndefinedTraps: {
+                        label: 'Initial property traps',
+                        desc: 'Keeps early ad-related player properties undefined during first-page hydration.'
+                    }
+                }
+            },
+            anti: {
+                title: 'Anti-Detection',
+                description: 'Reduce the odds of YouTube detecting, rehydrating, or bypassing the protections already in place.',
+                features: {
+                    abnormalityBypass: {
+                        label: 'Abnormality callback bypass',
+                        desc: 'Neutralizes callbacks that flag ad blocking as abnormal behavior.'
+                    },
+                    domBypassPrevention: {
+                        label: 'Iframe bypass prevention',
+                        desc: 'Stops clean iframe contexts from restoring unmodified browser APIs.'
+                    },
+                    requestBodyModify: {
+                        label: 'No-ad request signal',
+                        desc: 'Marks outbound player requests with the inline-playback no-ad flag so YouTube serves no ad payload and no fake-buffering delay. Works on cold loads and in-app navigation.'
+                    },
+                    ssapAutoSkip: {
+                        label: 'SSAP auto-skip',
+                        desc: 'Fast-forwards through stitched server-side ads whenever they are detected.'
+                    },
+                    timerNeutralization: {
+                        label: 'Timer neutralization',
+                        desc: 'Disarms the long timers YouTube uses to validate ad playback.'
+                    },
+                    aggressiveAntiStall: {
+                        label: 'Aggressive anti-stall',
+                        desc: 'Fast-forwards the 17-second bound timers YouTube uses to stall playback when a blocker is suspected.'
+                    },
+                    videoAdFastForward: {
+                        label: 'Video ad fast-forward',
+                        desc: 'If an unskippable ad still plays, mutes it and accelerates playback as a fallback safety net.'
+                    },
+                    nativeToStringMask: {
+                        label: 'Hide proxies from toString',
+                        desc: 'Patches Function.prototype.toString so YouTube cannot detect our hooked natives by source inspection.'
+                    },
+                    serviceWorkerBlock: {
+                        label: 'Block service worker injection',
+                        desc: 'Prevents YouTube from registering a service worker that could bypass our request proxies.'
+                    },
+                    webpackChunkHook: {
+                        label: 'Webpack chunk prune',
+                        desc: 'Rewrites YouTube webpack chunks before execution to strip modules that render ad placements.'
+                    }
+                }
+            },
+            cleanup: {
+                title: 'Interface Cleanup',
+                description: 'Remove the visible clutter that remains after payload blocking has already done the heavy lifting.',
+                features: {
+                    cosmeticHiding: {
+                        label: 'Cosmetic cleanup',
+                        desc: 'Hides promoted shelves, banners, overlays, and remaining ad containers.'
+                    },
+                    upsellBlock: {
+                        label: 'Premium upsell blocking',
+                        desc: 'Suppresses Premium upgrade popups and related prompts.'
+                    },
+                    shortsAdBlock: {
+                        label: 'Shorts ad removal',
+                        desc: 'Removes sponsored entries from Shorts feeds before they appear.'
+                    }
+                }
+            },
+            sponsor: {
+                title: 'Community Sponsor Segments',
+                description: 'Silently jump past sponsor reads, self-promotion, intros, outros, and other crowd-marked segments.',
+                features: {
+                    sponsorBlock: {
+                        label: 'SponsorBlock auto-skip',
+                        desc: 'Uses the SponsorBlock community database to silently skip sponsor, self-promo, intro, outro, interaction, preview, music-off-topic, and filler segments. No notifications.'
+                    }
+                }
+            },
+            enhance: {
+                title: 'Experience Enhancements',
+                description: 'Player, metadata, and audio tweaks that make watching nicer once the ads are gone.',
+                features: {
+                    dearrow: {
+                        label: 'DeArrow titles & thumbnails',
+                        desc: 'Replaces clickbait titles and thumbnails with crowd-submitted alternatives via the privacy-preserving DeArrow hash-prefix API.'
+                    },
+                    returnYoutubeDislike: {
+                        label: 'Return YouTube Dislike',
+                        desc: 'Restores the public dislike count under the like button using the Return YouTube Dislike archive.'
+                    },
+                    forceOriginalAudio: {
+                        label: 'Force original audio',
+                        desc: 'Switches back to the original-language audio track when YouTube defaults to an auto-dubbed or translated track.'
+                    },
+                    volumeBoost: {
+                        label: 'Volume boost (up to 5x)',
+                        desc: 'Adds a gain slider under the player so you can amplify quiet videos past the browser\u2019s 100% ceiling.'
+                    }
+                }
+            },
+            clutter: {
+                title: 'Clutter-Free Mode',
+                description: 'Hide the parts of YouTube you never want to see. Selectors only — the engine stays in charge of ads.',
+                features: {
+                    hideHomeFeed: {
+                        label: 'Hide home feed',
+                        desc: 'Clears the infinite scroll on the YouTube homepage and shows the empty-state layout instead.'
+                    },
+                    hideShortsShelf: {
+                        label: 'Hide Shorts shelves',
+                        desc: 'Removes Shorts carousels from the home, subscriptions, search, and channel surfaces.'
+                    },
+                    hideShortsTab: {
+                        label: 'Hide Shorts nav entries',
+                        desc: 'Removes the Shorts sidebar entry, chip, and navigation destination.'
+                    },
+                    hideRelated: {
+                        label: 'Hide related videos',
+                        desc: 'Clears the up-next/suggested rail on the watch page.'
+                    },
+                    hideComments: {
+                        label: 'Hide comments',
+                        desc: 'Collapses the comment section on watch pages.'
+                    },
+                    hideEndScreen: {
+                        label: 'Hide end-screen cards',
+                        desc: 'Suppresses the card and "more videos" overlay that appears at the end of a video.'
+                    },
+                    hideLiveChat: {
+                        label: 'Hide live chat',
+                        desc: 'Removes the live-stream chat panel from watch pages.'
+                    },
+                    hideMerch: {
+                        label: 'Hide merch shelves',
+                        desc: 'Hides merchandise, ticket, and shopping shelves below videos.'
+                    },
+                    hideMembersOnly: {
+                        label: 'Hide members-only videos',
+                        desc: 'Removes videos with a Members badge from feeds so free-tier users never see paywalled content.'
+                    },
+                    hideSponsoredComments: {
+                        label: 'Hide sponsored comments & affiliate links',
+                        desc: 'Hides sponsor-badged comments and common affiliate redirect links in video descriptions.'
+                    }
+                }
+            },
+            blocklist: {
+                title: 'Channels & Keywords',
+                description: 'Quietly remove videos from the feed when the channel or title matches your rules. Lists live locally only.',
+                features: {
+                    shortsRedirect: {
+                        label: 'Redirect Shorts to /watch',
+                        desc: 'Rewrites any /shorts/VIDEO_ID URL into the regular watch page so the full player is always used.'
+                    },
+                    channelBlocker: {
+                        label: 'Channel blocklist',
+                        desc: 'Drops videos from your blocked-channel list out of every feed. Manage the list via the text area below.'
+                    },
+                    keywordBlocker: {
+                        label: 'Keyword blocklist',
+                        desc: 'Drops videos whose title matches one of your blocked keywords (one per line, case-insensitive).'
+                    },
+                    whitelistMode: {
+                        label: 'Whitelist mode',
+                        desc: 'Inverts the channel list: only show videos from listed channels, hide everything else.'
+                    },
+                    durationFilter: {
+                        label: 'Duration filter',
+                        desc: 'Hides videos shorter or longer than your thresholds. Set via the fields below.'
+                    },
+                    adAllowlist: {
+                        label: 'Per-channel ad allowlist',
+                        desc: 'Skips ad pruning for listed channels so their ads play normally. Supports creator sponsorship.'
+                    }
+                }
+            }
+        },
+        diagnosticsReport: {
+            captured: 'Captured',
+            site: 'Site',
+            surface: 'Surface',
+            build: 'Build',
+            extension: 'extension',
+            userscript: 'userscript',
+            ua: 'UA',
+            injectionStatus: 'Injection status',
+            injectionReadyState: 'Injection readyState',
+            injectionElapsed: 'Injection elapsed',
+            injectionGuidance: 'Injection guidance',
+            protectionEnabled: 'Protection enabled',
+            filterSource: 'Filter source',
+            filterIntegrity: 'Filter integrity',
+            filterIntegrityDetail: 'Filter integrity detail',
+            filterUrl: 'Filter URL',
+            filterVersion: 'Filter version',
+            lastSync: 'Last sync',
+            lastError: 'Last error',
+            rulesActive: 'Rules active',
+            pruneKeys: 'Prune keys',
+            cosmeticSelectors: 'Cosmetic selectors',
+            interceptPatterns: 'Intercept patterns',
+            appliedSelectors: 'Applied selector rules',
+            appliedPrunePaths: 'Applied prune paths',
+            networkOnlyRules: 'Network-only filter rules',
+            droppedUnsafeSelectors: 'Dropped unsafe selectors',
+            supportedScriptlets: 'Supported scriptlets',
+            unsupportedScriptlets: 'Unsupported scriptlets',
+            channelBlockEntries: 'Channel block entries',
+            keywordBlockEntries: 'Keyword block entries',
+            adAllowEntries: 'Ad-allow entries',
+            trappedRoots: 'Trapped roots',
+            engineHealth: 'Engine health',
+            lockedNatives: 'Locked natives',
+            preProxied: 'Pre-proxied (another extension)',
+            stats: 'Stats',
+            enabledFeatures: 'Enabled features',
+            disabledFeatures: 'Disabled features'
+        },
+        menu: {
+            openControlCenter: 'Open Control Center',
+            pauseProtection: 'Pause Protection',
+            resumeProtection: 'Resume Protection',
+            refreshRules: 'Refresh Rules',
+            copyDiagnostics: 'Copy Diagnostics'
+        }
     };
 
     /* =========================================================================
@@ -322,244 +833,97 @@
         }
     };
 
+    const FEATURE_COPY = STRINGS.featureGroups;
+    function featureCopy(groupKey, featureKey) {
+        return FEATURE_COPY[groupKey].features[featureKey];
+    }
+
     const FEATURE_GROUPS = [
         {
             sectionId: SECTION_IDS.core,
-            title: 'Core Blocking',
-            description: 'Intercept the network and data paths that carry ad payloads before YouTube can render them.',
+            title: FEATURE_COPY.core.title,
+            description: FEATURE_COPY.core.description,
             features: [
-                {
-                    key: 'jsonParsePrune',
-                    label: 'JSON response pruning',
-                    desc: 'Removes ad payloads from parsed player responses before they are consumed.'
-                },
-                {
-                    key: 'fetchIntercept',
-                    label: 'fetch() interception',
-                    desc: 'Applies pruning to player and browse requests handled through fetch().'
-                },
-                {
-                    key: 'xhrIntercept',
-                    label: 'XMLHttpRequest interception',
-                    desc: 'Catches older request paths that still deliver ad-related responses.'
-                },
-                {
-                    key: 'setUndefinedTraps',
-                    label: 'Initial property traps',
-                    desc: 'Keeps early ad-related player properties undefined during first-page hydration.'
-                },
+                { key: 'jsonParsePrune', ...featureCopy('core', 'jsonParsePrune') },
+                { key: 'fetchIntercept', ...featureCopy('core', 'fetchIntercept') },
+                { key: 'xhrIntercept', ...featureCopy('core', 'xhrIntercept') },
+                { key: 'setUndefinedTraps', ...featureCopy('core', 'setUndefinedTraps') },
             ]
         },
         {
             sectionId: SECTION_IDS.anti,
-            title: 'Anti-Detection',
-            description: 'Reduce the odds of YouTube detecting, rehydrating, or bypassing the protections already in place.',
+            title: FEATURE_COPY.anti.title,
+            description: FEATURE_COPY.anti.description,
             features: [
-                {
-                    key: 'abnormalityBypass',
-                    label: 'Abnormality callback bypass',
-                    desc: 'Neutralizes callbacks that flag ad blocking as abnormal behavior.'
-                },
-                {
-                    key: 'domBypassPrevention',
-                    label: 'Iframe bypass prevention',
-                    desc: 'Stops clean iframe contexts from restoring unmodified browser APIs.'
-                },
-                {
-                    key: 'requestBodyModify',
-                    label: 'No-ad request signal',
-                    desc: 'Marks outbound player requests with the inline-playback no-ad flag so YouTube serves no ad payload and no fake-buffering delay. Works on cold loads and in-app navigation.'
-                },
-                {
-                    key: 'ssapAutoSkip',
-                    label: 'SSAP auto-skip',
-                    desc: 'Fast-forwards through stitched server-side ads whenever they are detected.'
-                },
-                {
-                    key: 'timerNeutralization',
-                    label: 'Timer neutralization',
-                    desc: 'Disarms the long timers YouTube uses to validate ad playback.'
-                },
-                {
-                    key: 'aggressiveAntiStall',
-                    label: 'Aggressive anti-stall',
-                    desc: 'Fast-forwards the 17-second bound timers YouTube uses to stall playback when a blocker is suspected.'
-                },
-                {
-                    key: 'videoAdFastForward',
-                    label: 'Video ad fast-forward',
-                    desc: 'If an unskippable ad still plays, mutes it and accelerates playback as a fallback safety net.'
-                },
-                {
-                    key: 'nativeToStringMask',
-                    label: 'Hide proxies from toString',
-                    desc: 'Patches Function.prototype.toString so YouTube cannot detect our hooked natives by source inspection.'
-                },
-                {
-                    key: 'serviceWorkerBlock',
-                    label: 'Block service worker injection',
-                    desc: 'Prevents YouTube from registering a service worker that could bypass our request proxies.'
-                },
-                {
-                    key: 'webpackChunkHook',
-                    label: 'Webpack chunk prune',
-                    desc: 'Rewrites YouTube webpack chunks before execution to strip modules that render ad placements.'
-                }
+                { key: 'abnormalityBypass', ...featureCopy('anti', 'abnormalityBypass') },
+                { key: 'domBypassPrevention', ...featureCopy('anti', 'domBypassPrevention') },
+                { key: 'requestBodyModify', ...featureCopy('anti', 'requestBodyModify') },
+                { key: 'ssapAutoSkip', ...featureCopy('anti', 'ssapAutoSkip') },
+                { key: 'timerNeutralization', ...featureCopy('anti', 'timerNeutralization') },
+                { key: 'aggressiveAntiStall', ...featureCopy('anti', 'aggressiveAntiStall') },
+                { key: 'videoAdFastForward', ...featureCopy('anti', 'videoAdFastForward') },
+                { key: 'nativeToStringMask', ...featureCopy('anti', 'nativeToStringMask') },
+                { key: 'serviceWorkerBlock', ...featureCopy('anti', 'serviceWorkerBlock') },
+                { key: 'webpackChunkHook', ...featureCopy('anti', 'webpackChunkHook') }
             ]
         },
         {
             sectionId: SECTION_IDS.cleanup,
-            title: 'Interface Cleanup',
-            description: 'Remove the visible clutter that remains after payload blocking has already done the heavy lifting.',
+            title: FEATURE_COPY.cleanup.title,
+            description: FEATURE_COPY.cleanup.description,
             features: [
-                {
-                    key: 'cosmeticHiding',
-                    label: 'Cosmetic cleanup',
-                    desc: 'Hides promoted shelves, banners, overlays, and remaining ad containers.'
-                },
-                {
-                    key: 'upsellBlock',
-                    label: 'Premium upsell blocking',
-                    desc: 'Suppresses Premium upgrade popups and related prompts.'
-                },
-                {
-                    key: 'shortsAdBlock',
-                    label: 'Shorts ad removal',
-                    desc: 'Removes sponsored entries from Shorts feeds before they appear.'
-                }
+                { key: 'cosmeticHiding', ...featureCopy('cleanup', 'cosmeticHiding') },
+                { key: 'upsellBlock', ...featureCopy('cleanup', 'upsellBlock') },
+                { key: 'shortsAdBlock', ...featureCopy('cleanup', 'shortsAdBlock') }
             ]
         },
         {
             sectionId: SECTION_IDS.sponsor,
-            title: 'Community Sponsor Segments',
-            description: 'Silently jump past sponsor reads, self-promotion, intros, outros, and other crowd-marked segments.',
+            title: FEATURE_COPY.sponsor.title,
+            description: FEATURE_COPY.sponsor.description,
             features: [
-                {
-                    key: 'sponsorBlock',
-                    label: 'SponsorBlock auto-skip',
-                    desc: 'Uses the SponsorBlock community database to silently skip sponsor, self-promo, intro, outro, interaction, preview, music-off-topic, and filler segments. No notifications.'
-                }
+                { key: 'sponsorBlock', ...featureCopy('sponsor', 'sponsorBlock') }
             ]
         },
         {
             sectionId: SECTION_IDS.enhance,
-            title: 'Experience Enhancements',
-            description: 'Player, metadata, and audio tweaks that make watching nicer once the ads are gone.',
+            title: FEATURE_COPY.enhance.title,
+            description: FEATURE_COPY.enhance.description,
             features: [
-                {
-                    key: 'dearrow',
-                    label: 'DeArrow titles & thumbnails',
-                    desc: 'Replaces clickbait titles and thumbnails with crowd-submitted alternatives via the privacy-preserving DeArrow hash-prefix API.'
-                },
-                {
-                    key: 'returnYoutubeDislike',
-                    label: 'Return YouTube Dislike',
-                    desc: 'Restores the public dislike count under the like button using the Return YouTube Dislike archive.'
-                },
-                {
-                    key: 'forceOriginalAudio',
-                    label: 'Force original audio',
-                    desc: 'Switches back to the original-language audio track when YouTube defaults to an auto-dubbed or translated track.'
-                },
-                {
-                    key: 'volumeBoost',
-                    label: 'Volume boost (up to 5x)',
-                    desc: 'Adds a gain slider under the player so you can amplify quiet videos past the browser\u2019s 100% ceiling.'
-                }
+                { key: 'dearrow', ...featureCopy('enhance', 'dearrow') },
+                { key: 'returnYoutubeDislike', ...featureCopy('enhance', 'returnYoutubeDislike') },
+                { key: 'forceOriginalAudio', ...featureCopy('enhance', 'forceOriginalAudio') },
+                { key: 'volumeBoost', ...featureCopy('enhance', 'volumeBoost') }
             ]
         },
         {
             sectionId: SECTION_IDS.clutter,
-            title: 'Clutter-Free Mode',
-            description: 'Hide the parts of YouTube you never want to see. Selectors only — the engine stays in charge of ads.',
+            title: FEATURE_COPY.clutter.title,
+            description: FEATURE_COPY.clutter.description,
             features: [
-                {
-                    key: 'hideHomeFeed',
-                    label: 'Hide home feed',
-                    desc: 'Clears the infinite scroll on the YouTube homepage and shows the empty-state layout instead.'
-                },
-                {
-                    key: 'hideShortsShelf',
-                    label: 'Hide Shorts shelves',
-                    desc: 'Removes Shorts carousels from the home, subscriptions, search, and channel surfaces.'
-                },
-                {
-                    key: 'hideShortsTab',
-                    label: 'Hide Shorts nav entries',
-                    desc: 'Removes the Shorts sidebar entry, chip, and navigation destination.'
-                },
-                {
-                    key: 'hideRelated',
-                    label: 'Hide related videos',
-                    desc: 'Clears the up-next/suggested rail on the watch page.'
-                },
-                {
-                    key: 'hideComments',
-                    label: 'Hide comments',
-                    desc: 'Collapses the comment section on watch pages.'
-                },
-                {
-                    key: 'hideEndScreen',
-                    label: 'Hide end-screen cards',
-                    desc: 'Suppresses the card and "more videos" overlay that appears at the end of a video.'
-                },
-                {
-                    key: 'hideLiveChat',
-                    label: 'Hide live chat',
-                    desc: 'Removes the live-stream chat panel from watch pages.'
-                },
-                {
-                    key: 'hideMerch',
-                    label: 'Hide merch shelves',
-                    desc: 'Hides merchandise, ticket, and shopping shelves below videos.'
-                },
-                {
-                    key: 'hideMembersOnly',
-                    label: 'Hide members-only videos',
-                    desc: 'Removes videos with a Members badge from feeds so free-tier users never see paywalled content.'
-                },
-                {
-                    key: 'hideSponsoredComments',
-                    label: 'Hide sponsored comments & affiliate links',
-                    desc: 'Hides sponsor-badged comments and common affiliate redirect links in video descriptions.'
-                }
+                { key: 'hideHomeFeed', ...featureCopy('clutter', 'hideHomeFeed') },
+                { key: 'hideShortsShelf', ...featureCopy('clutter', 'hideShortsShelf') },
+                { key: 'hideShortsTab', ...featureCopy('clutter', 'hideShortsTab') },
+                { key: 'hideRelated', ...featureCopy('clutter', 'hideRelated') },
+                { key: 'hideComments', ...featureCopy('clutter', 'hideComments') },
+                { key: 'hideEndScreen', ...featureCopy('clutter', 'hideEndScreen') },
+                { key: 'hideLiveChat', ...featureCopy('clutter', 'hideLiveChat') },
+                { key: 'hideMerch', ...featureCopy('clutter', 'hideMerch') },
+                { key: 'hideMembersOnly', ...featureCopy('clutter', 'hideMembersOnly') },
+                { key: 'hideSponsoredComments', ...featureCopy('clutter', 'hideSponsoredComments') }
             ]
         },
         {
             sectionId: SECTION_IDS.blocklist,
-            title: 'Channels & Keywords',
-            description: 'Quietly remove videos from the feed when the channel or title matches your rules. Lists live locally only.',
+            title: FEATURE_COPY.blocklist.title,
+            description: FEATURE_COPY.blocklist.description,
             features: [
-                {
-                    key: 'shortsRedirect',
-                    label: 'Redirect Shorts to /watch',
-                    desc: 'Rewrites any /shorts/VIDEO_ID URL into the regular watch page so the full player is always used.'
-                },
-                {
-                    key: 'channelBlocker',
-                    label: 'Channel blocklist',
-                    desc: 'Drops videos from your blocked-channel list out of every feed. Manage the list via the text area below.'
-                },
-                {
-                    key: 'keywordBlocker',
-                    label: 'Keyword blocklist',
-                    desc: 'Drops videos whose title matches one of your blocked keywords (one per line, case-insensitive).'
-                },
-                {
-                    key: 'whitelistMode',
-                    label: 'Whitelist mode',
-                    desc: 'Inverts the channel list: only show videos from listed channels, hide everything else.'
-                },
-                {
-                    key: 'durationFilter',
-                    label: 'Duration filter',
-                    desc: 'Hides videos shorter or longer than your thresholds. Set via the fields below.'
-                },
-                {
-                    key: 'adAllowlist',
-                    label: 'Per-channel ad allowlist',
-                    desc: 'Skips ad pruning for listed channels so their ads play normally. Supports creator sponsorship.'
-                }
+                { key: 'shortsRedirect', ...featureCopy('blocklist', 'shortsRedirect') },
+                { key: 'channelBlocker', ...featureCopy('blocklist', 'channelBlocker') },
+                { key: 'keywordBlocker', ...featureCopy('blocklist', 'keywordBlocker') },
+                { key: 'whitelistMode', ...featureCopy('blocklist', 'whitelistMode') },
+                { key: 'durationFilter', ...featureCopy('blocklist', 'durationFilter') },
+                { key: 'adAllowlist', ...featureCopy('blocklist', 'adAllowlist') }
             ]
         }
     ];
@@ -579,7 +943,7 @@
         filterSyncing: false,
         filterError: '',
         filterIntegrity: 'built-in',
-        filterIntegrityMessage: 'Built-in fallback rules are bundled with the script.',
+        filterIntegrityMessage: STRINGS.filters.builtInIntegrityMessage,
         filterRequestPromise: null,
         filterRequestId: 0,
         activeFilterRequestUrl: '',
@@ -715,12 +1079,12 @@
                 ? 'cached'
                 : 'stale';
             state.filterIntegrity = cachedIntegrity || 'cached';
-            state.filterIntegrityMessage = cachedIntegrityMessage || 'Cached rules are active; refresh to re-check signature status.';
+            state.filterIntegrityMessage = cachedIntegrityMessage || STRINGS.filters.cachedIntegrityMessage;
         } else {
             state.filters = DEFAULT_FILTERS;
             state.filterSource = 'built-in';
             state.filterIntegrity = 'built-in';
-            state.filterIntegrityMessage = 'Built-in fallback rules are bundled with the script.';
+            state.filterIntegrityMessage = STRINGS.filters.builtInIntegrityMessage;
             // Discard any malformed cache so a subsequent successful fetch
             // starts clean rather than layering onto corrupt data.
             try {
@@ -809,7 +1173,7 @@
     }
 
     function formatTimestamp(timestamp) {
-        if (!timestamp) return 'Not synced yet';
+        if (!timestamp) return STRINGS.common.notSyncedYet;
         if (!_dateFormatter) {
             try {
                 _dateFormatter = new Intl.DateTimeFormat(undefined, {
@@ -831,40 +1195,40 @@
 
     function getSiteLabel() {
         const host = (location.hostname || '').toLowerCase();
-        if (host === 'music.youtube.com') return 'YouTube Music';
-        if (host === 'tv.youtube.com') return 'YouTube TV';
-        if (host === 'm.youtube.com') return 'YouTube Mobile';
-        if (host === 'www.youtube-nocookie.com') return 'YouTube No-Cookie';
-        if (host === 'youtubekids.com' || host === 'www.youtubekids.com') return 'YouTube Kids';
-        return 'YouTube';
+        if (host === 'music.youtube.com') return STRINGS.sites.music;
+        if (host === 'tv.youtube.com') return STRINGS.sites.tv;
+        if (host === 'm.youtube.com') return STRINGS.sites.mobile;
+        if (host === 'www.youtube-nocookie.com') return STRINGS.sites.noCookie;
+        if (host === 'youtubekids.com' || host === 'www.youtubekids.com') return STRINGS.sites.kids;
+        return STRINGS.sites.youtube;
     }
 
     function getSurfaceLabel() {
         try {
             const pathname = location.pathname || '/';
-            if (pathname === '/watch') return 'Watch Page';
-            if (pathname.startsWith('/shorts')) return 'Shorts Feed';
-            if (pathname.startsWith('/results')) return 'Search Results';
-            if (pathname.startsWith('/playlist')) return 'Playlist';
-            if (pathname.startsWith('/feed/subscriptions')) return 'Subscriptions';
-            if (pathname.startsWith('/feed/history')) return 'History';
-            if (pathname.startsWith('/feed/library')) return 'Library';
-            if (pathname.startsWith('/channel') || pathname.startsWith('/@') || pathname.startsWith('/c/')) return 'Channel';
-            if (pathname.startsWith('/live')) return 'Live Stream';
-            if (pathname.startsWith('/browse')) return 'Browse';
-            if (pathname === '/' || pathname === '') return 'Home';
+            if (pathname === '/watch') return STRINGS.surfaces.watch;
+            if (pathname.startsWith('/shorts')) return STRINGS.surfaces.shorts;
+            if (pathname.startsWith('/results')) return STRINGS.surfaces.search;
+            if (pathname.startsWith('/playlist')) return STRINGS.surfaces.playlist;
+            if (pathname.startsWith('/feed/subscriptions')) return STRINGS.surfaces.subscriptions;
+            if (pathname.startsWith('/feed/history')) return STRINGS.surfaces.history;
+            if (pathname.startsWith('/feed/library')) return STRINGS.surfaces.library;
+            if (pathname.startsWith('/channel') || pathname.startsWith('/@') || pathname.startsWith('/c/')) return STRINGS.surfaces.channel;
+            if (pathname.startsWith('/live')) return STRINGS.surfaces.live;
+            if (pathname.startsWith('/browse')) return STRINGS.surfaces.browse;
+            if (pathname === '/' || pathname === '') return STRINGS.surfaces.home;
         } catch (e) { /* ignore */ }
-        return 'Current Page';
+        return STRINGS.surfaces.current;
     }
 
     function getControlCenterAccessLabel() {
-        return IS_EXTENSION_BUILD ? 'Toolbar Button' : 'Userscript Menu';
+        return IS_EXTENSION_BUILD ? STRINGS.access.toolbarButton : STRINGS.access.userscriptMenu;
     }
 
     function getControlCenterAccessHint() {
         return IS_EXTENSION_BUILD
-            ? 'Click the toolbar button from any YouTube tab. Optional shortcuts can be bound in browser extension settings.'
-            : 'Open the Control Center from your userscript manager menu any time.';
+            ? STRINGS.access.extensionHint
+            : STRINGS.access.userscriptHint;
     }
 
     function normalizeSettingsQuery(value) {
@@ -902,13 +1266,7 @@
     }
 
     function getFilterSourceLabel(source = state.filterSource) {
-        const labels = {
-            remote: 'Remote list',
-            cached: 'Cached list',
-            stale: 'Cached list (stale)',
-            'built-in': 'Built-in fallback'
-        };
-        return labels[source] || 'Custom source';
+        return STRINGS.filters.sourceLabels[source] || STRINGS.filters.sourceLabels.custom;
     }
 
     function getFilterSourceTone(source = state.filterSource) {
@@ -927,17 +1285,17 @@
     function getFilterIntegrityLabel() {
         switch (state.filterIntegrity) {
             case 'verified':
-                return 'Verified';
+                return STRINGS.filters.integrityLabels.verified;
             case 'unsigned-custom':
-                return 'Unsigned Custom';
+                return STRINGS.filters.integrityLabels['unsigned-custom'];
             case 'failed':
-                return 'Verification Failed';
+                return STRINGS.filters.integrityLabels.failed;
             case 'cached':
-                return 'Cached';
+                return STRINGS.filters.integrityLabels.cached;
             case 'built-in':
-                return 'Built-In';
+                return STRINGS.filters.integrityLabels['built-in'];
             default:
-                return 'Unknown';
+                return STRINGS.filters.integrityLabels.unknown;
         }
     }
 
@@ -983,19 +1341,11 @@
 
     function getProtectionSummary() {
         if (!isEnabled()) {
-            return {
-                label: 'Paused',
-                tone: 'warn',
-                description: 'Every blocking engine is paused until you turn protection back on.'
-            };
+            return STRINGS.protectionSummary.paused;
         }
 
         if (state.filterSyncing) {
-            return {
-                label: 'Refreshing…',
-                tone: 'info',
-                description: 'Pulling the latest rule set while keeping your current protection active.'
-            };
+            return STRINGS.protectionSummary.refreshing;
         }
 
         if (state.filterError) {
@@ -1008,37 +1358,37 @@
 
         if (state.filterSource === 'remote') {
             return {
-                label: 'Protected',
+                label: STRINGS.protectionSummary.protected,
                 tone: 'success',
-                description: 'Remote rules are live and the fallback remains ready if the source goes away.'
+                description: STRINGS.protectionSummary.remoteDescription
             };
         }
 
         if (state.filterSource === 'cached') {
             return {
-                label: 'Protected',
+                label: STRINGS.protectionSummary.protected,
                 tone: 'info',
-                description: 'Cached rules are active while YoutubeAdblock waits for a fresher remote copy.'
+                description: STRINGS.protectionSummary.cachedDescription
             };
         }
 
         if (state.filterSource === 'stale') {
             return {
-                label: 'Protected',
+                label: STRINGS.protectionSummary.protected,
                 tone: 'info',
-                description: 'Previously saved rules are active while YoutubeAdblock refreshes in the background.'
+                description: STRINGS.protectionSummary.staleDescription
             };
         }
 
         return {
-            label: 'Protected',
+            label: STRINGS.protectionSummary.protected,
             tone: 'success',
-            description: 'Built-in rules are active, so protection still works even without a remote list.'
+            description: STRINGS.protectionSummary.builtInDescription
         };
     }
 
     function getInjectionTimingStatus() {
-        const readyState = SCRIPT_EVAL_READY_STATE || 'unknown';
+        const readyState = SCRIPT_EVAL_READY_STATE || STRINGS.common.unknown;
         const elapsedMs = Number.isFinite(SCRIPT_EVAL_ELAPSED_MS) ? SCRIPT_EVAL_ELAPSED_MS : null;
         const lateByReadyState = readyState !== 'loading' && readyState !== 'unknown';
         const lateByTime = elapsedMs !== null && elapsedMs > LATE_INJECTION_THRESHOLD_MS;
@@ -1047,23 +1397,25 @@
 
         if (!likelyLate) {
             return {
-                title: 'Document-start confirmed',
+                title: STRINGS.injectionTiming.confirmedTitle,
                 tone: 'success',
                 likelyLate: false,
                 readyState,
                 elapsedMs,
-                description: `YoutubeAdblock evaluated while the document was ${readyState} (${elapsedText}), so manager setup looks correct. If ads still appear, refresh rules or check engine health instead of reinstalling.`
+                description: STRINGS.injectionTiming.confirmedDescription(readyState, elapsedText)
             };
         }
 
-        const product = IS_EXTENSION_BUILD ? 'extension content script' : 'userscript manager';
+        const product = IS_EXTENSION_BUILD
+            ? STRINGS.injectionTiming.extensionProduct
+            : STRINGS.injectionTiming.userscriptProduct;
         return {
-            title: 'Late injection suspected',
+            title: STRINGS.injectionTiming.lateTitle,
             tone: 'warn',
             likelyLate: true,
             readyState,
             elapsedMs,
-            description: `YoutubeAdblock evaluated after document-start (${readyState}, ${elapsedText}). This usually points to ${product} setup, such as Chrome's "Allow User Scripts" toggle, a disabled manager, or a manager that missed @run-at document-start. Reload YouTube after fixing setup; rule refreshes cannot recover player responses that loaded before the script.`
+            description: STRINGS.injectionTiming.lateDescription(readyState, elapsedText, product)
         };
     }
 
@@ -1523,7 +1875,7 @@
 
     async function sha256Base64Url(text) {
         if (!crypto?.subtle || typeof TextEncoder !== 'function') {
-            throw new Error('WebCrypto SHA-256 is unavailable.');
+            throw new Error(STRINGS.filters.webCryptoShaUnavailable);
         }
         const bytes = new TextEncoder().encode(normalizeFilterTextForSignature(text));
         const digest = await crypto.subtle.digest('SHA-256', bytes);
@@ -1547,7 +1899,7 @@
 
     async function verifyEd25519Signature(text, signatureBase64, publicKeyBase64 = FILTER_PUBLIC_KEY_BASE64) {
         if (!crypto?.subtle || typeof TextEncoder !== 'function') {
-            throw new Error('WebCrypto Ed25519 verification is unavailable.');
+            throw new Error(STRINGS.filters.webCryptoEd25519Unavailable);
         }
         const key = await crypto.subtle.importKey(
             'spki',
@@ -1576,12 +1928,12 @@
                     resolve(resp.responseText || '');
                 },
                 onerror() {
-                    const err = new Error('Remote filter request failed.');
+                    const err = new Error(STRINGS.filters.remoteRequestFailed);
                     err.retryMirror = true;
                     reject(err);
                 },
                 ontimeout() {
-                    const err = new Error('Remote filter request timed out.');
+                    const err = new Error(STRINGS.filters.remoteRequestTimedOut);
                     err.retryMirror = true;
                     reject(err);
                 }
@@ -1595,12 +1947,12 @@
             return {
                 text,
                 integrity: 'unsigned-custom',
-                message: 'Custom Rule Library source loaded without signature verification.'
+                message: STRINGS.filters.customSourceLoadedWithoutSignature
             };
         }
 
         const companions = getSignedFilterCompanionUrls(fetchUrl);
-        if (!companions) throw new Error('Signed filter companion URLs are unavailable.');
+        if (!companions) throw new Error(STRINGS.filters.signedCompanionsUnavailable);
         const manifestRaw = await gmFetchText(addCacheBust(companions.manifestUrl));
         let manifest;
         try {
@@ -1608,21 +1960,21 @@
         } catch (e) {
             manifest = null;
         }
-        if (!manifest) throw new Error('Signed filter manifest is invalid.');
+        if (!manifest) throw new Error(STRINGS.filters.signedManifestInvalid);
 
         const canonicalText = normalizeFilterTextForSignature(text);
         const expectedBytes = new TextEncoder().encode(canonicalText).length;
-        if (manifest.bytes !== expectedBytes) throw new Error('Signed filter byte count does not match the downloaded list.');
+        if (manifest.bytes !== expectedBytes) throw new Error(STRINGS.filters.signedByteMismatch);
         const digest = await sha256Base64Url(canonicalText);
-        if (digest !== manifest.sha256) throw new Error('Signed filter hash does not match the downloaded list.');
+        if (digest !== manifest.sha256) throw new Error(STRINGS.filters.signedHashMismatch);
 
         const signature = await gmFetchText(addCacheBust(companions.signatureUrl));
         const verified = await verifyEd25519Signature(canonicalText, signature);
-        if (!verified) throw new Error('Signed filter verification failed.');
+        if (!verified) throw new Error(STRINGS.filters.signedVerificationFailed);
         return {
             text: canonicalText,
             integrity: 'verified',
-            message: `Default Rule Library verified with Ed25519${manifest.updated ? ` (${manifest.updated})` : ''}.`
+            message: STRINGS.filters.defaultVerified(manifest.updated)
         };
     }
 
@@ -1680,8 +2032,8 @@
                     } else {
                         if (isStaleRequest()) { finish(); resolve(state.filters); return; }
                         state.filterError = urls.length > 1
-                            ? 'All filter sources (primary + mirrors) were unreachable. Your current rules stayed active.'
-                            : 'The remote list was unreachable, so YoutubeAdblock stayed on the last known rule set.';
+                            ? STRINGS.filters.allSourcesUnreachable
+                            : STRINGS.filters.remoteUnreachable;
                         finish();
                         resolve(state.filters);
                         refreshSettingsUI(true);
@@ -1693,18 +2045,18 @@
                     try {
                             const text = result.text || '';
                             if (text.length > FILTER_MAX_BYTES) {
-                                throw new Error(`Remote filter list exceeds ${Math.round(FILTER_MAX_BYTES / 1024 / 1024)}MB limit.`);
+                                throw new Error(STRINGS.filters.remoteTooLarge(Math.round(FILTER_MAX_BYTES / 1024 / 1024)));
                             }
 
                             let data;
                             if (text.trimStart().startsWith('{') || text.trimStart().startsWith('[')) {
                                 data = sanitizeFilterPayload(jsonParseRaw(text));
-                                if (!data) throw new Error('Invalid JSON filter schema.');
+                                if (!data) throw new Error(STRINGS.filters.invalidJsonSchema);
                             } else {
                                 data = sanitizeFilterPayload(parseUBOFilterList(text));
                             }
 
-                            if (!data) throw new Error('The remote list produced no usable rules.');
+                            if (!data) throw new Error(STRINGS.filters.noUsableRules);
                             if (isStaleRequest()) { finish(); resolve(state.filters); return; }
                             state.filters = data;
                             state.filterSource = 'remote';
@@ -1731,19 +2083,16 @@
                             resolve(data);
                             refreshSettingsUI(true);
                             const applied = data.filterCount || data.cosmeticSelectors?.length || 0;
-                            const suffix = result.integrity === 'unsigned-custom'
-                                ? ' Unsigned custom source.'
-                                : ' Signature verified.';
-                            showToast(`Rule refresh complete. ${formatNumber(applied)} rules active (${data.version || '?'}).${suffix}`, 'success');
+                            showToast(STRINGS.filters.refreshComplete(applied, data.version, result.integrity), 'success');
                         } catch (e) {
                             console.warn(`[${SCRIPT_NAME}] Filter parse error:`, e);
                             if (isStaleRequest()) { finish(); resolve(state.filters); return; }
                             const detail = e && e.message ? e.message : '';
                             state.filterIntegrity = 'failed';
-                            state.filterIntegrityMessage = detail || 'Remote rules could not be verified or parsed.';
+                            state.filterIntegrityMessage = detail || STRINGS.filters.couldNotVerifyOrParse;
                             state.filterError = detail
-                                ? `Rule library problem: ${detail} Your current rules stayed active.`
-                                : 'The remote list could not be parsed. Your current rules stayed active.';
+                                ? STRINGS.filters.ruleLibraryProblem(detail)
+                                : STRINGS.filters.remoteParseFailed;
                             finish();
                             resolve(state.filters);
                             refreshSettingsUI(true);
@@ -1756,10 +2105,10 @@
                     }
                     console.warn(`[${SCRIPT_NAME}] Filter integrity error:`, e);
                     if (isStaleRequest()) { finish(); resolve(state.filters); return; }
-                    const detail = e && e.message ? e.message : 'Remote rules could not be verified.';
+                    const detail = e && e.message ? e.message : STRINGS.filters.remoteVerificationFailed;
                     state.filterIntegrity = 'failed';
                     state.filterIntegrityMessage = detail;
-                    state.filterError = `Rule library problem: ${detail} Your current rules stayed active.`;
+                    state.filterError = STRINGS.filters.ruleLibraryProblem(detail);
                     finish();
                     resolve(state.filters);
                     refreshSettingsUI(true);
@@ -3006,10 +3355,10 @@
         var btn = document.createElement('button');
         btn.id = 'ytab-highlight-btn';
         btn.className = 'ytp-button';
-        btn.title = 'Jump to highlight (' + Math.floor(hl.time / 60) + ':' + String(Math.floor(hl.time % 60)).padStart(2, '0') + ')';
+        btn.title = STRINGS.sponsorBlock.highlightTitle(Math.floor(hl.time / 60) + ':' + String(Math.floor(hl.time % 60)).padStart(2, '0'));
         btn.setAttribute('aria-label', btn.title);
         btn.style.cssText = 'font-size:12px;font-weight:600;color:#ff0;cursor:pointer;padding:0 6px;line-height:36px;opacity:0.9;';
-        btn.textContent = '★';
+        btn.textContent = STRINGS.sponsorBlock.highlightSymbol;
         btn.addEventListener('click', function() {
             var video = sponsorBlockState.video || document.querySelector('video.html5-main-video');
             if (video && Number.isFinite(hl.time)) {
@@ -3640,7 +3989,7 @@
             }
             chip.textContent = label;
         }
-        try { dislikeBtn.setAttribute('aria-label', `Dislike (${label})`); } catch (e) { /* ignore */ }
+        try { dislikeBtn.setAttribute('aria-label', STRINGS.ryd.dislikeLabel(label)); } catch (e) { /* ignore */ }
     }
 
     function sweepRyd() {
@@ -3909,7 +4258,7 @@
         host.id = `${CSS_PREFIX}-vol-boost`;
         host.style.cssText = 'display:inline-flex;align-items:center;gap:6px;padding:0 8px;color:#fff;font:12px Aptos,system-ui,sans-serif;';
         const tag = document.createElement('span');
-        tag.textContent = 'Boost';
+        tag.textContent = STRINGS.volumeBoost.tag;
         tag.style.opacity = '0.75';
         const slider = document.createElement('input');
         slider.type = 'range';
@@ -3918,7 +4267,7 @@
         slider.step = '0.1';
         slider.value = String(getStoredVolumeBoost());
         slider.style.width = '80px';
-        slider.title = 'YoutubeAdblock volume boost';
+        slider.title = STRINGS.volumeBoost.title;
         const label = document.createElement('span');
         label.textContent = `${Math.round(getStoredVolumeBoost() * 100)}%`;
         slider.addEventListener('input', () => setVolumeBoost(Number(slider.value)));
@@ -4485,12 +4834,6 @@
             document.addEventListener('DOMContentLoaded', () => showToast(msg, safeType), { once: true });
             return;
         }
-        const labels = {
-            info: 'Heads Up',
-            success: 'Updated',
-            error: 'Needs Attention',
-            warn: 'Check This'
-        };
         const region = ensureToastRegion();
         if (!region) return;
 
@@ -4512,7 +4855,7 @@
         const copy = document.createElement('div');
         const title = document.createElement('div');
         title.className = `${CSS_PREFIX}-toast-title`;
-        title.textContent = labels[safeType];
+        title.textContent = STRINGS.toastTitles[safeType];
         const msgSpan = document.createElement('div');
         msgSpan.className = `${CSS_PREFIX}-toast-message`;
         msgSpan.textContent = msg;
@@ -5520,7 +5863,7 @@
 
         const eyebrow = document.createElement('div');
         eyebrow.className = `${CSS_PREFIX}-eyebrow`;
-        eyebrow.textContent = 'Control Center';
+        eyebrow.textContent = STRINGS.ui.controlCenter;
 
         const titleRow = document.createElement('div');
         titleRow.className = `${CSS_PREFIX}-title-row`;
@@ -5539,14 +5882,14 @@
         const description = document.createElement('p');
         description.className = `${CSS_PREFIX}-header-desc`;
         description.id = `${CSS_PREFIX}-dialog-desc`;
-        description.textContent = 'Pause protection, refresh the rule library, and adjust modules without leaving YouTube.';
+        description.textContent = STRINGS.ui.headerDescription;
 
         const searchWrap = document.createElement('div');
         searchWrap.className = `${CSS_PREFIX}-header-search`;
         const searchLabel = document.createElement('label');
         searchLabel.className = `${CSS_PREFIX}-sr-only`;
         searchLabel.setAttribute('for', `${CSS_PREFIX}-settings-search`);
-        searchLabel.textContent = 'Find a setting';
+        searchLabel.textContent = STRINGS.ui.findSetting;
         const searchInput = document.createElement('input');
         searchInput.className = `${CSS_PREFIX}-input ${CSS_PREFIX}-search-input`;
         searchInput.id = `${CSS_PREFIX}-settings-search`;
@@ -5554,10 +5897,10 @@
         searchInput.name = 'settings_search';
         searchInput.autocomplete = 'off';
         searchInput.spellcheck = false;
-        searchInput.placeholder = 'Find a setting…';
+        searchInput.placeholder = STRINGS.ui.findSettingPlaceholder;
         searchInput.value = state.settingsQuery;
         searchInput.setAttribute('aria-controls', `${CSS_PREFIX}-content`);
-        searchInput.setAttribute('aria-label', 'Find a setting');
+        searchInput.setAttribute('aria-label', STRINGS.ui.findSetting);
         // Debounce the search rebuild: every keystroke triggered a full
         // panel re-render (buildContent recreates every section DOM).
         // On a typical query that's a dozen wasted rebuilds in a second,
@@ -5601,14 +5944,14 @@
         const headerRight = document.createElement('div');
         headerRight.className = `${CSS_PREFIX}-header-right`;
 
-        const statusPill = createPill('Protected', 'success');
+        const statusPill = createPill(STRINGS.protectionSummary.protected, 'success');
         statusPill.id = `${CSS_PREFIX}-header-pill`;
 
         const closeBtn = document.createElement('button');
         closeBtn.className = `${CSS_PREFIX}-close`;
         closeBtn.id = `${CSS_PREFIX}-close-btn`;
         closeBtn.type = 'button';
-        closeBtn.setAttribute('aria-label', 'Close the YoutubeAdblock Control Center');
+        closeBtn.setAttribute('aria-label', STRINGS.ui.closeControlCenter);
         closeBtn.textContent = '\u00D7';
 
         headerRight.append(statusPill, closeBtn);
@@ -5631,7 +5974,7 @@
 
         const footerHint = document.createElement('div');
         footerHint.className = `${CSS_PREFIX}-footer-hint`;
-        footerHint.textContent = 'Search or scroll. Changes save instantly. Press Esc to close.';
+        footerHint.textContent = STRINGS.ui.footerHint;
 
         footerMeta.append(footerStatus, footerHint);
         footer.append(footerMeta);
@@ -5689,7 +6032,7 @@
         copy.className = `${CSS_PREFIX}-summary-copy`;
         const title = document.createElement('h2');
         title.className = `${CSS_PREFIX}-summary-title`;
-        title.textContent = isEnabled() ? 'Protection On' : 'Protection Paused';
+        title.textContent = isEnabled() ? STRINGS.ui.protectionOn : STRINGS.ui.protectionPaused;
         const body = document.createElement('p');
         body.className = `${CSS_PREFIX}-summary-text`;
         body.textContent = summary.description;
@@ -5701,15 +6044,15 @@
         controlCopy.className = `${CSS_PREFIX}-summary-control-copy`;
         const controlLabel = document.createElement('p');
         controlLabel.className = `${CSS_PREFIX}-summary-control-label`;
-        controlLabel.textContent = 'Master Switch';
+        controlLabel.textContent = STRINGS.ui.masterSwitch;
         const controlText = document.createElement('p');
         controlText.className = `${CSS_PREFIX}-summary-control-text`;
         controlText.id = `${CSS_PREFIX}-master-toggle-help`;
         controlText.textContent = isEnabled()
-            ? 'Pause every blocking engine without uninstalling the script.'
-            : 'Resume blocking instantly with your saved settings intact.';
+            ? STRINGS.ui.masterSwitchPause
+            : STRINGS.ui.masterSwitchResume;
         controlCopy.append(controlLabel, controlText);
-        const { toggle, input } = createToggleControl(`${CSS_PREFIX}-master-toggle`, isEnabled(), checked => setScriptEnabled(checked), 'Toggle YoutubeAdblock protection');
+        const { toggle, input } = createToggleControl(`${CSS_PREFIX}-master-toggle`, isEnabled(), checked => setScriptEnabled(checked), STRINGS.ui.toggleProtection);
         input.setAttribute('aria-describedby', controlText.id);
         control.append(controlCopy, toggle);
         hero.append(copy, control);
@@ -5717,17 +6060,17 @@
         const facts = document.createElement('div');
         facts.className = `${CSS_PREFIX}-summary-facts`;
         facts.append(
-            createGlanceItem('Current Page', `${getSiteLabel()} · ${getSurfaceLabel()}`, 'Context for this tab.'),
+            createGlanceItem(STRINGS.ui.currentPage, `${getSiteLabel()} · ${getSurfaceLabel()}`, STRINGS.ui.currentPageDetail),
             createGlanceItem(
-                'Rule Library',
+                STRINGS.ui.ruleLibrary,
                 getFilterSourceLabel(),
-                isDefaultFilterUrl() ? 'Recommended source active.' : 'Custom source active.',
+                isDefaultFilterUrl() ? STRINGS.ui.recommendedSourceActive : STRINGS.ui.customSourceActive,
                 getFilterSourceTone()
             ),
             createGlanceItem(
-                'Last Sync',
+                STRINGS.ui.lastSync,
                 formatTimestamp(state.lastFilterUpdate),
-                `${formatNumber(getRuleCount())} active rules.`,
+                STRINGS.ui.activeRulesDetail(getRuleCount()),
                 'neutral'
             )
         );
@@ -5742,17 +6085,17 @@
         metrics.className = `${CSS_PREFIX}-metric-grid`;
         metrics.id = `${CSS_PREFIX}-stats`;
         metrics.append(
-            createMetricTile('Ads Blocked', 'blocked'),
-            createMetricTile('Responses Pruned', 'pruned'),
-            createMetricTile('SSAP Skips', 'ssapSkipped'),
-            createMetricTile('Sponsor Skips', 'sponsorSkipped'),
-            createMetricTile('DeArrow Replaced', 'dearrowReplaced'),
-            createMetricTile('Feed Filtered', 'feedFiltered')
+            createMetricTile(STRINGS.ui.metrics.blocked, 'blocked'),
+            createMetricTile(STRINGS.ui.metrics.pruned, 'pruned'),
+            createMetricTile(STRINGS.ui.metrics.ssapSkipped, 'ssapSkipped'),
+            createMetricTile(STRINGS.ui.metrics.sponsorSkipped, 'sponsorSkipped'),
+            createMetricTile(STRINGS.ui.metrics.dearrowReplaced, 'dearrowReplaced'),
+            createMetricTile(STRINGS.ui.metrics.feedFiltered, 'feedFiltered')
         );
 
         const injectionStatus = getInjectionTimingStatus();
         const injectionNote = injectionStatus.likelyLate
-            ? createNote('Manager Setup Warning', injectionStatus.description, 'warn')
+            ? createNote(STRINGS.ui.managerSetupWarning, injectionStatus.description, 'warn')
             : null;
 
         // Degraded-protection warning. Engines that threw during install or
@@ -5769,34 +6112,30 @@
                 .map(function(pair) { return pair[0] + ' (' + pair[1] + ')'; })
                 .join(', ');
             const lockedList = (state.overrideFailures || []).join(', ');
-            var noteBody = 'Some engines could not fully install: ' + engineList + '.';
-            if (lockedList) noteBody += ' Locked natives: ' + lockedList + '.';
-            if (preProxied.length) noteBody += ' Pre-proxied by another extension: ' + preProxied.join(', ') + '.';
-            noteBody += ' Another extension or YouTube may have claimed these first. Remaining engines are still active; reloading the page usually wins the race back.';
-            healthNote = createNote('Protection Degraded', noteBody, 'warn');
+            healthNote = createNote(STRINGS.ui.protectionDegraded, STRINGS.ui.degradedBody(engineList, lockedList, preProxied), 'warn');
         } else if (preProxied.length) {
             healthNote = createNote(
-                'Coexistence Detected',
-                'Another extension already hooked: ' + preProxied.join(', ') + '. YoutubeAdblock replaced them with its own proxies. If you see unexpected behavior, try disabling the other blocker.',
+                STRINGS.ui.coexistenceDetected,
+                STRINGS.ui.coexistenceBody(preProxied),
                 'info'
             );
         }
 
         const actions = document.createElement('nav');
         actions.className = `${CSS_PREFIX}-summary-actions`;
-        actions.setAttribute('aria-label', 'Quick actions');
+        actions.setAttribute('aria-label', STRINGS.ui.quickActions);
         const quickRefresh = document.createElement('button');
         quickRefresh.className = `${CSS_PREFIX}-btn ${CSS_PREFIX}-btn-primary`;
         quickRefresh.id = `${CSS_PREFIX}-quick-refresh`;
         quickRefresh.type = 'button';
-        setButtonBusy(quickRefresh, state.filterSyncing, 'Refreshing…', 'Refresh Rules');
+        setButtonBusy(quickRefresh, state.filterSyncing, STRINGS.ui.refreshing, STRINGS.ui.refreshRules);
         quickRefresh.addEventListener('click', async () => {
-            setButtonBusy(quickRefresh, true, 'Refreshing…', 'Refresh Rules');
+            setButtonBusy(quickRefresh, true, STRINGS.ui.refreshing, STRINGS.ui.refreshRules);
             await fetchFilters(true);
-            setButtonBusy(quickRefresh, false, 'Refreshing…', 'Refresh Rules');
+            setButtonBusy(quickRefresh, false, STRINGS.ui.refreshing, STRINGS.ui.refreshRules);
         });
-        const libraryJump = createJumpButton('Rule Library', SECTION_IDS.rules);
-        const diagnosticsJump = createJumpButton('Diagnostics', SECTION_IDS.diagnostics);
+        const libraryJump = createJumpButton(STRINGS.ui.ruleLibrary, SECTION_IDS.rules);
+        const diagnosticsJump = createJumpButton(STRINGS.ui.diagnostics, SECTION_IDS.diagnostics);
         actions.append(
             quickRefresh,
             libraryJump,
@@ -5835,8 +6174,8 @@
             return null;
         }
         const section = createSection(
-            'Rule Library',
-            'Choose the source that feeds cosmetic selectors and remote rule updates. YoutubeAdblock keeps your last working rules or the built-in fallback ready if a refresh fails.',
+            STRINGS.ui.ruleLibrary,
+            STRINGS.ui.ruleLibraryDescription,
             createPill(getFilterSourceLabel(), getFilterSourceTone()),
             SECTION_IDS.rules,
             true
@@ -5847,13 +6186,13 @@
         const label = document.createElement('label');
         label.className = `${CSS_PREFIX}-field-label`;
         label.setAttribute('for', `${CSS_PREFIX}-url-input`);
-        label.textContent = 'Source URL';
+        label.textContent = STRINGS.ui.sourceUrl;
         const help = document.createElement('p');
         help.className = `${CSS_PREFIX}-field-help`;
         help.id = `${CSS_PREFIX}-url-help`;
         help.textContent = IS_EXTENSION_BUILD
-            ? 'Point this at a raw EasyList or uBO-style source. Extension installs work best with hosts that allow direct browser fetches from YouTube pages.'
-            : 'Point this at a raw EasyList or uBO-style source. Refreshing applies new rules without dropping your current protection.';
+            ? STRINGS.ui.filterHelpExtension
+            : STRINGS.ui.filterHelpUserscript;
         const row = document.createElement('div');
         row.className = `${CSS_PREFIX}-url-group`;
         const input = document.createElement('input');
@@ -5864,7 +6203,7 @@
         input.autocomplete = 'off';
         input.inputMode = 'url';
         input.spellcheck = false;
-        input.placeholder = 'https://example.com/youtube-filters.txt…';
+        input.placeholder = STRINGS.ui.filterPlaceholder;
         input.setAttribute('aria-describedby', help.id);
         // Prefer an in-flight edit the user hasn't committed yet, otherwise
         // fall back to the persisted value. Settings rebuilds trigger on
@@ -5887,20 +6226,20 @@
         refresh.className = `${CSS_PREFIX}-btn ${CSS_PREFIX}-btn-primary`;
         refresh.id = `${CSS_PREFIX}-refresh-btn`;
         refresh.type = 'button';
-        setButtonBusy(refresh, state.filterSyncing, 'Refreshing…', 'Refresh Rules');
+        setButtonBusy(refresh, state.filterSyncing, STRINGS.ui.refreshing, STRINGS.ui.refreshRules);
         refresh.addEventListener('click', async () => {
             const value = input.value.trim();
             if (!isValidHttpUrl(value)) {
                 input.setAttribute('aria-invalid', 'true');
                 input.focus();
-                showToast('Enter a valid http or https URL before refreshing the Rule Library.', 'warn');
+                showToast(STRINGS.ui.invalidFilterUrl, 'warn');
                 return;
             }
             setSetting('filter_url', value);
             state.pendingFilterUrl = null; // committed
-            setButtonBusy(refresh, true, 'Refreshing…', 'Refresh Rules');
+            setButtonBusy(refresh, true, STRINGS.ui.refreshing, STRINGS.ui.refreshRules);
             await fetchFilters(true);
-            setButtonBusy(refresh, false, 'Refreshing…', 'Refresh Rules');
+            setButtonBusy(refresh, false, STRINGS.ui.refreshing, STRINGS.ui.refreshRules);
         });
         row.append(input, refresh);
         const actions = document.createElement('div');
@@ -5909,7 +6248,7 @@
         reset.className = `${CSS_PREFIX}-btn ${CSS_PREFIX}-btn-secondary ${CSS_PREFIX}-btn-small`;
         reset.id = `${CSS_PREFIX}-use-default-source`;
         reset.type = 'button';
-        reset.textContent = 'Use Recommended Source';
+        reset.textContent = STRINGS.ui.useRecommendedSource;
         reset.addEventListener('click', () => {
             setSetting('filter_url', FILTER_URL_DEFAULT);
             state.pendingFilterUrl = null;
@@ -5917,58 +6256,58 @@
             input.removeAttribute('aria-invalid');
             state.filterError = '';
             refreshSettingsUI(true);
-            showToast('The recommended Rule Library is active again.', 'success');
+            showToast(STRINGS.ui.recommendedSourceToast, 'success');
         });
         const details = document.createElement('div');
         details.className = `${CSS_PREFIX}-chip-row`;
         const coverage = sanitizeFilterCoverage(state.filters?.coverage);
         const unsupportedCount = coverage.unsupportedScriptlets.reduce((sum, item) => sum + item.count, 0);
         details.append(
-            createPill(`Version ${state.filters?.version || '?'}`, 'neutral'),
-            createPill(`Synced ${formatTimestamp(state.lastFilterUpdate)}`, 'neutral'),
-            createPill(`Integrity ${getFilterIntegrityLabel()}`, getFilterIntegrityTone()),
-            createPill(`${formatNumber(getRuleCount())} Rules`, 'neutral'),
-            createPill(`${formatNumber(coverage.appliedSelectors)} Selectors`, 'neutral'),
-            createPill(`${formatNumber(coverage.appliedPrunePaths)} Prune Paths`, 'neutral'),
-            createPill(`${formatNumber(coverage.networkOnlyRules)} Network-Only`, coverage.networkOnlyRules ? 'info' : 'neutral'),
-            createPill(`${formatNumber(unsupportedCount)} Unsupported Scriptlets`, unsupportedCount ? 'warn' : 'neutral')
+            createPill(STRINGS.ui.ruleVersionPill(state.filters?.version), 'neutral'),
+            createPill(STRINGS.ui.syncedPill(state.lastFilterUpdate), 'neutral'),
+            createPill(STRINGS.ui.integrityPill(getFilterIntegrityLabel()), getFilterIntegrityTone()),
+            createPill(STRINGS.ui.rulesPill(getRuleCount()), 'neutral'),
+            createPill(STRINGS.ui.selectorsPill(coverage.appliedSelectors), 'neutral'),
+            createPill(STRINGS.ui.prunePathsPill(coverage.appliedPrunePaths), 'neutral'),
+            createPill(STRINGS.ui.networkOnlyPill(coverage.networkOnlyRules), coverage.networkOnlyRules ? 'info' : 'neutral'),
+            createPill(STRINGS.ui.unsupportedScriptletsPill(unsupportedCount), unsupportedCount ? 'warn' : 'neutral')
         );
         actions.appendChild(reset);
         field.append(label, help, row, actions);
 
         let note;
         if (state.filterError) {
-            note = createNote('Refresh Problem', state.filterError, 'warn');
+            note = createNote(STRINGS.ui.refreshProblem, state.filterError, 'warn');
         } else if (state.filterIntegrity === 'verified') {
             note = createNote(
-                'Signature Verified',
-                state.filterIntegrityMessage || 'The recommended remote list was verified before it replaced your active rules.',
+                STRINGS.ui.signatureVerified,
+                state.filterIntegrityMessage || STRINGS.ui.verifiedFilterNote,
                 'success'
             );
         } else if (state.filterIntegrity === 'unsigned-custom') {
             note = createNote(
-                'Unsigned Custom Source',
-                state.filterIntegrityMessage || 'Custom Rule Library sources are allowed, but they are not verified by the bundled Ed25519 key.',
+                STRINGS.ui.unsignedCustomSource,
+                state.filterIntegrityMessage || STRINGS.ui.unsignedCustomNote,
                 'warn'
             );
         } else if (!isDefaultFilterUrl()) {
             note = createNote(
-                'Custom Source Active',
+                STRINGS.ui.customSourceTitle,
                 IS_EXTENSION_BUILD
-                    ? 'Keep the source raw text, refresh after edits, and use a host that allows direct browser fetches from YouTube pages.'
-                    : 'Keep the source raw text and refresh after edits so the new rules load.',
+                    ? STRINGS.ui.customSourceExtensionNote
+                    : STRINGS.ui.customSourceUserscriptNote,
                 'info'
             );
         } else if (state.filterSource === 'remote') {
             note = createNote(
-                'Recommended Source Active',
-                'The recommended remote list is live, and the built-in fallback stays ready if the source ever goes offline.',
+                STRINGS.ui.recommendedSourceTitle,
+                STRINGS.ui.recommendedSourceNote,
                 'success'
             );
         } else {
             note = createNote(
-                'Fallback Ready',
-                'Protection is still running with cached or built-in rules. Refresh when you want a newer remote copy.',
+                STRINGS.ui.fallbackReady,
+                STRINGS.ui.fallbackReadyNote,
                 'info'
             );
         }
@@ -5992,7 +6331,7 @@
         const section = createSection(
             group.title,
             group.description,
-            createPill(`${enabledCount}/${visibleFeatures.length} On`, getFeatureGroupTone(enabledCount, visibleFeatures.length)),
+            createPill(STRINGS.ui.onPill(enabledCount, visibleFeatures.length), getFeatureGroupTone(enabledCount, visibleFeatures.length)),
             group.sectionId
         );
         const surface = createSurface();
@@ -6005,7 +6344,7 @@
                 ? {
                     ...feat,
                     locked: true,
-                    lockedReason: 'Unavailable in the extension build: the DeArrow API requires explicit permission for browser extensions. Use the userscript build for this feature.'
+                    lockedReason: STRINGS.ui.unavailableDearrowExtension
                 }
                 : feat;
             list.appendChild(createToggleRow(effective));
@@ -6016,16 +6355,16 @@
         // Return YouTube Dislike's usage terms mandate attribution.
         if (group.sectionId === SECTION_IDS.sponsor) {
             surface.appendChild(createAttributionNote(
-                'Segment data from SponsorBlock, licensed CC BY-NC-SA 4.0.',
-                [['sponsor.ajay.app', 'https://sponsor.ajay.app']]
+                STRINGS.ui.sponsorAttribution,
+                [[STRINGS.ui.sponsorAttributionLink, 'https://sponsor.ajay.app']]
             ));
         }
         if (group.sectionId === SECTION_IDS.enhance) {
             surface.appendChild(createAttributionNote(
-                'Title/thumbnail data from DeArrow (CC BY-NC-SA 4.0); dislike counts from Return YouTube Dislike.',
+                STRINGS.ui.enhanceAttribution,
                 [
-                    ['dearrow.ajay.app', 'https://dearrow.ajay.app'],
-                    ['returnyoutubedislike.com', 'https://returnyoutubedislike.com']
+                    [STRINGS.ui.dearrowAttributionLink, 'https://dearrow.ajay.app'],
+                    [STRINGS.ui.rydAttributionLink, 'https://returnyoutubedislike.com']
                 ]
             ));
         }
@@ -6033,21 +6372,21 @@
         // can edit channels and keywords inline without a separate surface.
         if (group.sectionId === SECTION_IDS.blocklist) {
             surface.appendChild(createBlocklistEditor(
-                'Blocked Channels',
+                STRINGS.ui.blocklist.blockedChannels,
                 'channel_blocklist',
                 state.features.whitelistMode
-                    ? 'Whitelist mode active: only videos from these channels will be shown. Supports names, UC IDs, @handles, channel URLs, and regex.'
-                    : 'One channel per line. Supports names, UC IDs, @handles, channel URLs, and regex, e.g. /^Exact Channel$/.'
+                    ? STRINGS.ui.blocklist.blockedChannelsWhitelistHelp
+                    : STRINGS.ui.blocklist.blockedChannelsHelp
             ));
             surface.appendChild(createBlocklistEditor(
-                'Blocked Keywords',
+                STRINGS.ui.blocklist.blockedKeywords,
                 'keyword_blocklist',
-                'One keyword per line. Substring match (case-insensitive). Wrap in /slashes/ for regex, e.g. /sponsor|promo/i.'
+                STRINGS.ui.blocklist.blockedKeywordsHelp
             ));
             surface.appendChild(createBlocklistEditor(
-                'Ad-Allowed Channels',
+                STRINGS.ui.blocklist.adAllowedChannels,
                 'ad_allowlist',
-                'Ads will play on videos from these channels. Supports names, UC IDs, @handles, channel URLs, and regex.'
+                STRINGS.ui.blocklist.adAllowedChannelsHelp
             ));
             surface.appendChild(createDurationFilterEditor());
             surface.appendChild(createBlocklistPortabilityTools());
@@ -6286,19 +6625,19 @@
                     mode: 'migration'
                 };
             }
-            return { ok: false, error: 'Migration import did not find supported channel or keyword entries.', rejected: migrated.rejected };
+            return { ok: false, error: STRINGS.ui.blocklist.migrationNoSupportedEntries, rejected: migrated.rejected };
         }
         var parsed;
         try {
             parsed = JSON.parse(String(raw || ''));
         } catch (e) {
-            return { ok: false, error: 'Import JSON could not be parsed.' };
+            return { ok: false, error: STRINGS.ui.blocklist.importJsonParseError };
         }
         var settings = parsed && typeof parsed === 'object'
             ? (parsed.settings && typeof parsed.settings === 'object' ? parsed.settings : parsed)
             : null;
         var count = applyImportedSettings(settings);
-        if (!count) return { ok: false, error: 'Import JSON did not contain supported YoutubeAdblock settings.' };
+        if (!count) return { ok: false, error: STRINGS.ui.blocklist.importJsonNoSupportedSettings };
         return { ok: true, count, mode: 'json' };
     }
 
@@ -6331,14 +6670,14 @@
 
     function createBlocklistPortabilityTools() {
         const wrap = createActionGroup(
-            'Import / Export',
-            'Move blocklists and local settings between installs without changing your cached rule library.'
+            STRINGS.ui.blocklist.importExport,
+            STRINGS.ui.blocklist.importExportHelp
         );
         const payload = document.createElement('textarea');
         payload.className = `${CSS_PREFIX}-blocklist-textarea`;
         payload.rows = 5;
         payload.spellcheck = false;
-        payload.placeholder = 'Paste YoutubeAdblock JSON, BlockTube/FilterTube-style JSON, or plain channel names / @handles / UC IDs. Use keyword: or title: prefixes for keyword text imports.';
+        payload.placeholder = STRINGS.ui.blocklist.importPlaceholder;
 
         const actions = document.createElement('div');
         actions.className = `${CSS_PREFIX}-btn-row`;
@@ -6346,29 +6685,29 @@
         const copyJson = document.createElement('button');
         copyJson.className = `${CSS_PREFIX}-btn ${CSS_PREFIX}-btn-secondary`;
         copyJson.type = 'button';
-        copyJson.textContent = 'Copy JSON';
+        copyJson.textContent = STRINGS.ui.blocklist.copyJson;
         copyJson.addEventListener('click', async () => {
             const text = buildSettingsExportJson();
             payload.value = text;
             const copied = await copyTextToClipboard(text);
-            showToast(copied ? 'Settings JSON copied.' : 'Clipboard unavailable. JSON is in the import box.', copied ? 'success' : 'warn');
+            showToast(copied ? STRINGS.ui.blocklist.settingsJsonCopied : STRINGS.ui.blocklist.settingsJsonClipboardFallback, copied ? 'success' : 'warn');
         });
 
         const copyText = document.createElement('button');
         copyText.className = `${CSS_PREFIX}-btn ${CSS_PREFIX}-btn-secondary`;
         copyText.type = 'button';
-        copyText.textContent = 'Copy Channel Text';
+        copyText.textContent = STRINGS.ui.blocklist.copyChannelText;
         copyText.addEventListener('click', async () => {
             const text = String(getSetting('channel_blocklist', ''));
             payload.value = text;
             const copied = await copyTextToClipboard(text);
-            showToast(copied ? 'Channel blocklist copied.' : 'Clipboard unavailable. Channel text is in the import box.', copied ? 'success' : 'warn');
+            showToast(copied ? STRINGS.ui.blocklist.channelBlocklistCopied : STRINGS.ui.blocklist.channelClipboardFallback, copied ? 'success' : 'warn');
         });
 
         const importJson = document.createElement('button');
         importJson.className = `${CSS_PREFIX}-btn ${CSS_PREFIX}-btn-primary`;
         importJson.type = 'button';
-        importJson.textContent = 'Import JSON';
+        importJson.textContent = STRINGS.ui.blocklist.importJson;
         importJson.addEventListener('click', () => {
             const result = importSettingsPayload(payload.value, 'json');
             if (!result.ok) {
@@ -6379,35 +6718,35 @@
             updateCosmeticCSS();
             updateClutterCSS();
             refreshSettingsUI(true);
-            showToast(`Imported ${result.count} settings.`, 'success');
+            showToast(STRINGS.ui.blocklist.importedSettings(result.count), 'success');
         });
 
         const importText = document.createElement('button');
         importText.className = `${CSS_PREFIX}-btn ${CSS_PREFIX}-btn-secondary`;
         importText.type = 'button';
-        importText.textContent = 'Import Channel Text';
+        importText.textContent = STRINGS.ui.blocklist.importChannelText;
         importText.addEventListener('click', () => {
             const result = importSettingsPayload(payload.value, 'text');
             loadState();
             refreshSettingsUI(true);
-            showToast(result.ok ? 'Channel blocklist imported.' : result.error, result.ok ? 'success' : 'error');
+            showToast(result.ok ? STRINGS.ui.blocklist.channelBlocklistImported : result.error, result.ok ? 'success' : 'error');
         });
 
         const importMigration = document.createElement('button');
         importMigration.className = `${CSS_PREFIX}-btn ${CSS_PREFIX}-btn-secondary`;
         importMigration.type = 'button';
-        importMigration.textContent = 'Import Migration';
+        importMigration.textContent = STRINGS.ui.blocklist.importMigration;
         importMigration.addEventListener('click', () => {
             const result = importSettingsPayload(payload.value, 'migration');
             if (!result.ok) {
-                if (result.rejected && result.rejected.length) payload.value = `Rejected entries:\n${result.rejected.join('\n')}`;
+                if (result.rejected && result.rejected.length) payload.value = STRINGS.ui.blocklist.rejectedEntries(result.rejected);
                 showToast(result.error, 'error');
                 return;
             }
             loadState();
             refreshSettingsUI(true);
-            if (result.rejected && result.rejected.length) payload.value = `Rejected entries:\n${result.rejected.join('\n')}`;
-            showToast(`Migration imported ${result.channels} channel and ${result.keywords} keyword entries${result.rejected && result.rejected.length ? `; ${result.rejected.length} rejected.` : '.'}`, 'success');
+            if (result.rejected && result.rejected.length) payload.value = STRINGS.ui.blocklist.rejectedEntries(result.rejected);
+            showToast(STRINGS.ui.blocklist.migrationImported(result.channels, result.keywords, result.rejected && result.rejected.length), 'success');
         });
 
         actions.append(copyJson, copyText, importJson, importText, importMigration);
@@ -6422,10 +6761,10 @@
         wrap.style.marginTop = '12px';
         const label = document.createElement('label');
         label.className = `${CSS_PREFIX}-field-label`;
-        label.textContent = 'Duration Filter (seconds)';
+        label.textContent = STRINGS.ui.blocklist.durationTitle;
         const helpEl = document.createElement('p');
         helpEl.className = `${CSS_PREFIX}-field-help`;
-        helpEl.textContent = 'Hide videos shorter than min or longer than max. Leave blank to skip.';
+        helpEl.textContent = STRINGS.ui.blocklist.durationHelp;
         const row = document.createElement('div');
         row.style.cssText = 'display:flex;gap:12px;margin-top:6px;';
         function makeInput(key, placeholder) {
@@ -6446,7 +6785,7 @@
             });
             return inp;
         }
-        row.append(makeInput('duration_min', 'Min (sec)'), makeInput('duration_max', 'Max (sec)'));
+        row.append(makeInput('duration_min', STRINGS.ui.blocklist.minPlaceholder), makeInput('duration_max', STRINGS.ui.blocklist.maxPlaceholder));
         wrap.append(label, helpEl, row);
         return wrap;
     }
@@ -6460,8 +6799,8 @@
             return null;
         }
         const section = createSection(
-            'Diagnostics & Recovery',
-            'Copy a clean snapshot for bug reports or reset local state without reinstalling the script.',
+            STRINGS.ui.diagnosticsSection.title,
+            STRINGS.ui.diagnosticsSection.description,
             null,
             SECTION_IDS.diagnostics,
             true
@@ -6472,14 +6811,14 @@
 
         const injectionStatus = getInjectionTimingStatus();
         const setupGroup = createActionGroup(
-            'Install Timing',
-            'Separate userscript-manager setup problems from YouTube rule breakage before changing settings.'
+            STRINGS.ui.diagnosticsSection.installTiming,
+            STRINGS.ui.diagnosticsSection.installTimingHelp
         );
         setupGroup.appendChild(createNote(injectionStatus.title, injectionStatus.description, injectionStatus.tone));
 
         const diagnosticsGroup = createActionGroup(
-            'Share a Snapshot',
-            'Copy the active Rule Library, module states, counters, and environment details, then open the repo issue tracker with clean context.'
+            STRINGS.ui.diagnosticsSection.shareSnapshot,
+            STRINGS.ui.diagnosticsSection.shareSnapshotHelp
         );
         const diagnosticsActions = document.createElement('div');
         diagnosticsActions.className = `${CSS_PREFIX}-btn-row`;
@@ -6487,19 +6826,19 @@
         copyBtn.className = `${CSS_PREFIX}-btn ${CSS_PREFIX}-btn-secondary`;
         copyBtn.id = `${CSS_PREFIX}-copy-btn`;
         copyBtn.type = 'button';
-        copyBtn.textContent = 'Copy Diagnostics';
+        copyBtn.textContent = STRINGS.ui.diagnosticsSection.copyDiagnostics;
         copyBtn.addEventListener('click', copyDiagnosticsToClipboard);
-        const issuesLink = createExternalLinkButton(ISSUES_URL, 'Open Issues', `${CSS_PREFIX}-btn-ghost`);
+        const issuesLink = createExternalLinkButton(ISSUES_URL, STRINGS.ui.diagnosticsSection.openIssues, `${CSS_PREFIX}-btn-ghost`);
         diagnosticsActions.append(copyBtn, issuesLink);
         diagnosticsGroup.appendChild(diagnosticsActions);
 
         const recoveryGroup = createActionGroup(
-            'Reset Local State',
-            'Reset counters or restore the recommended defaults without reinstalling. Your cached rule library stays ready.'
+            STRINGS.ui.diagnosticsSection.resetLocalState,
+            STRINGS.ui.diagnosticsSection.resetLocalStateHelp
         );
         recoveryGroup.appendChild(createNote(
-            'Local Only',
-            'These actions change only local settings and counters. They do not remove the script or erase your current cached rules.',
+            STRINGS.ui.diagnosticsSection.localOnly,
+            STRINGS.ui.diagnosticsSection.localOnlyHelp,
             'info'
         ));
         const recoveryActions = document.createElement('div');
@@ -6508,25 +6847,25 @@
         resetStats.className = `${CSS_PREFIX}-btn ${CSS_PREFIX}-btn-secondary`;
         resetStats.id = `${CSS_PREFIX}-reset-counters`;
         resetStats.type = 'button';
-        resetStats.textContent = 'Reset Counters';
+        resetStats.textContent = STRINGS.ui.diagnosticsSection.resetCounters;
         attachArmedAction(resetStats, {
-            idleLabel: 'Reset Counters',
-            armedLabel: 'Confirm Reset',
+            idleLabel: STRINGS.ui.diagnosticsSection.resetCounters,
+            armedLabel: STRINGS.ui.diagnosticsSection.confirmReset,
             onConfirm() {
                 state.stats = { ...DEFAULT_STATS };
                 saveStats();
                 refreshSettingsUI();
-                showToast('Session counters reset.', 'info');
+                showToast(STRINGS.ui.diagnosticsSection.countersReset, 'info');
             }
         });
         const restore = document.createElement('button');
         restore.className = `${CSS_PREFIX}-btn ${CSS_PREFIX}-btn-danger`;
         restore.id = `${CSS_PREFIX}-restore-defaults`;
         restore.type = 'button';
-        restore.textContent = 'Restore Defaults';
+        restore.textContent = STRINGS.ui.diagnosticsSection.restoreDefaults;
         attachArmedAction(restore, {
-            idleLabel: 'Restore Defaults',
-            armedLabel: 'Confirm Restore',
+            idleLabel: STRINGS.ui.diagnosticsSection.restoreDefaults,
+            armedLabel: STRINGS.ui.diagnosticsSection.confirmRestore,
             onConfirm() {
                 setSetting('feature_overrides', {});
                 setSetting('filter_url', FILTER_URL_DEFAULT);
@@ -6537,7 +6876,7 @@
                 state.filterError = '';
                 updateCosmeticCSS();
                 refreshSettingsUI(true);
-                showToast('Recommended defaults restored. Your current rules stayed in place.', 'success');
+                showToast(STRINGS.ui.diagnosticsSection.defaultsRestored, 'success');
             }
         });
         recoveryActions.append(resetStats, restore);
@@ -6553,8 +6892,8 @@
         section.className = `${CSS_PREFIX}-section ${CSS_PREFIX}-section-span`;
         const surface = createSurface();
         surface.appendChild(createNote(
-            'No Matching Settings',
-            `Nothing matches "${query}". Try terms like "rule", "shorts", "sponsor", or "reset".`,
+            STRINGS.ui.searchEmptyTitle,
+            STRINGS.ui.searchEmptyBody(query),
             'info'
         ));
         section.appendChild(surface);
@@ -6889,7 +7228,7 @@
                 armed = true;
                 button.dataset.armed = 'true';
                 button.textContent = armedLabel;
-                showToast(`${idleLabel} is armed. Click again to confirm.`, 'warn');
+                showToast(STRINGS.ui.armedAction(idleLabel), 'warn');
                 timer = setTimeout(reset, timeout);
                 return;
             }
@@ -6942,7 +7281,7 @@
             try { redirectShortsIfNeeded(); } catch (e) { /* ignore */ }
         }
         refreshSettingsUI(true);
-        showToast(`${label} ${checked ? 'enabled' : 'disabled'}.`, checked ? 'success' : 'warn');
+        showToast(STRINGS.ui.featureToggle(label, checked), checked ? 'success' : 'warn');
     }
 
     function setScriptEnabled(enabled) {
@@ -6953,7 +7292,7 @@
         refreshSettingsUI(true);
         // Refresh menu command labels so Pause/Resume reflects the new state.
         try { registerMenuCommands(); } catch (e) { /* ignore */ }
-        showToast(enabled ? 'Protection resumed across every engine.' : 'Protection paused. YoutubeAdblock stays installed and ready to resume.', enabled ? 'success' : 'warn');
+        showToast(enabled ? STRINGS.ui.protectionResumed : STRINGS.ui.protectionPausedToast, enabled ? 'success' : 'warn');
     }
 
     function setButtonBusy(button, busy, busyLabel, idleLabel) {
@@ -7007,8 +7346,8 @@
         const success = await copyTextToClipboard(buildDiagnosticsReport());
         showToast(
             success
-                ? 'Diagnostics copied. You can paste them into a bug report or note.'
-                : 'Clipboard access was unavailable, so diagnostics could not be copied.',
+                ? STRINGS.ui.diagnosticsCopied
+                : STRINGS.ui.diagnosticsClipboardFailed,
             success ? 'success' : 'error'
         );
         return success;
@@ -7033,65 +7372,66 @@
     }
 
     function formatScriptletCoverage(list) {
-        if (!Array.isArray(list) || !list.length) return 'none';
+        if (!Array.isArray(list) || !list.length) return STRINGS.common.none;
         return list.map(item => `${item.name}=${item.count}`).join(', ');
     }
 
     function buildDiagnosticsReport() {
         const features = normalizeFeatures(state.features);
+        const report = STRINGS.diagnosticsReport;
         const disabledFeatures = Object.entries(features)
             .filter(([, enabled]) => !enabled)
             .map(([key]) => key)
-            .join(', ') || 'none';
+            .join(', ') || STRINGS.common.none;
         const enabledFeatures = Object.entries(features)
             .filter(([, enabled]) => enabled)
             .map(([key]) => key)
-            .join(', ') || 'none';
+            .join(', ') || STRINGS.common.none;
         const trappedRoots = state.trappedRoots && state.trappedRoots.size
             ? [...state.trappedRoots].join(', ')
-            : 'none';
+            : STRINGS.common.none;
         const coverage = sanitizeFilterCoverage(state.filters?.coverage);
-        const uaHint = typeof navigator !== 'undefined' ? (navigator.userAgent || 'unknown') : 'unknown';
+        const uaHint = typeof navigator !== 'undefined' ? (navigator.userAgent || STRINGS.common.unknown) : STRINGS.common.unknown;
         const injectionStatus = getInjectionTimingStatus();
         return [
             `${SCRIPT_NAME} v${SCRIPT_VERSION}`,
-            `Captured: ${new Date().toISOString()}`,
-            `Site: ${location.hostname}${location.pathname}`,
-            `Surface: ${getSiteLabel()} / ${getSurfaceLabel()}`,
-            `Build: ${IS_EXTENSION_BUILD ? 'extension' : 'userscript'}`,
-            `UA: ${uaHint}`,
-            `Injection status: ${injectionStatus.title}`,
-            `Injection readyState: ${injectionStatus.readyState}`,
-            `Injection elapsed: ${injectionStatus.elapsedMs === null ? 'unknown' : injectionStatus.elapsedMs + 'ms'}`,
-            `Injection guidance: ${injectionStatus.description}`,
-            `Protection enabled: ${isEnabled()}`,
-            `Filter source: ${getFilterSourceLabel()}`,
-            `Filter integrity: ${getFilterIntegrityLabel()}`,
-            `Filter integrity detail: ${state.filterIntegrityMessage || 'none'}`,
-            `Filter URL: ${resolveFilterUrl()}`,
-            `Filter version: ${state.filters?.version || 'unknown'}`,
-            `Last sync: ${state.lastFilterUpdate ? new Date(state.lastFilterUpdate).toISOString() : 'never'}`,
-            `Last error: ${state.filterError || 'none'}`,
-            `Rules active: ${getRuleCount()}`,
-            `Prune keys: ${(state.filters?.pruneKeys || []).length}`,
-            `Cosmetic selectors: ${(state.filters?.cosmeticSelectors || []).length}`,
-            `Intercept patterns: ${(state.filters?.interceptPatterns || []).join(' · ') || 'none'}`,
-            `Applied selector rules: ${coverage.appliedSelectors}`,
-            `Applied prune paths: ${coverage.appliedPrunePaths}`,
-            `Network-only filter rules: ${coverage.networkOnlyRules}`,
-            `Dropped unsafe selectors: ${coverage.droppedUnsafeSelectors}`,
-            `Supported scriptlets: ${formatScriptletCoverage(coverage.supportedScriptlets)}`,
-            `Unsupported scriptlets: ${formatScriptletCoverage(coverage.unsupportedScriptlets)}`,
-            `Channel block entries: ${parseBlocklist(getSetting('channel_blocklist', ''), { channel: true }).length}`,
-            `Keyword block entries: ${parseBlocklist(getSetting('keyword_blocklist', '')).length}`,
-            `Ad-allow entries: ${parseBlocklist(getSetting('ad_allowlist', ''), { channel: true }).length}`,
-            `Trapped roots: ${trappedRoots}`,
-            `Engine health: ${Object.entries(state.engineHealth || {}).map(([name, status]) => `${name}=${status}`).join(', ') || 'not installed'}`,
-            `Locked natives: ${(state.overrideFailures || []).join(', ') || 'none'}`,
-            `Pre-proxied (another extension): ${(state.preProxiedNatives || []).join(', ') || 'none'}`,
-            `Stats: blocked=${state.stats.blocked}, pruned=${state.stats.pruned}, ssapSkipped=${state.stats.ssapSkipped}, sponsorSkipped=${state.stats.sponsorSkipped}`,
-            `Enabled features: ${enabledFeatures}`,
-            `Disabled features: ${disabledFeatures}`
+            `${report.captured}: ${new Date().toISOString()}`,
+            `${report.site}: ${location.hostname}${location.pathname}`,
+            `${report.surface}: ${getSiteLabel()} / ${getSurfaceLabel()}`,
+            `${report.build}: ${IS_EXTENSION_BUILD ? report.extension : report.userscript}`,
+            `${report.ua}: ${uaHint}`,
+            `${report.injectionStatus}: ${injectionStatus.title}`,
+            `${report.injectionReadyState}: ${injectionStatus.readyState}`,
+            `${report.injectionElapsed}: ${injectionStatus.elapsedMs === null ? STRINGS.common.unknown : injectionStatus.elapsedMs + 'ms'}`,
+            `${report.injectionGuidance}: ${injectionStatus.description}`,
+            `${report.protectionEnabled}: ${isEnabled()}`,
+            `${report.filterSource}: ${getFilterSourceLabel()}`,
+            `${report.filterIntegrity}: ${getFilterIntegrityLabel()}`,
+            `${report.filterIntegrityDetail}: ${state.filterIntegrityMessage || STRINGS.common.none}`,
+            `${report.filterUrl}: ${resolveFilterUrl()}`,
+            `${report.filterVersion}: ${state.filters?.version || STRINGS.common.unknown}`,
+            `${report.lastSync}: ${state.lastFilterUpdate ? new Date(state.lastFilterUpdate).toISOString() : STRINGS.common.never}`,
+            `${report.lastError}: ${state.filterError || STRINGS.common.none}`,
+            `${report.rulesActive}: ${getRuleCount()}`,
+            `${report.pruneKeys}: ${(state.filters?.pruneKeys || []).length}`,
+            `${report.cosmeticSelectors}: ${(state.filters?.cosmeticSelectors || []).length}`,
+            `${report.interceptPatterns}: ${(state.filters?.interceptPatterns || []).join(' · ') || STRINGS.common.none}`,
+            `${report.appliedSelectors}: ${coverage.appliedSelectors}`,
+            `${report.appliedPrunePaths}: ${coverage.appliedPrunePaths}`,
+            `${report.networkOnlyRules}: ${coverage.networkOnlyRules}`,
+            `${report.droppedUnsafeSelectors}: ${coverage.droppedUnsafeSelectors}`,
+            `${report.supportedScriptlets}: ${formatScriptletCoverage(coverage.supportedScriptlets)}`,
+            `${report.unsupportedScriptlets}: ${formatScriptletCoverage(coverage.unsupportedScriptlets)}`,
+            `${report.channelBlockEntries}: ${parseBlocklist(getSetting('channel_blocklist', ''), { channel: true }).length}`,
+            `${report.keywordBlockEntries}: ${parseBlocklist(getSetting('keyword_blocklist', '')).length}`,
+            `${report.adAllowEntries}: ${parseBlocklist(getSetting('ad_allowlist', ''), { channel: true }).length}`,
+            `${report.trappedRoots}: ${trappedRoots}`,
+            `${report.engineHealth}: ${Object.entries(state.engineHealth || {}).map(([name, status]) => `${name}=${status}`).join(', ') || STRINGS.common.notInstalled}`,
+            `${report.lockedNatives}: ${(state.overrideFailures || []).join(', ') || STRINGS.common.none}`,
+            `${report.preProxied}: ${(state.preProxiedNatives || []).join(', ') || STRINGS.common.none}`,
+            `${report.stats}: blocked=${state.stats.blocked}, pruned=${state.stats.pruned}, ssapSkipped=${state.stats.ssapSkipped}, sponsorSkipped=${state.stats.sponsorSkipped}`,
+            `${report.enabledFeatures}: ${enabledFeatures}`,
+            `${report.disabledFeatures}: ${disabledFeatures}`
         ].join('\n');
     }
 
@@ -7178,7 +7518,7 @@
         }
         if (!state.overlayEl) {
             if (show) {
-                showToast('Control Center is still loading. Try again in a moment.', 'info');
+                showToast(STRINGS.ui.stillLoading, 'info');
             }
             return;
         }
@@ -7263,13 +7603,13 @@
         }
         state.menuHandles = [];
 
-        const h1 = safeRegisterMenu(`${SCRIPT_NAME}: Open Control Center`, () => toggleSettings(true));
+        const h1 = safeRegisterMenu(`${SCRIPT_NAME}: ${STRINGS.menu.openControlCenter}`, () => toggleSettings(true));
         const h2 = safeRegisterMenu(
-            `${SCRIPT_NAME}: ${isEnabled() ? 'Pause Protection' : 'Resume Protection'}`,
+            `${SCRIPT_NAME}: ${isEnabled() ? STRINGS.menu.pauseProtection : STRINGS.menu.resumeProtection}`,
             () => setScriptEnabled(!isEnabled())
         );
-        const h3 = safeRegisterMenu(`${SCRIPT_NAME}: Refresh Rules`, () => { fetchFilters(true); });
-        const h4 = safeRegisterMenu(`${SCRIPT_NAME}: Copy Diagnostics`, copyDiagnosticsToClipboard);
+        const h3 = safeRegisterMenu(`${SCRIPT_NAME}: ${STRINGS.menu.refreshRules}`, () => { fetchFilters(true); });
+        const h4 = safeRegisterMenu(`${SCRIPT_NAME}: ${STRINGS.menu.copyDiagnostics}`, copyDiagnosticsToClipboard);
         for (const h of [h1, h2, h3, h4]) if (h != null) state.menuHandles.push(h);
     }
 
@@ -7281,9 +7621,9 @@
             setSetting('welcomed', true);
             const injectionStatus = getInjectionTimingStatus();
             if (injectionStatus.likelyLate) {
-                showToast(`YoutubeAdblock loaded late. Open Diagnostics for setup steps. ${getControlCenterAccessHint()}`, 'warn');
+                showToast(STRINGS.ui.loadedLate(getControlCenterAccessHint()), 'warn');
             } else {
-                showToast(`YoutubeAdblock is active. ${getControlCenterAccessHint()}`, 'success');
+                showToast(STRINGS.ui.activeToast(getControlCenterAccessHint()), 'success');
             }
         }
 
@@ -7316,7 +7656,7 @@
             if (enforcement || adOverlay) {
                 breakageToastFired = true;
                 showToast(
-                    'YouTube may have changed its ad delivery. Try refreshing rules from the Control Center.',
+                    STRINGS.ui.youtubeChanged,
                     'warn'
                 );
             }

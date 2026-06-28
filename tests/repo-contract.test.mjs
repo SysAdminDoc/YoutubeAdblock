@@ -117,6 +117,47 @@ test('release gate verifies install artifacts before publishing', () => {
     assert.match(extensionReadme, /pinned extension ID/);
 });
 
+test('Control Center user-visible strings resolve through the STRINGS table', () => {
+    const normalizedUserscript = userscript.replace(/\r\n/g, '\n');
+    assert.match(normalizedUserscript, /const STRINGS = \{/);
+    assert.match(normalizedUserscript, /const FEATURE_COPY = STRINGS\.featureGroups/);
+    assert.match(normalizedUserscript, /function featureCopy\(groupKey, featureKey\)/);
+
+    const featureBlockStart = normalizedUserscript.indexOf('const FEATURE_GROUPS = [');
+    const stateBlockStart = normalizedUserscript.indexOf('/* =========================================================================\n     * STATE', featureBlockStart);
+    assert.notEqual(featureBlockStart, -1, 'FEATURE_GROUPS block missing');
+    assert.notEqual(stateBlockStart, -1, 'STATE block marker missing after FEATURE_GROUPS');
+    const featureBlock = normalizedUserscript.slice(featureBlockStart, stateBlockStart);
+    assert.doesNotMatch(featureBlock, /\b(?:title|description|label|desc):\s*['"`][A-Z]/,
+        'FEATURE_GROUPS should reference STRINGS.featureGroups instead of owning display copy');
+
+    const stringsStart = normalizedUserscript.indexOf('const STRINGS = {');
+    const defaultFiltersStart = normalizedUserscript.indexOf('/* =========================================================================\n     * DEFAULT FILTERS', stringsStart);
+    assert.notEqual(stringsStart, -1, 'STRINGS table missing');
+    assert.notEqual(defaultFiltersStart, -1, 'DEFAULT FILTERS marker missing after STRINGS');
+    const sourceOutsideStrings = normalizedUserscript.slice(0, stringsStart) + normalizedUserscript.slice(defaultFiltersStart);
+    const visibleSinkPatterns = [
+        /textContent\s*=\s*['"`][A-Z]/,
+        /placeholder\s*=\s*['"`][A-Z]/,
+        /\.title\s*=\s*['"`][A-Z]/,
+        /setAttribute\('aria-label',\s*['"`][A-Z]/,
+        /showToast\(\s*['"`][A-Z]/,
+        /createNote\(\s*['"`][A-Z]/,
+        /createSection\(\s*['"`][A-Z]/,
+        /createActionGroup\(\s*['"`][A-Z]/,
+        /createGlanceItem\(\s*['"`][A-Z]/,
+        /createMetricTile\(\s*['"`][A-Z]/,
+        /createJumpButton\(\s*['"`][A-Z]/,
+        /throw new Error\(\s*['"`][A-Z]/,
+        /\berror:\s*['"`][A-Z]/,
+        /\bmessage:\s*['"`][A-Z]/
+    ];
+    for (const pattern of visibleSinkPatterns) {
+        assert.doesNotMatch(sourceOutsideStrings, pattern,
+            `visible UI copy should come from STRINGS table, matched ${pattern}`);
+    }
+});
+
 test('browser smoke matrix is wired into the local test suite', () => {
     assert.equal(packageJson.private, true);
     assert.equal(packageJson.scripts.test, 'node --test tests/*.mjs');
