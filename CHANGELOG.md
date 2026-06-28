@@ -2,6 +2,13 @@
 
 All notable changes to YoutubeAdblock are documented here.
 
+## [0.5.14] - 2026-06-28
+
+### Added
+- Added release artifact verification for ZIP entry paths, CRX3 structure and
+  signature, stable Chromium extension ID, unsigned-XPI naming, and SHA-256
+  checksum output.
+
 ## [0.5.13] - 2026-06-28
 
 ### Changed

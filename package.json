@@ -1,6 +1,6 @@
 {
   "name": "youtube-adblock",
-  "version": "0.5.13",
+  "version": "0.5.14",
   "private": true,
   "scripts": {
     "test": "node --test tests/*.mjs",

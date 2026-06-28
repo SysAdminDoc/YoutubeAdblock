@@ -138,8 +138,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\Build-Release.ps1
 Run `npm ci` once before the full gate so browser-smoke dependencies are
 present. That command regenerates generated files, runs syntax checks and
 tests, validates DNR freshness, signs or verifies the filter manifest, runs
-the browser smoke matrix, cleans stale artifacts, and writes current artifacts
-to `dist/`. For manual steps:
+the browser smoke matrix, verifies ZIP/CRX artifact integrity, checks the
+pinned extension ID, writes SHA-256 checksums, cleans stale artifacts, and
+writes current artifacts to `dist/`. For manual steps:
 
 1. Regenerate the extension engine:
 
@@ -159,6 +160,6 @@ to `dist/`. For manual steps:
    powershell -NoProfile -ExecutionPolicy Bypass -File .\Build-CRX.ps1
    ```
 
-4. Attach the generated userscript, unpacked-extension zip, or CRX artifacts to
-   GitHub Releases manually. If `-Artifacts Xpi` was requested, treat the
-   generated `.unsigned.xpi` as a development artifact only.
+4. Attach the generated userscript, unpacked-extension zip, CRX, and checksum
+   artifacts to GitHub Releases manually. If `-Artifacts Xpi` was requested,
+   treat the generated `.unsigned.xpi` as a development artifact only.

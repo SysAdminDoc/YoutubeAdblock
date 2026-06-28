@@ -92,6 +92,7 @@ $mainPath = Join-Path $repoRootAbs 'extension\main.js'
 $networkSourcePath = Join-Path $repoRootAbs 'extension\rules\network-rules-source.json'
 $networkOutputPath = Join-Path $repoRootAbs 'extension\rules\network-blocks.json'
 $filterSignScriptPath = Join-Path $repoRootAbs 'tools\sign-filter-manifest.mjs'
+$artifactVerifyScriptPath = Join-Path $repoRootAbs 'tools\verify-release-artifacts.mjs'
 
 if (-not (Test-Path -LiteralPath $sourcePath)) { throw "Missing userscript: $sourcePath" }
 if (-not (Test-Path -LiteralPath $manifestPath)) { throw "Missing manifest: $manifestPath" }
@@ -181,6 +182,8 @@ $staleArtifacts = Get-ChildItem -LiteralPath $outputDirAbs -File | Where-Object 
 if ($staleArtifacts) {
     throw "Stale artifact(s) remain in ${outputDirAbs}: $($staleArtifacts.Name -join ', ')"
 }
+
+Invoke-Checked { & node $artifactVerifyScriptPath --repo-root $repoRootAbs --output-dir $outputDirAbs } 'Release artifact verification failed.'
 
 Write-Host "Release gate passed for v$version"
 Get-ChildItem -LiteralPath $outputDirAbs -File | ForEach-Object {

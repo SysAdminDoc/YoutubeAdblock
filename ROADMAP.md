@@ -52,12 +52,6 @@ Evidence and competitive context: see RESEARCH.md (consolidated; older inline re
 ### P0 - release trust
 
 ### P1 - permission and packaging hardening
-- [ ] P1 - Add release artifact verification
-  Why: Local builds produce install artifacts, but the release gate does not verify ZIP entry paths, CRX3 structure/signature, extension ID stability, XPI signing status, or artifact hashes.
-  Evidence: `Build-Release.ps1`, `Build-CRX.ps1`, Chrome MV3 packaging rules.
-  Touches: `Build-Release.ps1`, `Build-CRX.ps1`, `tests/repo-contract.test.mjs`, `dist/` release manifest output.
-  Acceptance: release gate fails on malformed ZIP paths, invalid CRX3, changed CRX ID, unsigned claimed XPI, or missing artifact checksums.
-  Complexity: M
 - [ ] P1 - Implement top unsupported uBO YouTube scriptlet equivalents
   Why: The filter list still carries high-value unsupported rules; coverage reporting is honest now, but protection improves only when safe equivalents are bundled locally.
   Evidence: `youtube-adblock-filters.txt:65`, `youtube-adblock-filters.txt:93`, `YoutubeAdblock.user.js:1144`, uBO `quick-fixes.txt`.

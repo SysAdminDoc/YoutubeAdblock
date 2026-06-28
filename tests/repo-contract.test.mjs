@@ -23,6 +23,8 @@ const buildExtension = read('Build-Extension.ps1');
 const buildRelease = read('Build-Release.ps1');
 const buildCrx = read('Build-CRX.ps1');
 const signFilterManifest = read(path.join('tools', 'sign-filter-manifest.mjs'));
+const verifyReleaseArtifacts = read(path.join('tools', 'verify-release-artifacts.mjs'));
+const expectedExtensionId = read(path.join('extension', 'extension-id.txt')).trim();
 const background = read(path.join('extension', 'background.js'));
 const extensionReadme = read(path.join('extension', 'README.md'));
 const generatedMain = read(path.join('extension', 'main.js'));
@@ -101,6 +103,18 @@ test('extension build does not request inactive DeArrow thumbnail host access', 
     assert.match(userscript, /^\/\/\s*@connect\s+dearrow-thumb\.ajay\.app\s*$/m,
         'userscript DeArrow thumbnail access should remain available');
     assert.match(extensionReadme, /does not request DeArrow thumbnail host access/);
+});
+
+test('release gate verifies install artifacts before publishing', () => {
+    assert.match(buildRelease, /verify-release-artifacts\.mjs/);
+    assert.match(verifyReleaseArtifacts, /CRX3 SignedData/);
+    assert.match(verifyReleaseArtifacts, /readUInt32LE\(4\) !== 3/);
+    assert.match(verifyReleaseArtifacts, /Windows-style ZIP entry path/);
+    assert.match(verifyReleaseArtifacts, /extension ID changed/i);
+    assert.match(verifyReleaseArtifacts, /checksums\.sha256/);
+    assert.match(expectedExtensionId, /^[a-p]{32}$/);
+    assert.match(readme, /writes SHA-256 checksums/);
+    assert.match(extensionReadme, /pinned extension ID/);
 });
 
 test('browser smoke matrix is wired into the local test suite', () => {
