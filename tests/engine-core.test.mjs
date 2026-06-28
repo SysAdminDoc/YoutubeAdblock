@@ -286,6 +286,7 @@ test('parseUBOFilterList counts network rules without executing them', () => {
     ].join('\n');
     const result = harness.parseUBOFilterList(text);
     assert.equal(result.filterCount, 2);
+    assert.equal(result.coverage.networkOnlyRules, 2);
 });
 
 test('parseUBOFilterList handles cosmetic exceptions', () => {
@@ -301,6 +302,7 @@ test('parseUBOFilterList rejects selectors with CSS injection chars', () => {
     const text = 'youtube.com##div{background:url(//x)}\n';
     const result = harness.parseUBOFilterList(text);
     assert.ok(!result.cosmeticSelectors.some(s => s.includes('background')));
+    assert.equal(result.coverage.droppedUnsafeSelectors, 1);
 });
 
 test('parseUBOFilterList rejects json-prune keys with unsafe characters', () => {
@@ -311,6 +313,22 @@ test('parseUBOFilterList rejects json-prune keys with unsafe characters', () => 
     const result = harness.parseUBOFilterList(text);
     assert.ok(result.pruneKeys.includes('safe.key'));
     assert.ok(!result.pruneKeys.includes('inject[0].bad'));
+});
+
+test('parseUBOFilterList reports supported and unsupported scriptlet coverage', () => {
+    const text = [
+        'youtube.com##+js(set, ytInitialPlayerResponse.playerAds, undefined)',
+        'youtube.com##+js(json-prune, playerResponse.adPlacements)',
+        'youtube.com##+js(trusted-replace-fetch-response, "adPlacements", "no_ads", player?)'
+    ].join('\n');
+    const result = harness.parseUBOFilterList(text);
+    const supported = new Map(result.coverage.supportedScriptlets.map(item => [item.name, item.count]));
+    const unsupported = new Map(result.coverage.unsupportedScriptlets.map(item => [item.name, item.count]));
+
+    assert.equal(result.coverage.appliedPrunePaths, 2);
+    assert.equal(supported.get('set'), 1);
+    assert.equal(supported.get('json-prune'), 1);
+    assert.equal(unsupported.get('trusted-replace-fetch-response'), 1);
 });
 
 // ========== injectNoAdFlag ==========

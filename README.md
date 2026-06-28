@@ -1,6 +1,6 @@
 # YoutubeAdblock
 
-![Version](https://img.shields.io/badge/version-0.5.4-58A6FF)
+![Version](https://img.shields.io/badge/version-0.5.5-58A6FF)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
 > A document-start YouTube ad blocker with a split-context proxy engine, remote rule support, and a premium Control Center for tuning protection.
@@ -91,7 +91,7 @@ If you trigger the extension while you are not already on YouTube, YoutubeAdbloc
 | Clutter-Free Mode | Eight Unhook-style toggles: home feed, Shorts shelves, Shorts tab, related videos, comments, end-screen cards, live chat, merch shelves | Optional |
 | Channel + Keyword Blocklist | Strips videos whose channel or title matches local blocklists. Channel entries support names, `UC...` IDs, `@handles`, channel URLs, regex, and JSON/plain-text import-export | Optional |
 | Shorts → /watch Redirect | Rewrites `/shorts/VIDEO_ID` to the full watch player | Optional |
-| DNR Network Blocking *(extension only)* | Blocks `/pagead/*`, `/pagead/adview`, `/pagead/interaction`, `/api/stats/ads`, `/api/stats/atr`, `/pcs/activeview`, `/youtubei/v1/player/ad_break`, `/youtubei/v1/log_event` (POST), `/youtubei/v1/att/log` (POST), googlevideo `ctier=SA`, `ctier=SR`, `initplayback?...adformat=`, `generate_204`, doubleclick.net, googlesyndication.com, googleadservices.com | Enabled |
+| DNR Network Blocking *(extension only)* | Blocks `/pagead/*`, `/pagead/adview`, `/pagead/interaction`, `/api/stats/ads`, `/api/stats/atr`, `/pcs/activeview`, `/youtubei/v1/player/ad_break`, `/youtubei/v1/log_event` (POST), `/youtubei/v1/att/log` (POST), googlevideo `ctier=SA`, `ctier=SR`, `initplayback?...adformat=`, `generate_204`, doubleclick.net, googlesyndication.com, googleadservices.com. DNR output is generated from the same typed source that validates userscript intercept metadata | Enabled |
 | Remote Filter List | Fetches and applies uBO-compatible filter lists from a configurable URL | Enabled |
 | Control Center | Protection overview, quick actions, module toggles, rule refresh, blocklist editors, diagnostics, and recovery tools | Enabled |
 | Extension Settings Sync | MV3 builds mirror toggles, blocklists, allowlists, and thresholds through `chrome.storage.sync`; oversized blocklists stay local instead of failing saves | Enabled |

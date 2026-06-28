@@ -13,7 +13,9 @@ param(
     [string]$RepoRoot,
     [string]$SourceName = 'YoutubeAdblock.user.js',
     [string]$OutDir    = 'extension',
-    [string]$OutName   = 'main.js'
+    [string]$OutName   = 'main.js',
+    [string]$NetworkRuleSource = 'extension\rules\network-rules-source.json',
+    [string]$NetworkRuleOutput = 'extension\rules\network-blocks.json'
 )
 
 if ([string]::IsNullOrEmpty($RepoRoot)) {
@@ -28,6 +30,8 @@ $ErrorActionPreference = 'Stop'
 
 $srcPath = Join-Path $RepoRoot $SourceName
 $outPath = Join-Path $RepoRoot (Join-Path $OutDir $OutName)
+$networkSourcePath = Join-Path $RepoRoot $NetworkRuleSource
+$networkOutPath = Join-Path $RepoRoot $NetworkRuleOutput
 
 if (-not (Test-Path -LiteralPath $srcPath)) {
     throw "Source not found: $srcPath"
@@ -38,6 +42,33 @@ $raw = [System.IO.File]::ReadAllText($srcPath)
 # Strip a leading UTF-8 BOM if present so the header regex matches cleanly.
 if ($raw.Length -gt 0 -and $raw[0] -eq [char]0xFEFF) {
     $raw = $raw.Substring(1)
+}
+
+if (Test-Path -LiteralPath $networkSourcePath) {
+    $networkSource = Get-Content -LiteralPath $networkSourcePath -Raw | ConvertFrom-Json
+    $sourcePatterns = @($networkSource.interceptPatterns)
+    $dnrRules = @($networkSource.dnrRules)
+    if (-not $sourcePatterns.Count) {
+        throw "Network rule source has no interceptPatterns: $networkSourcePath"
+    }
+    if (-not $dnrRules.Count) {
+        throw "Network rule source has no dnrRules: $networkSourcePath"
+    }
+    foreach ($pattern in $sourcePatterns) {
+        if ([string]::IsNullOrWhiteSpace([string]$pattern)) {
+            throw "Network rule source contains an empty intercept pattern."
+        }
+        $needle = "'" + [string]$pattern + "'"
+        if (-not $raw.Contains($needle)) {
+            throw "Userscript DEFAULT_FILTERS.interceptPatterns missing source pattern: $pattern"
+        }
+    }
+    $networkOutDir = Split-Path -Parent $networkOutPath
+    if (-not (Test-Path -LiteralPath $networkOutDir)) {
+        New-Item -ItemType Directory -Path $networkOutDir | Out-Null
+    }
+    $dnrJson = $dnrRules | ConvertTo-Json -Depth 30
+    [System.IO.File]::WriteAllText($networkOutPath, $dnrJson + [Environment]::NewLine, (New-Object System.Text.UTF8Encoding($false)))
 }
 
 # Strip the ==UserScript== block (and anything before it that is only

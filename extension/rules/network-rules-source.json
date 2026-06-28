@@ -1,0 +1,216 @@
+{
+  "version": 1,
+  "interceptPatterns": [
+    "/youtubei/v1/player",
+    "/youtubei/v1/get_watch",
+    "/youtubei/v1/browse",
+    "/youtubei/v1/search",
+    "/youtubei/v1/next",
+    "/youtubei/v1/guide",
+    "/youtubei/v1/log_event",
+    "/youtubei/v1/att/get",
+    "/youtubei/v1/att/log",
+    "/youtubei/v1/reel_watch_sequence",
+    "/youtubei/v1/get_survey",
+    "/youtubei/v1/player/ad_break",
+    "/watch?",
+    "/playlist?list=",
+    "/reel_watch_sequence"
+  ],
+  "dnrRules": [
+    {
+      "id": 1,
+      "priority": 100,
+      "action": { "type": "block" },
+      "condition": {
+        "urlFilter": "||youtube.com/pagead/",
+        "resourceTypes": ["xmlhttprequest", "image", "sub_frame", "script", "media"]
+      }
+    },
+    {
+      "id": 2,
+      "priority": 100,
+      "action": { "type": "block" },
+      "condition": {
+        "urlFilter": "||youtube.com/api/stats/ads",
+        "resourceTypes": ["xmlhttprequest", "ping", "image"]
+      }
+    },
+    {
+      "id": 3,
+      "priority": 100,
+      "action": { "type": "block" },
+      "condition": {
+        "urlFilter": "||youtube.com/youtubei/v1/player/ad_break",
+        "resourceTypes": ["xmlhttprequest"]
+      }
+    },
+    {
+      "id": 4,
+      "priority": 100,
+      "action": { "type": "block" },
+      "condition": {
+        "urlFilter": "||doubleclick.net/",
+        "initiatorDomains": [
+          "youtube.com",
+          "www.youtube.com",
+          "m.youtube.com",
+          "music.youtube.com",
+          "tv.youtube.com",
+          "youtube-nocookie.com",
+          "youtubekids.com",
+          "www.youtubekids.com"
+        ],
+        "resourceTypes": ["xmlhttprequest", "image", "sub_frame", "script", "media", "ping"]
+      }
+    },
+    {
+      "id": 5,
+      "priority": 100,
+      "action": { "type": "block" },
+      "condition": {
+        "urlFilter": "||googlesyndication.com/",
+        "initiatorDomains": [
+          "youtube.com",
+          "www.youtube.com",
+          "m.youtube.com",
+          "music.youtube.com",
+          "tv.youtube.com",
+          "youtube-nocookie.com",
+          "youtubekids.com",
+          "www.youtubekids.com"
+        ],
+        "resourceTypes": ["xmlhttprequest", "image", "sub_frame", "script", "media", "ping"]
+      }
+    },
+    {
+      "id": 6,
+      "priority": 100,
+      "action": { "type": "block" },
+      "condition": {
+        "urlFilter": "||googleadservices.com/",
+        "initiatorDomains": [
+          "youtube.com",
+          "www.youtube.com",
+          "m.youtube.com",
+          "music.youtube.com",
+          "tv.youtube.com",
+          "youtube-nocookie.com",
+          "youtubekids.com",
+          "www.youtubekids.com"
+        ],
+        "resourceTypes": ["xmlhttprequest", "image", "sub_frame", "script", "media", "ping"]
+      }
+    },
+    {
+      "id": 7,
+      "priority": 100,
+      "action": { "type": "block" },
+      "condition": {
+        "urlFilter": "||youtube.com/get_midroll_info",
+        "resourceTypes": ["xmlhttprequest"]
+      }
+    },
+    {
+      "id": 8,
+      "priority": 100,
+      "action": { "type": "block" },
+      "condition": {
+        "urlFilter": "||youtube.com/ptracking",
+        "resourceTypes": ["xmlhttprequest", "ping", "image"]
+      }
+    },
+    {
+      "id": 9,
+      "priority": 100,
+      "action": { "type": "block" },
+      "condition": {
+        "regexFilter": "^https?://[^/]*googlevideo\\.com/.*\\bctier=SA\\b",
+        "resourceTypes": ["media", "xmlhttprequest"]
+      }
+    },
+    {
+      "id": 10,
+      "priority": 100,
+      "action": { "type": "block" },
+      "condition": {
+        "urlFilter": "||youtube.com/api/stats/atr?",
+        "resourceTypes": ["xmlhttprequest", "ping", "image"]
+      }
+    },
+    {
+      "id": 11,
+      "priority": 100,
+      "action": { "type": "block" },
+      "condition": {
+        "urlFilter": "||youtube.com/pagead/adview",
+        "resourceTypes": ["xmlhttprequest", "ping", "image"]
+      }
+    },
+    {
+      "id": 12,
+      "priority": 100,
+      "action": { "type": "block" },
+      "condition": {
+        "urlFilter": "||youtube.com/pagead/interaction",
+        "resourceTypes": ["xmlhttprequest", "ping", "image"]
+      }
+    },
+    {
+      "id": 13,
+      "priority": 100,
+      "action": { "type": "block" },
+      "condition": {
+        "urlFilter": "||youtube.com/pcs/activeview",
+        "resourceTypes": ["xmlhttprequest", "ping", "image"]
+      }
+    },
+    {
+      "id": 14,
+      "priority": 100,
+      "action": { "type": "block" },
+      "condition": {
+        "regexFilter": "^https?://[^/]*googlevideo\\.com/.*\\bctier=SR\\b",
+        "resourceTypes": ["media", "xmlhttprequest"]
+      }
+    },
+    {
+      "id": 15,
+      "priority": 100,
+      "action": { "type": "block" },
+      "condition": {
+        "regexFilter": "^https?://[^/]*googlevideo\\.com/initplayback\\?.*\\badformat=",
+        "resourceTypes": ["media", "xmlhttprequest"]
+      }
+    },
+    {
+      "id": 16,
+      "priority": 100,
+      "action": { "type": "block" },
+      "condition": {
+        "urlFilter": "||youtube.com/youtubei/v1/log_event",
+        "resourceTypes": ["xmlhttprequest"],
+        "requestMethods": ["post"]
+      }
+    },
+    {
+      "id": 17,
+      "priority": 100,
+      "action": { "type": "block" },
+      "condition": {
+        "urlFilter": "||youtube.com/youtubei/v1/att/log",
+        "resourceTypes": ["xmlhttprequest"],
+        "requestMethods": ["post"]
+      }
+    },
+    {
+      "id": 18,
+      "priority": 100,
+      "action": { "type": "block" },
+      "condition": {
+        "urlFilter": "||youtube.com/generate_204",
+        "resourceTypes": ["xmlhttprequest", "ping", "image"]
+      }
+    }
+  ]
+}

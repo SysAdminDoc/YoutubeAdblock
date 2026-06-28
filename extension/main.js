@@ -125,7 +125,7 @@
      * ===================================================================== */
 
     const SCRIPT_NAME = 'YoutubeAdblock';
-    const SCRIPT_VERSION = '0.5.4';
+    const SCRIPT_VERSION = '0.5.5';
     const PROJECT_URL = 'https://github.com/SysAdminDoc/YoutubeAdblock';
     const ISSUES_URL = `${PROJECT_URL}/issues`;
     const FILTER_URL_DEFAULT = 'https://raw.githubusercontent.com/SysAdminDoc/YoutubeAdblock/refs/heads/main/youtube-adblock-filters.txt';
@@ -1069,6 +1069,35 @@
         return clean;
     }
 
+    function summarizeScriptlets(mapLike) {
+        const out = [];
+        if (!mapLike) return out;
+        if (mapLike instanceof Map) {
+            for (const [name, count] of mapLike.entries()) {
+                if (name) out.push({ name, count: Math.max(0, Number(count) || 0) });
+            }
+        } else if (Array.isArray(mapLike)) {
+            for (const item of mapLike) {
+                if (!item || typeof item !== 'object' || !item.name) continue;
+                out.push({ name: String(item.name).slice(0, 80), count: Math.max(0, Number(item.count) || 0) });
+            }
+        }
+        return out.sort((a, b) => a.name.localeCompare(b.name));
+    }
+
+    function sanitizeFilterCoverage(value, fallback) {
+        const src = value && typeof value === 'object' ? value : {};
+        const base = fallback && typeof fallback === 'object' ? fallback : {};
+        return {
+            appliedSelectors: Math.max(0, Number(src.appliedSelectors ?? base.appliedSelectors) || 0),
+            appliedPrunePaths: Math.max(0, Number(src.appliedPrunePaths ?? base.appliedPrunePaths) || 0),
+            networkOnlyRules: Math.max(0, Number(src.networkOnlyRules ?? base.networkOnlyRules) || 0),
+            droppedUnsafeSelectors: Math.max(0, Number(src.droppedUnsafeSelectors ?? base.droppedUnsafeSelectors) || 0),
+            supportedScriptlets: summarizeScriptlets(src.supportedScriptlets || base.supportedScriptlets),
+            unsupportedScriptlets: summarizeScriptlets(src.unsupportedScriptlets || base.unsupportedScriptlets)
+        };
+    }
+
     function sanitizeFilterPayload(value) {
         if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
 
@@ -1078,6 +1107,10 @@
         const upsellSelectors = sanitizeSelectorList(value.upsellSelectors, FILTER_MAX_UPSELL_SELECTORS);
         const interceptPatterns = sanitizeInterceptPatterns(value.interceptPatterns);
         const replaceKeys = sanitizeReplaceKeys(value.replaceKeys);
+        const coverage = sanitizeFilterCoverage(value.coverage, {
+            appliedSelectors: cosmeticSelectors.length + upsellSelectors.length,
+            appliedPrunePaths: pruneKeys.length + setUndefined.length
+        });
         const features = normalizeFeatures(
             value.features && typeof value.features === 'object'
                 ? value.features
@@ -1103,6 +1136,7 @@
             interceptPatterns: [...new Set([...DEFAULT_FILTERS.interceptPatterns, ...interceptPatterns])],
             cosmeticSelectors: [...new Set([...DEFAULT_FILTERS.cosmeticSelectors, ...cosmeticSelectors])],
             upsellSelectors: [...new Set([...DEFAULT_FILTERS.upsellSelectors, ...upsellSelectors])],
+            coverage,
             features
         };
     }
@@ -1117,8 +1151,15 @@
         const upsellSelectors = new Set();
         const setUndefined = new Set();
         const pruneKeys = new Set();
+        const supportedScriptlets = new Map();
+        const unsupportedScriptlets = new Map();
+        let networkOnlyRules = 0;
         let filterCount = 0;
         let droppedUnsafeSelectors = 0;
+
+        function countScriptlet(target, name) {
+            target.set(name, (target.get(name) || 0) + 1);
+        }
 
         for (let li = 0; li < lineLimit; li++) {
             const line = rawLines[li].trim();
@@ -1151,6 +1192,11 @@
                             setUndefined.add(path);
                         }
                     }
+                    countScriptlet(supportedScriptlets, name);
+                } else if (name === 'json-prune' || name === 'json-prune-fetch-response' || name === 'json-prune-xhr-response') {
+                    countScriptlet(supportedScriptlets, name);
+                } else {
+                    countScriptlet(unsupportedScriptlets, name);
                 }
 
                 if ((name === 'json-prune' || name === 'json-prune-fetch-response' || name === 'json-prune-xhr-response') && argsStr) {
@@ -1204,6 +1250,7 @@
             // interceptPatterns instead. Counting keeps the rule count honest
             // without pretending we enforce them.
             if ((line.startsWith('||') || line.startsWith('*') || line.startsWith('/')) && !line.startsWith('@@')) {
+                networkOnlyRules++;
                 filterCount++;
                 continue;
             }
@@ -1231,6 +1278,14 @@
             interceptPatterns: DEFAULT_FILTERS.interceptPatterns,
             cosmeticSelectors: [...new Set([...DEFAULT_FILTERS.cosmeticSelectors, ...cosmeticSelectors])],
             upsellSelectors: [...new Set([...DEFAULT_FILTERS.upsellSelectors, ...upsellSelectors])],
+            coverage: sanitizeFilterCoverage({
+                appliedSelectors: cosmeticSelectors.size + upsellSelectors.size,
+                appliedPrunePaths: pruneKeys.size + setUndefined.size,
+                networkOnlyRules,
+                droppedUnsafeSelectors,
+                supportedScriptlets: summarizeScriptlets(supportedScriptlets),
+                unsupportedScriptlets: summarizeScriptlets(unsupportedScriptlets)
+            }),
             features: { ...DEFAULT_FILTERS.features }
         };
     }
@@ -5372,10 +5427,16 @@
         });
         const details = document.createElement('div');
         details.className = `${CSS_PREFIX}-chip-row`;
+        const coverage = sanitizeFilterCoverage(state.filters?.coverage);
+        const unsupportedCount = coverage.unsupportedScriptlets.reduce((sum, item) => sum + item.count, 0);
         details.append(
             createPill(`Version ${state.filters?.version || '?'}`, 'neutral'),
             createPill(`Synced ${formatTimestamp(state.lastFilterUpdate)}`, 'neutral'),
-            createPill(`${formatNumber(getRuleCount())} Rules`, 'neutral')
+            createPill(`${formatNumber(getRuleCount())} Rules`, 'neutral'),
+            createPill(`${formatNumber(coverage.appliedSelectors)} Selectors`, 'neutral'),
+            createPill(`${formatNumber(coverage.appliedPrunePaths)} Prune Paths`, 'neutral'),
+            createPill(`${formatNumber(coverage.networkOnlyRules)} Network-Only`, coverage.networkOnlyRules ? 'info' : 'neutral'),
+            createPill(`${formatNumber(unsupportedCount)} Unsupported Scriptlets`, unsupportedCount ? 'warn' : 'neutral')
         );
         actions.appendChild(reset);
         field.append(label, help, row, actions);
@@ -6303,6 +6364,11 @@
         }
     }
 
+    function formatScriptletCoverage(list) {
+        if (!Array.isArray(list) || !list.length) return 'none';
+        return list.map(item => `${item.name}=${item.count}`).join(', ');
+    }
+
     function buildDiagnosticsReport() {
         const features = normalizeFeatures(state.features);
         const disabledFeatures = Object.entries(features)
@@ -6316,6 +6382,7 @@
         const trappedRoots = state.trappedRoots && state.trappedRoots.size
             ? [...state.trappedRoots].join(', ')
             : 'none';
+        const coverage = sanitizeFilterCoverage(state.filters?.coverage);
         const uaHint = typeof navigator !== 'undefined' ? (navigator.userAgent || 'unknown') : 'unknown';
         return [
             `${SCRIPT_NAME} v${SCRIPT_VERSION}`,
@@ -6334,6 +6401,12 @@
             `Prune keys: ${(state.filters?.pruneKeys || []).length}`,
             `Cosmetic selectors: ${(state.filters?.cosmeticSelectors || []).length}`,
             `Intercept patterns: ${(state.filters?.interceptPatterns || []).join(' · ') || 'none'}`,
+            `Applied selector rules: ${coverage.appliedSelectors}`,
+            `Applied prune paths: ${coverage.appliedPrunePaths}`,
+            `Network-only filter rules: ${coverage.networkOnlyRules}`,
+            `Dropped unsafe selectors: ${coverage.droppedUnsafeSelectors}`,
+            `Supported scriptlets: ${formatScriptletCoverage(coverage.supportedScriptlets)}`,
+            `Unsupported scriptlets: ${formatScriptletCoverage(coverage.unsupportedScriptlets)}`,
             `Channel block entries: ${parseBlocklist(getSetting('channel_blocklist', ''), { channel: true }).length}`,
             `Keyword block entries: ${parseBlocklist(getSetting('keyword_blocklist', '')).length}`,
             `Ad-allow entries: ${parseBlocklist(getSetting('ad_allowlist', ''), { channel: true }).length}`,

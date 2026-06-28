@@ -13,7 +13,8 @@ directly — your changes will be overwritten on the next build.
 | `main.js` *(generated)* | Page-world (MAIN) content script - the ad-blocking engine |
 | `bridge.js` | Isolated-world content script, relays `chrome.*` events/messages into the page-world via DOM `CustomEvent` |
 | `background.js` | Service worker: toolbar action, keyboard commands, right-click context menu, tab-messaging relay |
-| `rules/network-blocks.json` | declarativeNetRequest rules - network-layer blocks |
+| `rules/network-rules-source.json` | typed source for intercept-pattern metadata and DNR generation |
+| `rules/network-blocks.json` | generated declarativeNetRequest rules - network-layer blocks |
 
 The manifest intentionally omits extension icons until replacement branding is
 available, so browsers show their default toolbar icon.

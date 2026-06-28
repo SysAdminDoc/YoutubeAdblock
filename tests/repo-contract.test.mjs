@@ -14,6 +14,7 @@ function read(relativePath) {
 const userscript = read('YoutubeAdblock.user.js');
 const manifest = JSON.parse(read(path.join('extension', 'manifest.json')));
 const rules = JSON.parse(read(path.join('extension', 'rules', 'network-blocks.json')));
+const networkRuleSource = JSON.parse(read(path.join('extension', 'rules', 'network-rules-source.json')));
 const buildExtension = read('Build-Extension.ps1');
 const buildCrx = read('Build-CRX.ps1');
 const background = read(path.join('extension', 'background.js'));
@@ -38,6 +39,14 @@ test('network rules scope external ad domains to all supported YouTube initiator
         const initiators = ruleById.get(id)?.condition?.initiatorDomains || [];
         assert(initiators.includes('youtubekids.com'));
         assert(initiators.includes('www.youtubekids.com'));
+    }
+});
+
+test('network rule source drives DNR output and userscript intercept patterns', () => {
+    assert.deepEqual(rules, networkRuleSource.dnrRules);
+    assert.match(buildExtension, /network-rules-source\.json/);
+    for (const pattern of networkRuleSource.interceptPatterns) {
+        assert(userscript.includes(`'${pattern}'`), `userscript interceptPatterns missing ${pattern}`);
     }
 });
 
