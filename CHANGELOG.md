@@ -2,6 +2,13 @@
 
 All notable changes to YoutubeAdblock are documented here.
 
+## [0.5.19] - 2026-06-28
+
+### Added
+- Added a DASH/HLS manifest scrub fallback for text manifests, removing
+  googlevideo `ctier=SA`/`ctier=SR` ad segment references through fetch/XHR
+  interception when browser DNR is unavailable.
+
 ## [0.5.18] - 2026-06-28
 
 ### Added

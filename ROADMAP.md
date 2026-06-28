@@ -5,7 +5,6 @@ Forward-looking scope for the split-context YouTube ad blocker (userscript + Chr
 ## Planned Features
 
 ### Blocking Engine
-- DASH/HLS manifest scrubbing for the in-stream `ctier=SA`/`SR` segments (already at network layer; add playback-layer fallback when DNR is unavailable, e.g. userscript in Firefox).
 - Server-side ad detection heuristic: measure PlayerResponse `serverStitchedAd` flag and warn in Control Center when SSAI ads can't be pruned.
 - `Trusted Types` full coverage audit: eliminate remaining string-HTML code paths in the Control Center.
 

@@ -125,7 +125,7 @@
      * ===================================================================== */
 
     const SCRIPT_NAME = 'YoutubeAdblock';
-    const SCRIPT_VERSION = '0.5.18';
+    const SCRIPT_VERSION = '0.5.19';
     const PROJECT_URL = 'https://github.com/SysAdminDoc/YoutubeAdblock';
     const ISSUES_URL = `${PROJECT_URL}/issues`;
     const FILTER_URL_DEFAULT = 'https://raw.githubusercontent.com/SysAdminDoc/YoutubeAdblock/refs/heads/main/youtube-adblock-filters.txt';
@@ -2250,6 +2250,64 @@
         return modified;
     }
 
+    const MANIFEST_URL_RE = /(?:googlevideo\.com\/videoplayback|\/api\/manifest\/|\.m3u8(?:[?#]|$)|\.mpd(?:[?#]|$))/i;
+    const MANIFEST_TEXT_CT_RE = /(?:mpegurl|dash\+xml|application\/xml|text\/xml|text\/plain)/i;
+    const MANIFEST_AD_TIER_RE = /(?:[?&]|\b)ctier=(?:SA|SR)\b/i;
+    const MANIFEST_HLS_TAGS_TO_DROP = /^(#EXTINF|#EXT-X-BYTERANGE|#EXT-X-PROGRAM-DATE-TIME|#EXT-X-DISCONTINUITY)\b/i;
+    const DASH_AD_ELEMENT_PATTERNS = [
+        /<Representation\b[^>]*(?:[?&]|\b)ctier=(?:SA|SR)\b[\s\S]*?<\/Representation>/gi,
+        /<Representation\b(?=[^>]*\bid=["'][^"']*(?:ad|sabr|ssai)[^"']*["'])[^>]*>[\s\S]*?(?:[?&]|\b)ctier=(?:SA|SR)\b[\s\S]*?<\/Representation>/gi,
+        /<SegmentURL\b[^>]*(?:[?&]|\b)ctier=(?:SA|SR)\b[^>]*\/?>/gi,
+        /<BaseURL\b[^>]*>[^<]*(?:[?&]|\b)ctier=(?:SA|SR)\b[^<]*<\/BaseURL>/gi
+    ];
+
+    function manifestUrlMightNeedScrub(url) {
+        return typeof url === 'string' && MANIFEST_URL_RE.test(url);
+    }
+
+    function manifestContentTypeIsText(contentType) {
+        return !contentType || MANIFEST_TEXT_CT_RE.test(contentType);
+    }
+
+    function manifestTextMightContainAds(text) {
+        return typeof text === 'string' && MANIFEST_AD_TIER_RE.test(text);
+    }
+
+    function scrubAdManifestText(text) {
+        if (!manifestTextMightContainAds(text)) {
+            return { changed: false, text, removed: 0 };
+        }
+
+        let removed = 0;
+        let rewritten = String(text);
+        for (const pattern of DASH_AD_ELEMENT_PATTERNS) {
+            rewritten = rewritten.replace(pattern, match => {
+                removed++;
+                return '';
+            });
+        }
+
+        const newline = rewritten.includes('\r\n') ? '\r\n' : '\n';
+        const lines = rewritten.split(/\r?\n/);
+        const kept = [];
+        for (const line of lines) {
+            if (MANIFEST_AD_TIER_RE.test(line)) {
+                removed++;
+                while (kept.length && MANIFEST_HLS_TAGS_TO_DROP.test(kept[kept.length - 1])) {
+                    kept.pop();
+                }
+                continue;
+            }
+            kept.push(line);
+        }
+        rewritten = kept.join(newline);
+        return {
+            changed: removed > 0 && rewritten !== text,
+            text: rewritten,
+            removed
+        };
+    }
+
     // Fast substring-based "could this response contain ad keys?" test.
     // Browse/search/next responses on YouTube are often 100-500KB; parsing
     // JSON + walking the tree on EVERY intercepted response (not just ones
@@ -2496,19 +2554,39 @@
                     } catch (e) { /* never block the request over a rewrite */ }
                 }
 
-                if (!state.features.fetchIntercept || !matchesInterceptPattern(url)) {
+                const shouldPruneJsonResponse = state.features.fetchIntercept && matchesInterceptPattern(url);
+                const shouldScrubManifestResponse = state.features.fetchIntercept && manifestUrlMightNeedScrub(url);
+                if (!shouldPruneJsonResponse && !shouldScrubManifestResponse) {
                     return Reflect.apply(target, thisArg, args);
                 }
 
                 return Reflect.apply(target, thisArg, args).then(response => {
                     if (!response || !response.ok) return response;
                     const contentType = response.headers?.get?.('content-type') || '';
-                    // Only rewrite JSON-ish responses; leaves media/HTML intact.
-                    if (contentType && !/json|javascript|text\/plain/i.test(contentType)) {
+                    // Only rewrite JSON-ish or text-manifest responses; leaves binary media/HTML intact.
+                    if (contentType && !/json|javascript|text\/plain/i.test(contentType) && !(shouldScrubManifestResponse && manifestContentTypeIsText(contentType))) {
                         return response;
                     }
                     return response.clone().text().then(text => {
                         if (!text) return response;
+                        const scrubbedManifest = shouldScrubManifestResponse ? scrubAdManifestText(text) : null;
+                        if (scrubbedManifest && scrubbedManifest.changed) {
+                            let newHeaders;
+                            try {
+                                newHeaders = new Headers(response.headers);
+                                newHeaders.delete('content-length');
+                            } catch (e) {
+                                newHeaders = response.headers;
+                            }
+                            incrementStat('blocked');
+                            incrementStat('pruned', scrubbedManifest.removed || 1);
+                            return new Response(scrubbedManifest.text, {
+                                status: response.status,
+                                statusText: response.statusText,
+                                headers: newHeaders
+                            });
+                        }
+                        if (!shouldPruneJsonResponse) return response;
                         // Fast reject: if the raw body doesn't mention any of
                         // the prune keys or replaceKeys targets, skip the JSON
                         // parse and tree walk entirely. On YT this short-circuits
@@ -2589,7 +2667,9 @@
                 } catch (e) { /* never block the request over a rewrite */ }
             }
 
-            if (!state.features.xhrIntercept || !matchesInterceptPattern(this._ytab_url)) {
+            const shouldPruneJsonResponse = state.features.xhrIntercept && matchesInterceptPattern(this._ytab_url);
+            const shouldScrubManifestResponse = state.features.xhrIntercept && manifestUrlMightNeedScrub(this._ytab_url);
+            if (!shouldPruneJsonResponse && !shouldScrubManifestResponse) {
                 return originalSend.call(this, body);
             }
 
@@ -2625,6 +2705,19 @@
                 } catch (e) { return; }
 
                 if (!sourceText) return;
+                if (shouldScrubManifestResponse) {
+                    const scrubbedManifest = scrubAdManifestText(sourceText);
+                    if (scrubbedManifest.changed) {
+                        if (rt === '' || rt === 'text') {
+                            Object.defineProperty(xhr, 'responseText', { value: scrubbedManifest.text, writable: false, configurable: true });
+                            Object.defineProperty(xhr, 'response', { value: scrubbedManifest.text, writable: false, configurable: true });
+                            incrementStat('blocked');
+                            incrementStat('pruned', scrubbedManifest.removed || 1);
+                        }
+                        return;
+                    }
+                    if (!shouldPruneJsonResponse) return;
+                }
                 // Same fast reject as fetch: skip the JSON parse + walk when
                 // the body clearly has no ad fields.
                 if (!responseTextMightContainAds(sourceText, xhr._ytab_url)) return;

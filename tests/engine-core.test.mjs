@@ -125,6 +125,8 @@ function createTestHarness(options = {}) {
         matchesInterceptPattern,
         replaceAdKeys,
         responseTextMightContainAds,
+        scrubAdManifestText,
+        manifestTextMightContainAds,
         injectNoAdFlag,
         rewriteRequestBodyText,
         handleExtensionBlockChannel,
@@ -419,6 +421,49 @@ test('webpack factory matcher uses the active token database and size guard', ()
     assert.equal(h.webpackFactoryMatchesAdSignature('function(){return paidAdRendererFactory && true;}'), true);
     assert.equal(h.webpackFactoryMatchesAdSignature('function(){return ordinaryRenderer && true;}'), false);
     assert.equal(h.webpackFactoryMatchesAdSignature(`function(){return ${'paidAdRendererFactory'.repeat(8)};}`), false);
+});
+
+// ========== DASH / HLS manifest scrub ==========
+
+test('manifest scrub removes HLS ctier ad segments and keeps content segments', () => {
+    const manifest = [
+        '#EXTM3U',
+        '#EXT-X-VERSION:3',
+        '#EXTINF:4.0,',
+        'https://rr1---sn.googlevideo.com/videoplayback?id=content-1&ctier=V',
+        '#EXTINF:5.0,',
+        'https://rr1---sn.googlevideo.com/videoplayback?id=ad-1&ctier=SA',
+        '#EXT-X-DISCONTINUITY',
+        '#EXTINF:4.0,',
+        'https://rr1---sn.googlevideo.com/videoplayback?id=content-2&ctier=V'
+    ].join('\n');
+
+    const result = harness.scrubAdManifestText(manifest);
+
+    assert.equal(result.changed, true);
+    assert.equal(harness.manifestTextMightContainAds(result.text), false);
+    assert.match(result.text, /content-1/);
+    assert.match(result.text, /content-2/);
+    assert.doesNotMatch(result.text, /ad-1|ctier=SA/);
+});
+
+test('manifest scrub removes DASH ad representations with ctier segments', () => {
+    const manifest = [
+        '<MPD>',
+        '<Period>',
+        '<AdaptationSet>',
+        '<Representation id="main"><BaseURL>https://rr1---sn.googlevideo.com/videoplayback?id=content&ctier=V</BaseURL></Representation>',
+        '<Representation id="ad-sabr"><BaseURL>https://rr1---sn.googlevideo.com/videoplayback?id=ad&ctier=SR</BaseURL></Representation>',
+        '</AdaptationSet>',
+        '</Period>',
+        '</MPD>'
+    ].join('');
+
+    const result = harness.scrubAdManifestText(manifest);
+
+    assert.equal(result.changed, true);
+    assert.match(result.text, /id="main"/);
+    assert.doesNotMatch(result.text, /ad-sabr|ctier=SR/);
 });
 
 // ========== Signed filter manifest ==========
