@@ -337,16 +337,42 @@ test('parseUBOFilterList reports supported and unsupported scriptlet coverage', 
     const text = [
         'youtube.com##+js(set, ytInitialPlayerResponse.playerAds, undefined)',
         'youtube.com##+js(json-prune, playerResponse.adPlacements)',
-        'youtube.com##+js(trusted-replace-fetch-response, "adPlacements", "no_ads", player?)'
+        'youtube.com##+js(trusted-replace-fetch-response, "adPlacements", "no_ads", player?)',
+        'youtube.com##+js(trusted-json-edit-fetch-request, ..client[?.clientName=="WEB"]+={"clientScreen":"CHANNEL"}, propsToMatch, /player/)'
     ].join('\n');
     const result = harness.parseUBOFilterList(text);
     const supported = new Map(result.coverage.supportedScriptlets.map(item => [item.name, item.count]));
     const unsupported = new Map(result.coverage.unsupportedScriptlets.map(item => [item.name, item.count]));
 
-    assert.equal(result.coverage.appliedPrunePaths, 2);
+    assert.equal(result.coverage.appliedPrunePaths, 3);
     assert.equal(supported.get('set'), 1);
     assert.equal(supported.get('json-prune'), 1);
-    assert.equal(unsupported.get('trusted-replace-fetch-response'), 1);
+    assert.equal(supported.get('trusted-replace-fetch-response'), 1);
+    assert.equal(unsupported.get('trusted-json-edit-fetch-request'), 1);
+    assert.equal(result.replaceKeys.adPlacements, 'no_ads');
+});
+
+test('parseUBOFilterList supports safe response replacements and bundled bypass equivalents', () => {
+    const text = [
+        'www.youtube.com##+js(trusted-replace-fetch-response, \'"adSlots"\', \'"no_ads"\', player?)',
+        'www.youtube.com##+js(trusted-replace-xhr-response, \'"adPlacements"\', \'"no_ads"\', /player/)',
+        'www.youtube.com##+js(trusted-prevent-dom-bypass, Node.prototype.appendChild, fetch)',
+        'www.youtube.com##+js(trusted-prevent-dom-bypass, Node.prototype.appendChild, Request)',
+        'www.youtube.com##+js(trusted-prevent-dom-bypass, Node.prototype.appendChild, JSON.parse)',
+        'www.youtube.com##+js(nano-stb, [native code], 17000, 0.001)',
+        'www.youtube.com##+js(trusted-rpnt, script, unsafe, replacement)'
+    ].join('\n');
+    const result = harness.parseUBOFilterList(text);
+    const supported = new Map(result.coverage.supportedScriptlets.map(item => [item.name, item.count]));
+    const unsupported = new Map(result.coverage.unsupportedScriptlets.map(item => [item.name, item.count]));
+
+    assert.equal(result.replaceKeys.adSlots, 'no_ads');
+    assert.equal(result.replaceKeys.adPlacements, 'no_ads');
+    assert.equal(supported.get('trusted-replace-fetch-response'), 1);
+    assert.equal(supported.get('trusted-replace-xhr-response'), 1);
+    assert.equal(supported.get('trusted-prevent-dom-bypass'), 3);
+    assert.equal(supported.get('nano-stb'), 1);
+    assert.equal(unsupported.get('trusted-rpnt'), 1);
 });
 
 // ========== Signed filter manifest ==========

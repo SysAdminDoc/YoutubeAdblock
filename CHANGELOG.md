@@ -2,6 +2,13 @@
 
 All notable changes to YoutubeAdblock are documented here.
 
+## [0.5.15] - 2026-06-28
+
+### Added
+- Added safe local support for selected uBO YouTube quick-fix scriptlets:
+  response field replacement, DOM-bypass prevention, and `nano-stb` timer
+  coverage now report as supported and feed the existing bundled engines.
+
 ## [0.5.14] - 2026-06-28
 
 ### Added

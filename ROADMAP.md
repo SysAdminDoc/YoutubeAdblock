@@ -52,12 +52,6 @@ Evidence and competitive context: see RESEARCH.md (consolidated; older inline re
 ### P0 - release trust
 
 ### P1 - permission and packaging hardening
-- [ ] P1 - Implement top unsupported uBO YouTube scriptlet equivalents
-  Why: The filter list still carries high-value unsupported rules; coverage reporting is honest now, but protection improves only when safe equivalents are bundled locally.
-  Evidence: `youtube-adblock-filters.txt:65`, `youtube-adblock-filters.txt:93`, `YoutubeAdblock.user.js:1144`, uBO `quick-fixes.txt`.
-  Touches: filter parser, engine installers, diagnostics coverage, unit tests.
-  Acceptance: signed filter refresh reports local support for selected `trusted-rpnt`, `trusted-json-edit-fetch-request`, `trusted-replace-outbound-text`, `trusted-prevent-dom-bypass`, `aeld`, or `trusted-set` patterns without executing remote code.
-  Complexity: L
 
 ### P2 - validation and migration
 - [ ] P2 - Validate real userscript-manager and mobile install paths

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         YoutubeAdblock
 // @namespace    https://github.com/SysAdminDoc
-// @version      0.5.14
+// @version      0.5.15
 // @description  YouTube ad blocker with remote rules, anti-detect hardening, toString-hiding proxies, DeArrow + RYD, volume boost, UI cleanup, and an in-page Control Center
 // @author       SysAdminDoc
 // @license      MIT
@@ -41,7 +41,7 @@
      * ===================================================================== */
 
     const SCRIPT_NAME = 'YoutubeAdblock';
-    const SCRIPT_VERSION = '0.5.14';
+    const SCRIPT_VERSION = '0.5.15';
     const PROJECT_URL = 'https://github.com/SysAdminDoc/YoutubeAdblock';
     const ISSUES_URL = `${PROJECT_URL}/issues`;
     const FILTER_URL_DEFAULT = 'https://raw.githubusercontent.com/SysAdminDoc/YoutubeAdblock/refs/heads/main/youtube-adblock-filters.txt';
@@ -1069,6 +1069,74 @@
         return clean;
     }
 
+    function splitScriptletArgs(argsStr) {
+        const parts = [];
+        let current = '';
+        let quote = '';
+        let escaped = false;
+        for (const ch of String(argsStr || '')) {
+            if (escaped) {
+                current += ch;
+                escaped = false;
+                continue;
+            }
+            if (ch === '\\') {
+                current += ch;
+                escaped = true;
+                continue;
+            }
+            if (quote) {
+                current += ch;
+                if (ch === quote) quote = '';
+                continue;
+            }
+            if (ch === '"' || ch === "'") {
+                quote = ch;
+                current += ch;
+                continue;
+            }
+            if (ch === ',') {
+                parts.push(current.trim());
+                current = '';
+                continue;
+            }
+            current += ch;
+        }
+        if (current.trim() || argsStr) parts.push(current.trim());
+        return parts;
+    }
+
+    function unwrapScriptletLiteral(value) {
+        let out = String(value || '').trim();
+        for (let i = 0; i < 2; i++) {
+            if (out.length >= 2 && ((out[0] === '"' && out[out.length - 1] === '"') || (out[0] === "'" && out[out.length - 1] === "'"))) {
+                out = out.slice(1, -1).replace(/\\(["'])/g, '$1').trim();
+            }
+        }
+        return out;
+    }
+
+    function addTrustedResponseReplacement(argsStr, replaceKeys) {
+        const parts = splitScriptletArgs(argsStr);
+        if (parts.length < 2) return false;
+        const sourceKey = unwrapScriptletLiteral(parts[0]);
+        const replacement = unwrapScriptletLiteral(parts[1]);
+        if (!SAFE_PLAIN_KEY_RE.test(sourceKey)) return false;
+        if (!SAFE_PLAIN_KEY_RE.test(replacement)) return false;
+        replaceKeys[sourceKey] = replacement;
+        return true;
+    }
+
+    function isSupportedDomBypassScriptlet(argsStr) {
+        const parts = splitScriptletArgs(argsStr).map(part => unwrapScriptletLiteral(part));
+        return parts[0] === 'Node.prototype.appendChild' && ['fetch', 'Request', 'JSON.parse'].includes(parts[1]);
+    }
+
+    function isSupportedNanoStbScriptlet(argsStr) {
+        const parts = splitScriptletArgs(argsStr).map(part => unwrapScriptletLiteral(part));
+        return parts.some(part => part === '17000');
+    }
+
     function summarizeScriptlets(mapLike) {
         const out = [];
         if (!mapLike) return out;
@@ -1151,6 +1219,7 @@
         const upsellSelectors = new Set();
         const setUndefined = new Set();
         const pruneKeys = new Set();
+        const replaceKeys = {};
         const supportedScriptlets = new Map();
         const unsupportedScriptlets = new Map();
         let networkOnlyRules = 0;
@@ -1183,7 +1252,7 @@
                 const name = scriptlet.trim();
 
                 if (name === 'set' && argsStr) {
-                    const parts = argsStr.split(',').map(s => s.trim());
+                    const parts = splitScriptletArgs(argsStr);
                     if (parts.length >= 2 && parts[1] === 'undefined' && setUndefined.size < FILTER_MAX_SET_UNDEFINED) {
                         const path = parts[0];
                         // Only accept identifier.path syntax — reject anything with
@@ -1195,6 +1264,24 @@
                     countScriptlet(supportedScriptlets, name);
                 } else if (name === 'json-prune' || name === 'json-prune-fetch-response' || name === 'json-prune-xhr-response') {
                     countScriptlet(supportedScriptlets, name);
+                } else if (name === 'trusted-replace-fetch-response' || name === 'trusted-replace-xhr-response') {
+                    if (argsStr && addTrustedResponseReplacement(argsStr, replaceKeys)) {
+                        countScriptlet(supportedScriptlets, name);
+                    } else {
+                        countScriptlet(unsupportedScriptlets, name);
+                    }
+                } else if (name === 'trusted-prevent-dom-bypass') {
+                    if (argsStr && isSupportedDomBypassScriptlet(argsStr)) {
+                        countScriptlet(supportedScriptlets, name);
+                    } else {
+                        countScriptlet(unsupportedScriptlets, name);
+                    }
+                } else if (name === 'nano-stb') {
+                    if (argsStr && isSupportedNanoStbScriptlet(argsStr)) {
+                        countScriptlet(supportedScriptlets, name);
+                    } else {
+                        countScriptlet(unsupportedScriptlets, name);
+                    }
                 } else {
                     countScriptlet(unsupportedScriptlets, name);
                 }
@@ -1274,13 +1361,13 @@
             filterCount,
             pruneKeys: [...new Set([...DEFAULT_FILTERS.pruneKeys, ...pruneKeys])],
             setUndefined: [...new Set([...DEFAULT_FILTERS.setUndefined, ...setUndefined])],
-            replaceKeys: DEFAULT_FILTERS.replaceKeys,
+            replaceKeys: { ...DEFAULT_FILTERS.replaceKeys, ...replaceKeys },
             interceptPatterns: DEFAULT_FILTERS.interceptPatterns,
             cosmeticSelectors: [...new Set([...DEFAULT_FILTERS.cosmeticSelectors, ...cosmeticSelectors])],
             upsellSelectors: [...new Set([...DEFAULT_FILTERS.upsellSelectors, ...upsellSelectors])],
             coverage: sanitizeFilterCoverage({
                 appliedSelectors: cosmeticSelectors.size + upsellSelectors.size,
-                appliedPrunePaths: pruneKeys.size + setUndefined.size,
+                appliedPrunePaths: pruneKeys.size + setUndefined.size + Object.keys(replaceKeys).length,
                 networkOnlyRules,
                 droppedUnsafeSelectors,
                 supportedScriptlets: summarizeScriptlets(supportedScriptlets),
