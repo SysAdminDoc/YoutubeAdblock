@@ -10,11 +10,13 @@ directly — your changes will be overwritten on the next build.
 | File | Role |
 |------|------|
 | `manifest.json` | MV3 manifest for Chromium 121+ and Firefox 128+ |
-| `main.js` *(generated)* | Page-world (MAIN) content script — the ad-blocking engine |
+| `main.js` *(generated)* | Page-world (MAIN) content script - the ad-blocking engine |
 | `bridge.js` | Isolated-world content script, relays `chrome.*` events/messages into the page-world via DOM `CustomEvent` |
 | `background.js` | Service worker: toolbar action, keyboard commands, right-click context menu, tab-messaging relay |
-| `rules/network-blocks.json` | declarativeNetRequest rules — network-layer blocks |
-| `icons/` | 16 / 32 / 48 / 128 PNG icons |
+| `rules/network-blocks.json` | declarativeNetRequest rules - network-layer blocks |
+
+The manifest intentionally omits extension icons until replacement branding is
+available, so browsers show their default toolbar icon.
 
 ## Architecture
 
@@ -118,12 +120,27 @@ outside developer-mode or managed-policy flows.
 Re-bind from `chrome://extensions/shortcuts` or
 `about:addons` → gear → *Manage Extension Shortcuts*.
 
-## Release workflow
+## Local release workflow
 
-`.github/workflows/build.yml` regenerates `main.js`, zips the
-`extension/` folder, and uploads the zip + userscript to the matching
-GitHub release on `v*` tag push. Run it manually via the **Actions**
-tab for pre-release packages. When `CHROMIUM_EXTENSION_KEY_B64` is configured
-as a GitHub Actions secret, the workflow also packages and uploads a `.crx`
-asset. Without that secret, maintainers can run `Build-CRX.ps1` locally and
-attach the signed `.crx` manually.
+This repo uses local builds only. From the repo root:
+
+1. Regenerate the extension engine:
+
+   ```powershell
+   powershell -NoProfile -ExecutionPolicy Bypass -File .\Build-Extension.ps1
+   ```
+
+2. Run the local contract tests:
+
+   ```powershell
+   node --test tests/*.mjs
+   ```
+
+3. Package a signed Chromium CRX when a CRX artifact is needed:
+
+   ```powershell
+   powershell -NoProfile -ExecutionPolicy Bypass -File .\Build-CRX.ps1
+   ```
+
+4. Attach the generated userscript, unpacked-extension zip, XPI, or CRX
+   artifacts to GitHub Releases manually.

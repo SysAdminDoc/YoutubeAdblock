@@ -14,7 +14,8 @@ function read(relativePath) {
 const userscript = read('YoutubeAdblock.user.js');
 const manifest = JSON.parse(read(path.join('extension', 'manifest.json')));
 const rules = JSON.parse(read(path.join('extension', 'rules', 'network-blocks.json')));
-const workflow = read(path.join('.github', 'workflows', 'build.yml'));
+const buildExtension = read('Build-Extension.ps1');
+const buildCrx = read('Build-CRX.ps1');
 const background = read(path.join('extension', 'background.js'));
 const extensionReadme = read(path.join('extension', 'README.md'));
 const generatedMain = read(path.join('extension', 'main.js'));
@@ -45,15 +46,23 @@ test('fetch and XHR fast-reject checks keep URL context for Shorts-specific prun
     assert.match(userscript, /responseTextMightContainAds\(sourceText,\s*xhr\._ytab_url\)/);
 });
 
-test('release workflow can package and upload CRX assets when a signing key secret is configured', () => {
-    assert.match(workflow, /CHROMIUM_EXTENSION_KEY_B64/);
-    assert.match(workflow, /trap 'rm -f "YoutubeAdblock-extension\.pem"' EXIT/);
-    assert.match(workflow, /npx --yes crx3@2\.0\.0/);
-    assert.match(workflow, /YoutubeAdblock-extension-v\$\{VERSION\}\.crx/);
+test('local release contract uses repo scripts instead of deleted GitHub workflows', () => {
+    assert.equal(fs.existsSync(path.join(repoRoot, '.github', 'workflows', 'build.yml')), false,
+        'deleted GitHub Actions workflow must not be part of the release contract');
+    assert.match(buildExtension, /Build-Extension\.ps1/);
+    assert.match(buildCrx, /Build-Extension\.ps1/);
+    assert.match(buildCrx, /YoutubeAdblock-extension-v\$version\.crx/);
+    assert.match(extensionReadme, /Build-Extension\.ps1/);
+    assert.match(extensionReadme, /Build-CRX\.ps1/);
+    assert.doesNotMatch(extensionReadme, /\.github\/workflows|GitHub Actions|CHROMIUM_EXTENSION_KEY_B64|Actions tab/);
 });
 
-test('extension README does not over-promise CRX automation without a signing key secret', () => {
-    assert.match(extensionReadme, /When `CHROMIUM_EXTENSION_KEY_B64` is configured/i);
+test('extension README reflects the current iconless manifest', () => {
+    assert.equal('icons' in manifest, false, 'manifest should stay iconless until replacement branding ships');
+    assert.equal('default_icon' in manifest.action, false,
+        'browser action should stay iconless until replacement branding ships');
+    assert.doesNotMatch(extensionReadme, /\|\s*`icons\/`\s*\|/);
+    assert.match(extensionReadme, /default toolbar icon/i);
 });
 
 test('extension settings sync only rebuilds the panel when mirrored settings actually changed', () => {
