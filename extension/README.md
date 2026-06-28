@@ -123,7 +123,15 @@ Re-bind from `chrome://extensions/shortcuts` or
 
 ## Local release workflow
 
-This repo uses local builds only. From the repo root:
+This repo uses local builds only. For the full release gate from the repo root:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\Build-Release.ps1
+```
+
+That command regenerates generated files, runs syntax checks and tests,
+validates DNR freshness, cleans stale artifacts, and writes current artifacts
+to `dist/`. For manual steps:
 
 1. Regenerate the extension engine:
 

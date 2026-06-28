@@ -16,6 +16,7 @@ const manifest = JSON.parse(read(path.join('extension', 'manifest.json')));
 const rules = JSON.parse(read(path.join('extension', 'rules', 'network-blocks.json')));
 const networkRuleSource = JSON.parse(read(path.join('extension', 'rules', 'network-rules-source.json')));
 const buildExtension = read('Build-Extension.ps1');
+const buildRelease = read('Build-Release.ps1');
 const buildCrx = read('Build-CRX.ps1');
 const background = read(path.join('extension', 'background.js'));
 const extensionReadme = read(path.join('extension', 'README.md'));
@@ -64,6 +65,19 @@ test('local release contract uses repo scripts instead of deleted GitHub workflo
     assert.match(extensionReadme, /Build-Extension\.ps1/);
     assert.match(extensionReadme, /Build-CRX\.ps1/);
     assert.doesNotMatch(extensionReadme, /\.github\/workflows|GitHub Actions|CHROMIUM_EXTENSION_KEY_B64|Actions tab/);
+});
+
+test('one-command release gate runs local checks and packages fresh artifacts', () => {
+    assert.match(buildRelease, /Build-Extension\.ps1/);
+    assert.match(buildRelease, /node --check/);
+    assert.match(buildRelease, /node --test/);
+    assert.match(buildRelease, /network-blocks\.json/);
+    assert.match(buildRelease, /YoutubeAdblock-v\$version\.user\.js/);
+    assert.match(buildRelease, /YoutubeAdblock-extension-v\$version\.zip/);
+    assert.match(buildRelease, /YoutubeAdblock-extension-v\$version\.xpi/);
+    assert.match(buildRelease, /Build-CRX\.ps1/);
+    assert.match(readme, /Build-Release\.ps1/);
+    assert.match(extensionReadme, /Build-Release\.ps1/);
 });
 
 test('extension README reflects the current iconless manifest', () => {
