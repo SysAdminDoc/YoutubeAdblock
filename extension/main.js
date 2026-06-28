@@ -125,7 +125,7 @@
      * ===================================================================== */
 
     const SCRIPT_NAME = 'YoutubeAdblock';
-    const SCRIPT_VERSION = '0.5.10';
+    const SCRIPT_VERSION = '0.5.11';
     const PROJECT_URL = 'https://github.com/SysAdminDoc/YoutubeAdblock';
     const ISSUES_URL = `${PROJECT_URL}/issues`;
     const FILTER_URL_DEFAULT = 'https://raw.githubusercontent.com/SysAdminDoc/YoutubeAdblock/refs/heads/main/youtube-adblock-filters.txt';
@@ -4517,6 +4517,7 @@
                 --text-2: #c3cbda;
                 --text-3: #8893a7;
                 width: min(760px, calc(100vw - 24px));
+                height: min(920px, calc(100vh - 24px));
                 max-height: min(920px, calc(100vh - 24px));
                 display: flex;
                 flex-direction: column;
@@ -5139,6 +5140,7 @@
                 inset: 0;
                 margin: 0;
                 cursor: pointer;
+                z-index: 1;
             }
             .${CSS_PREFIX}-toggle-track {
                 position: absolute;
@@ -5146,6 +5148,7 @@
                 border-radius: 999px;
                 background: rgba(255, 255, 255, 0.17);
                 border: 1px solid rgba(255, 255, 255, 0.08);
+                pointer-events: none;
                 transition: background 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
             }
             .${CSS_PREFIX}-toggle-track::after {
@@ -5299,8 +5302,9 @@
                         max(10px, env(safe-area-inset-left));
                 }
                 .${CSS_PREFIX}-panel {
-                    width: min(100vw - 8px, 100%);
-                    max-height: min(100vh - 8px, 100%);
+                    width: min(100%, calc(100vw - 8px));
+                    height: min(920px, calc(100vh - 8px));
+                    max-height: min(920px, calc(100vh - 8px));
                     border-radius: 22px;
                 }
                 .${CSS_PREFIX}-header,
@@ -6928,6 +6932,7 @@
             state.overlayEl = null;
             state.panelEl = null;
         }
+        if (show) injectSettingsCSS();
         // Build lazily: menu-triggered opens that happen before DOMContentLoaded
         // previously no-oped. If the body is ready, build on demand.
         if (show && !state.overlayEl && document.body) {

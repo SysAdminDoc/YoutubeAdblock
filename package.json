@@ -1,0 +1,12 @@
+{
+  "name": "youtube-adblock",
+  "version": "0.5.11",
+  "private": true,
+  "scripts": {
+    "test": "node --test tests/*.mjs",
+    "test:browser": "node --test tests/browser-smoke.test.mjs"
+  },
+  "devDependencies": {
+    "playwright-core": "^1.61.1"
+  }
+}

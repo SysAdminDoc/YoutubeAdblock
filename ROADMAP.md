@@ -56,12 +56,6 @@ Evidence and competitive context: see RESEARCH.md (consolidated; older inline re
 ### Audit-Surfaced Items
 
 ### P0 - release trust
-- [ ] P0 - Fix Control Center browser-smoke failures
-  Why: The local test suite fails before release because the master toggle is not pointer-clickable in userscript mode and extension Control Center panels overflow test viewports.
-  Evidence: `npm test`, `tests/browser-smoke.test.mjs:146`, `.ytab-toggle-track` click interception, panel heights 2537-2987 px vs 760-844 px viewports.
-  Touches: Control Center toggle CSS/markup, panel sizing CSS, `tests/browser-smoke.test.mjs`.
-  Acceptance: `npm test` passes; master toggle can be clicked through Playwright and by pointer users; panel bounding box stays within desktop, mobile, Music, and Kids smoke viewports.
-  Complexity: M
 - [ ] P0 - Reconcile the v0.5.11 release state before publishing
   Why: The working tree reports v0.5.11 while `HEAD`/`origin/main` remains tagged v0.5.10, so release docs, manifests, generated files, artifacts, and tags can drift.
   Evidence: `git log -10`, `git status --short`, `README.md:3`, `YoutubeAdblock.user.js:4`, `extension/manifest.json:3`.

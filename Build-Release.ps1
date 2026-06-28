@@ -134,6 +134,10 @@ Invoke-Checked { & node --check $sourcePath } 'node --check failed on YoutubeAdb
 Invoke-Checked { & node --check $mainPath } 'node --check failed on extension/main.js'
 Invoke-Checked { & node --check (Join-Path $repoRootAbs 'extension\background.js') } 'node --check failed on extension/background.js'
 Invoke-Checked { & node --check (Join-Path $repoRootAbs 'extension\bridge.js') } 'node --check failed on extension/bridge.js'
+$playwrightCorePath = Join-Path $repoRootAbs 'node_modules\playwright-core'
+if (-not (Test-Path -LiteralPath $playwrightCorePath)) {
+    throw 'Browser smoke dependencies are missing. Run npm ci before Build-Release.ps1.'
+}
 Invoke-Checked { & node --test (Join-Path $repoRootAbs 'tests\*.mjs') } 'Node test suite failed.'
 
 $artifactSet = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)

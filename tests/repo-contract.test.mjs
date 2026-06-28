@@ -18,6 +18,7 @@ const networkRuleSource = JSON.parse(read(path.join('extension', 'rules', 'netwo
 const filterManifest = JSON.parse(read('youtube-adblock-filters.manifest.json'));
 const filterSignature = read('youtube-adblock-filters.txt.sig').trim();
 const gitignore = read('.gitignore');
+const packageJson = JSON.parse(read('package.json'));
 const buildExtension = read('Build-Extension.ps1');
 const buildRelease = read('Build-Release.ps1');
 const buildCrx = read('Build-CRX.ps1');
@@ -75,6 +76,7 @@ test('one-command release gate runs local checks and packages fresh artifacts', 
     assert.match(buildRelease, /Build-Extension\.ps1/);
     assert.match(buildRelease, /node --check/);
     assert.match(buildRelease, /node --test/);
+    assert.match(buildRelease, /node_modules\\playwright-core/);
     assert.match(buildRelease, /network-blocks\.json/);
     assert.match(buildRelease, /sign-filter-manifest\.mjs/);
     assert.match(buildRelease, /YoutubeAdblock-v\$version\.user\.js/);
@@ -83,6 +85,14 @@ test('one-command release gate runs local checks and packages fresh artifacts', 
     assert.match(buildRelease, /Build-CRX\.ps1/);
     assert.match(readme, /Build-Release\.ps1/);
     assert.match(extensionReadme, /Build-Release\.ps1/);
+});
+
+test('browser smoke matrix is wired into the local test suite', () => {
+    assert.equal(packageJson.private, true);
+    assert.equal(packageJson.scripts.test, 'node --test tests/*.mjs');
+    assert.equal(packageJson.scripts['test:browser'], 'node --test tests/browser-smoke.test.mjs');
+    assert.ok(packageJson.devDependencies['playwright-core']);
+    assert.match(read(path.join('tests', 'browser-smoke.test.mjs')), /browser smoke matrix opens Control Center/);
 });
 
 test('filter manifest signer keeps remote rules signed without committing private keys', () => {

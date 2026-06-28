@@ -128,9 +128,11 @@ This repo uses local builds only. For the full release gate from the repo root:
 powershell -NoProfile -ExecutionPolicy Bypass -File .\Build-Release.ps1
 ```
 
-That command regenerates generated files, runs syntax checks and tests,
-validates DNR freshness, signs or verifies the filter manifest, cleans stale
-artifacts, and writes current artifacts to `dist/`. For manual steps:
+Run `npm ci` once before the full gate so browser-smoke dependencies are
+present. That command regenerates generated files, runs syntax checks and
+tests, validates DNR freshness, signs or verifies the filter manifest, runs
+the browser smoke matrix, cleans stale artifacts, and writes current artifacts
+to `dist/`. For manual steps:
 
 1. Regenerate the extension engine:
 
