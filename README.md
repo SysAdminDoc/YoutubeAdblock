@@ -1,6 +1,6 @@
 # YoutubeAdblock
 
-![Version](https://img.shields.io/badge/version-0.5.6-58A6FF)
+![Version](https://img.shields.io/badge/version-0.5.7-58A6FF)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
 > A document-start YouTube ad blocker with a split-context proxy engine, remote rule support, and a premium Control Center for tuning protection.
@@ -87,6 +87,7 @@ If you trigger the extension while you are not already on YouTube, YoutubeAdbloc
 | Engine Health Monitor | Tracks per-engine install success and surfaces degraded-protection warnings in the Control Center when YouTube's locker script or a competing blocker locks a native | Enabled |
 | DeArrow Titles & Thumbnails | Replaces clickbait titles and thumbnails with crowd-submitted alternatives via the privacy-preserving DeArrow hash-prefix API *(userscript only — extension build pending API permission)* | Optional |
 | Return YouTube Dislike | Restores the public dislike count under the like button | Optional |
+| Force Original Audio | Switches back to the original-language audio track when YouTube defaults to an auto-dubbed or translated track | Optional |
 | Volume Boost | Web Audio gain stage up to 5x with an inline slider in the player controls | Optional |
 | Clutter-Free Mode | Eight Unhook-style toggles: home feed, Shorts shelves, Shorts tab, related videos, comments, end-screen cards, live chat, merch shelves | Optional |
 | Channel + Keyword Blocklist | Strips videos whose channel or title matches local blocklists. Channel entries support names, `UC...` IDs, `@handles`, channel URLs, regex, and JSON/plain-text import-export | Optional |

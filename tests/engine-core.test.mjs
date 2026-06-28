@@ -103,6 +103,9 @@ function createTestHarness(options = {}) {
         normalizeBlocklistText,
         buildSettingsExportPayload,
         importSettingsPayload,
+        audioTrackHasOriginalMarker,
+        pickOriginalAudioTrack,
+        applyOriginalAudioTrack,
         matchesInterceptPattern,
         replaceAdKeys,
         responseTextMightContainAds,
@@ -388,6 +391,47 @@ test('rewriteRequestBodyText returns null for non-player bodies', () => {
     assert.equal(harness.rewriteRequestBodyText('not json'), null);
     assert.equal(harness.rewriteRequestBodyText(null), null);
     assert.equal(harness.rewriteRequestBodyText(''), null);
+});
+
+// ========== Original audio track forcing ==========
+
+test('pickOriginalAudioTrack selects explicitly marked original audio', () => {
+    const tracks = [
+        { id: 'en-dub', displayName: 'English dubbed audio' },
+        { id: 'ja-original', displayName: 'Japanese (Original)' },
+    ];
+
+    const selected = harness.pickOriginalAudioTrack(tracks, tracks[0]);
+
+    assert.equal(selected, tracks[1]);
+    assert.equal(harness.audioTrackHasOriginalMarker(selected), true);
+});
+
+test('pickOriginalAudioTrack returns null when current audio is already original', () => {
+    const tracks = [
+        { id: 'en-original', displayName: 'English Original audio' },
+        { id: 'es-dub', displayName: 'Spanish dubbed audio' },
+    ];
+
+    assert.equal(harness.pickOriginalAudioTrack(tracks, tracks[0]), null);
+});
+
+test('applyOriginalAudioTrack uses the player API when enabled', () => {
+    const h = createTestHarness();
+    h.state.features.forceOriginalAudio = true;
+    const tracks = [
+        { id: 'en-auto', audioTrack: { name: 'English translated' } },
+        { id: 'ko-original', audioTrack: { name: 'Korean Original' } },
+    ];
+    let selected = null;
+    const player = {
+        getAvailableAudioTracks: () => tracks,
+        getAudioTrack: () => tracks[0],
+        setAudioTrack: track => { selected = track; },
+    };
+
+    assert.equal(h.applyOriginalAudioTrack(player), true);
+    assert.equal(selected, tracks[1]);
 });
 
 // ========== Extension context-menu channel block ==========

@@ -125,7 +125,7 @@
      * ===================================================================== */
 
     const SCRIPT_NAME = 'YoutubeAdblock';
-    const SCRIPT_VERSION = '0.5.6';
+    const SCRIPT_VERSION = '0.5.7';
     const PROJECT_URL = 'https://github.com/SysAdminDoc/YoutubeAdblock';
     const ISSUES_URL = `${PROJECT_URL}/issues`;
     const FILTER_URL_DEFAULT = 'https://raw.githubusercontent.com/SysAdminDoc/YoutubeAdblock/refs/heads/main/youtube-adblock-filters.txt';
@@ -289,6 +289,7 @@
             // is preserved; users opt in from the Control Center.
             dearrow: false,
             returnYoutubeDislike: false,
+            forceOriginalAudio: false,
             volumeBoost: false,
             shortsRedirect: false,
             channelBlocker: false,
@@ -440,6 +441,11 @@
                     key: 'returnYoutubeDislike',
                     label: 'Return YouTube Dislike',
                     desc: 'Restores the public dislike count under the like button using the Return YouTube Dislike archive.'
+                },
+                {
+                    key: 'forceOriginalAudio',
+                    label: 'Force original audio',
+                    desc: 'Switches back to the original-language audio track when YouTube defaults to an auto-dubbed or translated track.'
                 },
                 {
                     key: 'volumeBoost',
@@ -3324,6 +3330,156 @@
     }
 
     /* =========================================================================
+     * ENGINE: Original Audio Track Forcer
+     * =========================================================================
+     * YouTube can default to auto-dubbed or translated audio tracks. The player
+     * API exposes the active and available tracks after the watch page loads,
+     * so this helper picks an explicitly marked "original" track when one is
+     * available and leaves ambiguous track lists untouched.
+     * ===================================================================== */
+
+    const ORIGINAL_AUDIO_LABEL_RE = /\boriginal\b/i;
+    const DUBBED_AUDIO_LABEL_RE = /\b(auto[-\s]?dub|dubbed|translated|translation)\b/i;
+
+    const originalAudioState = {
+        lastAttemptKey: '',
+        lastAttemptAt: 0
+    };
+
+    function getAudioTrackSearchText(track) {
+        const parts = [];
+        const seen = new Set();
+
+        function walk(value, depth) {
+            if (value == null || depth > 4) return;
+            if (typeof value === 'string') {
+                const text = value.trim();
+                if (text) parts.push(text);
+                return;
+            }
+            if (typeof value !== 'object') return;
+            if (seen.has(value)) return;
+            seen.add(value);
+            for (const child of Object.values(value)) {
+                walk(child, depth + 1);
+            }
+        }
+
+        walk(track, 0);
+        return parts.join(' ');
+    }
+
+    function audioTrackIdentity(track) {
+        if (!track || typeof track !== 'object') return '';
+        const direct = track.id || track.audioTrackId || track.trackId || track.languageCode || track.vssId;
+        const nested = track.audioTrack?.id ||
+            track.audioTrack?.audioTrackId ||
+            track.audioTrack?.languageCode ||
+            track.captionTrack?.vssId ||
+            track.captionTrack?.languageCode ||
+            track.captionTrack?.name;
+        return String(direct || nested || getAudioTrackSearchText(track)).trim().toLowerCase();
+    }
+
+    function audioTracksSame(a, b) {
+        if (!a || !b) return false;
+        if (a === b) return true;
+        const aId = audioTrackIdentity(a);
+        const bId = audioTrackIdentity(b);
+        return !!aId && aId === bId;
+    }
+
+    function audioTrackHasOriginalMarker(track) {
+        return ORIGINAL_AUDIO_LABEL_RE.test(getAudioTrackSearchText(track));
+    }
+
+    function audioTrackHasDubbedMarker(track) {
+        return DUBBED_AUDIO_LABEL_RE.test(getAudioTrackSearchText(track));
+    }
+
+    function pickOriginalAudioTrack(tracks, currentTrack) {
+        if (!Array.isArray(tracks) || tracks.length < 2) return null;
+        if (currentTrack && audioTrackHasOriginalMarker(currentTrack)) return null;
+        const candidates = tracks
+            .filter(track => track && typeof track === 'object' && audioTrackHasOriginalMarker(track))
+            .filter(track => !audioTracksSame(track, currentTrack))
+            .sort((a, b) => {
+                const aScore = audioTrackHasDubbedMarker(a) ? 0 : 1;
+                const bScore = audioTrackHasDubbedMarker(b) ? 0 : 1;
+                return bScore - aScore;
+            });
+        return candidates[0] || null;
+    }
+
+    function getYoutubePlayerApi() {
+        const candidates = [
+            document.getElementById('movie_player'),
+            document.querySelector('#movie_player'),
+            document.querySelector('ytd-player #movie_player'),
+            document.querySelector('#shorts-player')
+        ];
+        return candidates.find(player =>
+            player &&
+            typeof player.getAvailableAudioTracks === 'function' &&
+            typeof player.setAudioTrack === 'function'
+        ) || null;
+    }
+
+    function applyOriginalAudioTrack(player) {
+        if (!isEnabled() || !state.features.forceOriginalAudio) return false;
+        if (!player || typeof player.getAvailableAudioTracks !== 'function' || typeof player.setAudioTrack !== 'function') {
+            return false;
+        }
+        let tracks;
+        try {
+            tracks = player.getAvailableAudioTracks();
+        } catch (e) {
+            return false;
+        }
+        const current = typeof player.getAudioTrack === 'function'
+            ? (() => {
+                try { return player.getAudioTrack(); } catch (e) { return null; }
+            })()
+            : null;
+        const target = pickOriginalAudioTrack(tracks, current);
+        if (!target) return false;
+
+        const videoKey = getCurrentVideoId() || location.href || 'unknown';
+        const attemptKey = `${videoKey}|${audioTrackIdentity(target)}`;
+        const now = Date.now();
+        if (originalAudioState.lastAttemptKey === attemptKey && now - originalAudioState.lastAttemptAt < 10000) {
+            return false;
+        }
+
+        try {
+            player.setAudioTrack(target);
+            originalAudioState.lastAttemptKey = attemptKey;
+            originalAudioState.lastAttemptAt = now;
+            return true;
+        } catch (e) {
+            return false;
+        }
+    }
+
+    function enforceOriginalAudioTrack() {
+        const player = getYoutubePlayerApi();
+        if (!player) return false;
+        return applyOriginalAudioTrack(player);
+    }
+
+    function installOriginalAudioForcer() {
+        const tick = () => {
+            try { enforceOriginalAudioTrack(); } catch (e) { /* keep player playback untouched */ }
+        };
+        registerInterval(tick, 2500);
+        document.addEventListener('yt-navigate-finish', () => {
+            originalAudioState.lastAttemptKey = '';
+            originalAudioState.lastAttemptAt = 0;
+            tick();
+        });
+    }
+
+    /* =========================================================================
      * ENGINE: Volume Boost (Web Audio)
      * =========================================================================
      * The HTMLMediaElement.volume ceiling is 1.0. For quiet videos we attach
@@ -3961,6 +4117,7 @@
             ['CosmeticCSS', updateCosmeticCSS],
             ['DeArrow', installDeArrow],
             ['ReturnYoutubeDislike', installReturnYoutubeDislike],
+            ['OriginalAudioForcer', installOriginalAudioForcer],
             ['VolumeBoost', installVolumeBoost],
             ['ClutterCSS', updateClutterCSS],
             ['ShortsRedirect', installShortsRedirect],
@@ -6269,6 +6426,9 @@
         }
         if (key === 'returnYoutubeDislike' && checked) {
             try { sweepRyd(); } catch (e) { /* ignore */ }
+        }
+        if (key === 'forceOriginalAudio' && checked) {
+            try { enforceOriginalAudioTrack(); } catch (e) { /* ignore */ }
         }
         if (key === 'shortsRedirect' && checked) {
             try { redirectShortsIfNeeded(); } catch (e) { /* ignore */ }
