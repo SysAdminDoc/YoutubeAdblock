@@ -96,6 +96,13 @@ test('Firefox XPI docs do not claim unsigned local artifacts are signed releases
     assert.match(extensionReadme, /do not publish that file as\s+a signed install asset/);
 });
 
+test('extension build does not request inactive DeArrow thumbnail host access', () => {
+    assert.equal(manifest.host_permissions.includes('https://dearrow-thumb.ajay.app/*'), false);
+    assert.match(userscript, /^\/\/\s*@connect\s+dearrow-thumb\.ajay\.app\s*$/m,
+        'userscript DeArrow thumbnail access should remain available');
+    assert.match(extensionReadme, /does not request DeArrow thumbnail host access/);
+});
+
 test('browser smoke matrix is wired into the local test suite', () => {
     assert.equal(packageJson.private, true);
     assert.equal(packageJson.scripts.test, 'node --test tests/*.mjs');

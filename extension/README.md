@@ -65,6 +65,9 @@ the safest sources are hosts that allow direct browser fetches from
 YouTube pages. The recommended GitHub-hosted list is the default because
 it works cleanly without adding broader extension fetch permissions.
 
+DeArrow remains userscript-only until its extension API permission is resolved,
+so the extension manifest does not request DeArrow thumbnail host access.
+
 ## Install — Chrome / Edge / Brave (Chromium 121+)
 
 1. Clone the repo locally.

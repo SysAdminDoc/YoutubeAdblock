@@ -2,6 +2,12 @@
 
 All notable changes to YoutubeAdblock are documented here.
 
+## [0.5.13] - 2026-06-28
+
+### Changed
+- Removed inactive DeArrow thumbnail host access from the MV3 extension
+  manifest while keeping userscript-only DeArrow thumbnail access available.
+
 ## [0.5.12] - 2026-06-28
 
 ### Fixed

@@ -52,12 +52,6 @@ Evidence and competitive context: see RESEARCH.md (consolidated; older inline re
 ### P0 - release trust
 
 ### P1 - permission and packaging hardening
-- [ ] P1 - Remove inactive DeArrow thumbnail permission from the extension build
-  Why: DeArrow is forced off in MV3 pending API permission, so requesting `dearrow-thumb.ajay.app` increases review and user-trust friction without enabling a feature.
-  Evidence: `extension/manifest.json`, `YoutubeAdblock.user.js:657`, `YoutubeAdblock.user.js:5828`, Chrome extension security guidance.
-  Touches: `extension/manifest.json`, `Build-Extension.ps1`, docs, repo-contract tests.
-  Acceptance: extension install prompt no longer lists DeArrow thumbnail host access while DeArrow remains locked in extension mode.
-  Complexity: S
 - [ ] P1 - Add release artifact verification
   Why: Local builds produce install artifacts, but the release gate does not verify ZIP entry paths, CRX3 structure/signature, extension ID stability, XPI signing status, or artifact hashes.
   Evidence: `Build-Release.ps1`, `Build-CRX.ps1`, Chrome MV3 packaging rules.
