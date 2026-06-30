@@ -122,3 +122,49 @@ Evidence and competitive context: see RESEARCH.md (consolidated; older inline re
   Touches: new non-md tool under `tools/`, `youtube-adblock-filters.txt`, `webpack-ad-signatures.json`, filter/signature manifests, tests.
   Acceptance: A local command fetches upstream quick-fixes, maps supported scriptlets to bundled equivalents, leaves dangerous/unsupported rules as rejected coverage, re-signs filter/signature data, and runs the relevant parser/signature tests.
   Complexity: M
+
+### P1 - distribution trust additions
+
+- [ ] P1 — Add a userscript marketplace preflight
+  Why: Raw GitHub install works, but Greasy Fork/OpenUserJS-style distribution has separate readable-code, size, `@connect`, and external-service disclosure constraints that are not covered by the extension store preflight.
+  Evidence: Greasy Fork code rules, `YoutubeAdblock.user.js:2-33`, `YoutubeAdblock.user.js` size 371190 bytes, `README.md:8-55`.
+  Touches: new non-md verifier under `tools/`, `tests/repo-contract.test.mjs`, `Build-Release.ps1`, README distribution notes.
+  Acceptance: Local release checks fail when the userscript exceeds marketplace size limits, drops required metadata/update URLs, adds undisclosed `@connect` hosts, becomes minified/obfuscated, or uses external services without README disclosure.
+  Complexity: M
+
+- [ ] P1 — Add third-party filter and API license preflight
+  Why: The bundled filter list combines uBO, quick-fixes, EasyList, and annoyance sources while README only exposes the repo MIT license; community API data also has attribution and usage requirements.
+  Evidence: `youtube-adblock-filters.txt:1-8`, uAssets license, SponsorBlock/DeArrow API docs, Return YouTube Dislike usage rights, `YoutubeAdblock.user.js:6600-6614`.
+  Touches: `youtube-adblock-filters.txt`, README attribution/license section, `tools/verify-release-artifacts.mjs` or a new non-md license verifier, `tests/repo-contract.test.mjs`.
+  Acceptance: Release checks verify upstream filter/source attribution is present, README distinguishes project code license from bundled filter/data terms, and API attribution links remain visible in Control Center and docs.
+  Complexity: M
+
+- [ ] P1 — Emit release provenance metadata
+  Why: Checksums prove artifact bytes, but current artifacts do not record git SHA, dirty-tree state, tool versions, test command, Playwright version, or browser-smoke result alongside the release.
+  Evidence: `Build-Release.ps1:186-190`, `tools/verify-release-artifacts.mjs:218-240`, GitHub release asset digest metadata for v0.5.19.
+  Touches: `Build-Release.ps1`, `tools/verify-release-artifacts.mjs`, `tests/repo-contract.test.mjs`, release assets.
+  Acceptance: The release gate writes a versioned provenance JSON or text artifact with commit SHA, tag, clean/dirty status, Node/npm/Playwright versions, built artifact hashes, and test summary; verification fails if it is missing or mismatched.
+  Complexity: M
+
+### P2 - diagnostics and performance additions
+
+- [ ] P2 — Add extension DNR matched-rule diagnostics
+  Why: Page diagnostics cannot prove whether the browser network-layer rules actually fired, which makes extension-specific ad reports hard to triage.
+  Evidence: Chrome `declarativeNetRequest.getMatchedRules` docs, `extension/manifest.json:57-64`, `extension/rules/network-rules-source.json`, `buildDiagnosticsReport()` in `YoutubeAdblock.user.js:7626-7687`.
+  Touches: `extension/background.js`, `extension/bridge.js`, `YoutubeAdblock.user.js`, `extension/manifest.json`, `tests/background-contract.test.mjs`, `tests/bridge-security.test.mjs`.
+  Acceptance: Extension diagnostics include recent DNR rule IDs/counts for YouTube ad endpoints when feedback APIs are available, degrade cleanly without the feedback permission/API, and never expose non-YouTube browsing data.
+  Complexity: M
+
+- [ ] P2 — Add diagnostics redaction controls
+  Why: Current diagnostics include page path, user agent, filter URL, SSAI URL context, features, and rule metadata; future event bundles increase the chance of leaking video IDs or private custom filter query tokens.
+  Evidence: `YoutubeAdblock.user.js:7626-7687`, SponsorBlock hash-prefix privacy pattern, existing roadmap diagnostic bundle item.
+  Touches: `buildDiagnosticsReport()` in `YoutubeAdblock.user.js`, Control Center diagnostics copy flow, `tests/engine-core.test.mjs`, `tests/browser-smoke.test.mjs`.
+  Acceptance: Copied diagnostics redact video IDs, query strings, custom filter tokens, and raw community API cache keys by default, with tests covering YouTube watch URLs, Shorts URLs, custom filter URLs, and SSAI URLs.
+  Complexity: S
+
+- [ ] P2 — Add parser and interceptor performance budgets
+  Why: Remote filters, InnerTube payloads, and webpack factories are bounded but not benchmarked, so regressions in hot document-start paths can ship while functional tests remain green.
+  Evidence: `YoutubeAdblock.user.js:1373-1384`, `YoutubeAdblock.user.js:3715-3817`, `tests/engine-core.test.mjs`, active uAssets commits and YouTube quick-fix churn.
+  Touches: `tests/engine-core.test.mjs` or a new non-md perf test under `tests/`, package scripts, parser/prune/webpack helper exports.
+  Acceptance: A local test command fails when parsing a 50k-line filter list, pruning representative large player/browse payloads, or scanning guarded webpack factories exceeds fixed budgets on this machine.
+  Complexity: M
