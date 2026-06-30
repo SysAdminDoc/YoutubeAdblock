@@ -46,13 +46,6 @@ Evidence and competitive context: see RESEARCH.md (consolidated; older inline re
 
 ### P2 - validation and migration
 
-- [ ] P0 — Publish the missing v0.5.20 GitHub release
-  Why: The repo is tagged and pushed at v0.5.20, but GitHub Releases still stops at v0.5.19, so users cannot install the latest verified artifacts.
-  Evidence: `gh release view v0.5.20 --repo SysAdminDoc/YoutubeAdblock` returned `release not found`; v0.5.19 release contains the expected userscript, ZIP, CRX, and checksum assets.
-  Touches: GitHub release assets, `dist/YoutubeAdblock-v0.5.20.*`, release notes.
-  Acceptance: `gh release view v0.5.20 --json assets` returns `YoutubeAdblock-v0.5.20.user.js`, `YoutubeAdblock-extension-v0.5.20.zip`, `YoutubeAdblock-extension-v0.5.20.crx`, and `YoutubeAdblock-v0.5.20.checksums.sha256`.
-  Complexity: S
-
 - [ ] P0 — Add a local release-publication guard
   Why: Local artifact verification passed, but publication remained manual and drifted at v0.5.20.
   Evidence: `Build-Release.ps1:186-190` verifies local artifacts only; `extension/README.md:164` says release assets are attached manually.
