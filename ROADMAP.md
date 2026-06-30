@@ -161,3 +161,30 @@ Evidence and competitive context: see RESEARCH.md (consolidated; older inline re
   Touches: `tests/engine-core.test.mjs` or a new non-md perf test under `tests/`, package scripts, parser/prune/webpack helper exports.
   Acceptance: A local test command fails when parsing a 50k-line filter list, pruning representative large player/browse payloads, or scanning guarded webpack factories exceeds fixed budgets on this machine.
   Complexity: M
+
+## Research-Driven Additions
+
+### P1 - trust boundary hardening
+
+- [ ] P1 — Move extension settings storage behind a trusted-context broker
+  Why: Page-world events can currently request allowlisted settings reads/writes through the bridge; Chrome supports hiding extension storage from untrusted contexts.
+  Evidence: `extension/bridge.js:260-424`, `tests/bridge-security.test.mjs:230-346`, Chrome `chrome.storage.*.setAccessLevel()` docs.
+  Touches: `extension/background.js`, `extension/bridge.js`, `tests/bridge-security.test.mjs`, `tests/background-contract.test.mjs`.
+  Acceptance: The service worker owns `chrome.storage.local/sync` reads and writes; bridge requests use `chrome.runtime.sendMessage`; storage access is restricted to trusted contexts where supported; tests prove page CustomEvents cannot directly reach `chrome.storage.*` and sync chunk/oversize behavior still works.
+  Complexity: L
+
+### P2 - regression and API resilience
+
+- [ ] P2 — Add closed-breakage replay fixtures for issue #1 and issue #2
+  Why: Both real user reports were severe playback/watch-page blockers, but current tests only cover narrower helper behavior and browser smoke.
+  Evidence: GitHub issues #1/#2, `CHANGELOG.md:246-260`, `YoutubeAdblock.user.js:2511-2563`, `tests/engine-core.test.mjs`, `tests/browser-smoke.test.mjs`.
+  Touches: `tests/engine-core.test.mjs`, `tests/browser-smoke.test.mjs`, test fixture helpers.
+  Acceptance: Local tests replay the 3-video playback blocker and the `/watch` `clientScreen` regression inputs; tests fail if comments/player `streamingData` is removed or if the retired `clientScreen` rewrite behavior returns.
+  Complexity: M
+
+- [ ] P2 — Add community API cooldown and retry diagnostics
+  Why: SponsorBlock/DeArrow/RYD failures currently collapse to null; RYD has known rate-limit pressure, and users need visible cooldown state instead of silent retry churn.
+  Evidence: `YoutubeAdblock.user.js:3294-3315`, `YoutubeAdblock.user.js:4012-4028`, `YoutubeAdblock.user.js:4170-4186`, SponsorBlock API docs, DeArrow API docs, Return YouTube Dislike issue #319, MDN HTTP 429 docs.
+  Touches: `YoutubeAdblock.user.js`, `tests/engine-core.test.mjs`, Control Center diagnostics/recovery UI.
+  Acceptance: 429 and `Retry-After` responses set per-service cooldowns, suppress repeated fetches until expiry, show cooldown/service status in diagnostics, preserve existing cache fallback, and tests cover SponsorBlock, DeArrow, and RYD cooldown behavior.
+  Complexity: M
