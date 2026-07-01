@@ -5,6 +5,10 @@ All notable changes to YoutubeAdblock are documented here.
 ## [Unreleased]
 
 ### Added
+- Converted SponsorBlock and RYD community API hosts from install-time
+  `host_permissions` to `optional_host_permissions` with runtime permission
+  request via the context menu. Permission status is tracked and reported in
+  diagnostics. Userscript behavior is unchanged.
 - Added a remote-rule capability denylist that rejects dangerous scriptlets
   (e.g. trusted-set-constant, trusted-set-attr, evaldata-prune) from remote
   filter lists. Rejected scriptlets are reported as rejected-dangerous in

@@ -127,6 +127,11 @@ chrome.commands.onCommand.addListener((name) => {
     }
 });
 
+const COMMUNITY_API_ORIGINS = [
+    'https://sponsor.ajay.app/*',
+    'https://returnyoutubedislikeapi.com/*'
+];
+
 const CONTEXT_MENU_ROOT = 'ytab-root';
 
 function rebuildContextMenu() {
@@ -170,6 +175,12 @@ function rebuildContextMenu() {
                 title: 'Block This Channel',
                 contexts: ['page', 'link']
             });
+            chrome.contextMenus.create({
+                id: 'ytab-grant-api-permissions',
+                parentId: CONTEXT_MENU_ROOT,
+                title: 'Grant Community API Access',
+                contexts: ['action', 'page']
+            });
         });
     } catch (e) { /* API may not be available on all channels */ }
 }
@@ -196,5 +207,22 @@ chrome.contextMenus.onClicked.addListener((info) => {
         case 'ytab-block-channel':
             sendToActiveTab({ type: 'ytab:block-channel' });
             break;
+        case 'ytab-grant-api-permissions':
+            chrome.permissions.request({ origins: COMMUNITY_API_ORIGINS }, (granted) => {
+                if (granted) {
+                    sendToActiveTab({ type: 'ytab:api-permissions-changed', granted: true });
+                }
+            });
+            break;
+    }
+});
+
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+    if (!msg || typeof msg !== 'object') return;
+    if (msg.type === 'ytab:check-api-permissions') {
+        chrome.permissions.contains({ origins: COMMUNITY_API_ORIGINS }, (result) => {
+            sendResponse({ granted: !!result });
+        });
+        return true;
     }
 });

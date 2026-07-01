@@ -108,6 +108,21 @@ test('extension build does not request inactive DeArrow thumbnail host access', 
     assert.match(extensionReadme, /does not request DeArrow thumbnail host access/);
 });
 
+test('community API hosts use optional runtime permissions instead of install-time grants', () => {
+    assert.equal(manifest.host_permissions.includes('https://sponsor.ajay.app/*'), false,
+        'SponsorBlock host must not be in install-time host_permissions');
+    assert.equal(manifest.host_permissions.includes('https://returnyoutubedislikeapi.com/*'), false,
+        'RYD host must not be in install-time host_permissions');
+    assert.ok(manifest.optional_host_permissions.includes('https://sponsor.ajay.app/*'),
+        'SponsorBlock host must be in optional_host_permissions');
+    assert.ok(manifest.optional_host_permissions.includes('https://returnyoutubedislikeapi.com/*'),
+        'RYD host must be in optional_host_permissions');
+    assert.match(background, /COMMUNITY_API_ORIGINS/);
+    assert.match(background, /permissions\.request/);
+    assert.match(background, /check-api-permissions/);
+    assert.match(userscript, /communityApiPermission/);
+});
+
 test('release gate verifies install artifacts before publishing', () => {
     assert.match(buildRelease, /verify-release-artifacts\.mjs/);
     assert.match(verifyReleaseArtifacts, /CRX3 SignedData/);

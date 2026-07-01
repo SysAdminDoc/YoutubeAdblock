@@ -616,6 +616,7 @@
             unsupportedScriptlets: 'Unsupported scriptlets',
             rejectedDangerousScriptlets: 'Rejected dangerous scriptlets',
             ssaiSignals: 'SSAI signals',
+            communityApiPermission: 'Community API permission',
             webpackSignatureSource: 'Webpack signature source',
             webpackSignatureVersion: 'Webpack signature version',
             webpackSignatureTokens: 'Webpack signature tokens',
@@ -894,6 +895,7 @@
         webpackSignatureError: '',
         webpackSignatureIntegrity: 'built-in',
         webpackSignatureSyncing: false,
+        communityApiPermission: IS_EXTENSION_BUILD ? 'pending' : 'granted',
         proxiesInstalled: false,
         overlayEl: null,
         panelEl: null,
@@ -7720,6 +7722,7 @@
             `${report.unsupportedScriptlets}: ${formatScriptletCoverage(coverage.unsupportedScriptlets)}`,
             `${report.rejectedDangerousScriptlets}: ${formatScriptletCoverage(coverage.rejectedDangerousScriptlets)}`,
             `${report.ssaiSignals}: detected=${state.stats.ssaiDetected || 0}, lastSeen=${state.ssaiLastSeen ? new Date(state.ssaiLastSeen).toISOString() : STRINGS.common.never}, lastUrl=${state.ssaiLastUrl || STRINGS.common.none}`,
+            `${report.communityApiPermission}: ${state.communityApiPermission || STRINGS.common.unknown}`,
             `${report.webpackSignatureSource}: ${state.webpackSignatureSource || STRINGS.common.unknown}`,
             `${report.webpackSignatureVersion}: ${state.webpackSignatureVersion || STRINGS.common.unknown}`,
             `${report.webpackSignatureTokens}: ${(state.webpackSignatureDatabase?.tokens || []).length}`,
@@ -7859,6 +7862,11 @@
 
     if (IS_EXTENSION_BUILD && typeof document !== 'undefined') {
         document.addEventListener('ytab:settings-changed', handleExtensionSettingsSync);
+        document.addEventListener('ytab:api-permissions-status', (event) => {
+            const detail = event && event.detail;
+            if (!detail || typeof detail !== 'object') return;
+            state.communityApiPermission = detail.granted ? 'granted' : 'denied';
+        });
     }
 
     // Phase 1: Load config and install proxies ASAP (document-start).

@@ -46,13 +46,6 @@ Evidence and competitive context: see RESEARCH.md (consolidated; older inline re
 
 ### P2 - validation and migration
 
-- [ ] P1 — Convert optional community API hosts to runtime permissions
-  Why: RYD is optional and SponsorBlock may be disabled by users, but extension install still requests both community API hosts up front.
-  Evidence: `extension/manifest.json:22-30`, Chrome/Mozilla permission guidance, README feature defaults.
-  Touches: `extension/manifest.json`, `extension/bridge.js`, `YoutubeAdblock.user.js`, `Build-Extension.ps1`, `tests/repo-contract.test.mjs`.
-  Acceptance: Optional API features request host access when enabled, handle denial with locked/off UI plus diagnostics, and keep default userscript behavior unchanged.
-  Complexity: L
-
 - [ ] P1 — Add store-policy preflight checks for the generated extension
   Why: Chrome and AMO reviews care about remote hosted code, broad permissions, unsigned XPI language, and background compatibility; these are currently spread across docs/tests instead of one preflight.
   Evidence: Chrome remote-hosted-code policy, Mozilla signing docs, `extension/manifest.json`, `tests/repo-contract.test.mjs:67-115`.

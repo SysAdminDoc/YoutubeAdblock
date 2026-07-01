@@ -24,7 +24,9 @@
     "*://www.youtube-nocookie.com/*",
     "*://youtubekids.com/*",
     "*://www.youtubekids.com/*",
-    "https://raw.githubusercontent.com/SysAdminDoc/YoutubeAdblock/*",
+    "https://raw.githubusercontent.com/SysAdminDoc/YoutubeAdblock/*"
+  ],
+  "optional_host_permissions": [
     "https://sponsor.ajay.app/*",
     "https://returnyoutubedislikeapi.com/*"
   ],

@@ -328,6 +328,11 @@
                 case 'ytab:block-channel':
                     document.dispatchEvent(new CustomEvent('ytab:block-channel'));
                     break;
+                case 'ytab:api-permissions-changed':
+                    document.dispatchEvent(new CustomEvent('ytab:api-permissions-status', {
+                        detail: { granted: !!msg.granted }
+                    }));
+                    break;
             }
         });
     } catch (e) { /* extension context gone, harmless */ }
@@ -442,11 +447,23 @@
         });
     } catch (e) { /* ignore */ }
 
+    function checkApiPermissions() {
+        try {
+            chrome.runtime.sendMessage({ type: 'ytab:check-api-permissions' }, (response) => {
+                if (chrome.runtime.lastError || !response) return;
+                document.dispatchEvent(new CustomEvent('ytab:api-permissions-status', {
+                    detail: { granted: !!response.granted }
+                }));
+            });
+        } catch (e) { /* ignore */ }
+    }
+
     // Best-effort early hydration on each load. The main-world script uses
     // localStorage as its synchronous read path, so we copy the mirrored
     // settings into localStorage immediately, then apply a newer
     // chrome.storage.sync snapshot if another signed-in browser wrote one.
     hydrateLocalThenSync();
+    checkApiPermissions();
 
     try {
         window.addEventListener('pagehide', flushPendingWrite, { capture: true });
