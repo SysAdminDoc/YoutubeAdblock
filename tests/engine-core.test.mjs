@@ -139,6 +139,7 @@ function createTestHarness(options = {}) {
         compileWebpackSignatureMatcher,
         webpackFactoryMatchesAdSignature,
         isDangerousScriptlet,
+        redactUrl,
         DEFAULT_FILTERS,
         DEFAULT_WEBPACK_SIGNATURE_DATABASE,
         state,
@@ -435,6 +436,35 @@ test('isDangerousScriptlet blocks dangerous trusted scriptlets', () => {
     assert.equal(harness.isDangerousScriptlet('trusted-suppress-native-method'), true);
     assert.equal(harness.isDangerousScriptlet('evaldata-prune'), true);
     assert.equal(harness.isDangerousScriptlet('trusted-unknown-future-scriptlet'), true);
+});
+
+// ========== diagnostics redaction ==========
+
+test('redactUrl removes video IDs from YouTube watch URLs', () => {
+    assert.match(harness.redactUrl('/watch?v=dQw4w9WgXcQ&t=42'), /\[video-id\]/);
+    assert.doesNotMatch(harness.redactUrl('/watch?v=dQw4w9WgXcQ&t=42'), /dQw4w9WgXcQ/);
+});
+
+test('redactUrl removes video IDs from Shorts URLs', () => {
+    assert.match(harness.redactUrl('/shorts/abc123XYZ'), /\[video-id\]/);
+    assert.doesNotMatch(harness.redactUrl('/shorts/abc123XYZ'), /abc123XYZ/);
+});
+
+test('redactUrl strips query strings from custom filter URLs', () => {
+    const result = harness.redactUrl('https://example.com/filters.txt?token=secret123');
+    assert.doesNotMatch(result, /secret123/);
+    assert.match(result, /\[redacted\]/);
+});
+
+test('redactUrl strips query strings from SSAI URLs', () => {
+    const result = harness.redactUrl('https://rr1.googlevideo.com/videoplayback?id=abc&itag=140');
+    assert.doesNotMatch(result, /abc/);
+    assert.match(result, /\[redacted\]/);
+});
+
+test('redactUrl preserves benign paths without video IDs', () => {
+    assert.equal(harness.redactUrl('/feed/trending'), '/feed/trending');
+    assert.equal(harness.redactUrl('/'), '/');
 });
 
 // ========== Webpack signature database ==========

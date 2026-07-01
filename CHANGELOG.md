@@ -5,6 +5,9 @@ All notable changes to YoutubeAdblock are documented here.
 ## [Unreleased]
 
 ### Added
+- Added diagnostics redaction that strips video IDs from watch/Shorts URLs and
+  query strings from custom filter and SSAI URLs before they appear in copied
+  diagnostics.
 - Added store-policy preflight checks that fail the release gate on remote
   executable URLs, broad host permissions, eval/new Function, invalid extension
   ID, unsigned XPI naming, and stale background compatibility keys.

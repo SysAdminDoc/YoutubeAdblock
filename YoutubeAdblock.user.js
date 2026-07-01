@@ -7674,6 +7674,14 @@
         return list.map(item => `${item.name}=${item.count}`).join(', ');
     }
 
+    function redactUrl(url) {
+        if (!url || typeof url !== 'string') return url;
+        return url
+            .replace(/([?&])v=[^&#]+/g, '$1v=[video-id]')
+            .replace(/\/shorts\/[^/?#]+/g, '/shorts/[video-id]')
+            .replace(/\?(?!v=)[^#]*/g, '?[redacted]');
+    }
+
     function buildDiagnosticsReport() {
         const features = normalizeFeatures(state.features);
         const report = STRINGS.diagnosticsReport;
@@ -7694,7 +7702,7 @@
         return [
             `${SCRIPT_NAME} v${SCRIPT_VERSION}`,
             `${report.captured}: ${new Date().toISOString()}`,
-            `${report.site}: ${location.hostname}${location.pathname}`,
+            `${report.site}: ${location.hostname}${redactUrl(location.pathname + location.search)}`,
             `${report.surface}: ${getSiteLabel()} / ${getSurfaceLabel()}`,
             `${report.build}: ${IS_EXTENSION_BUILD ? report.extension : report.userscript}`,
             `${report.ua}: ${uaHint}`,
@@ -7706,7 +7714,7 @@
             `${report.filterSource}: ${getFilterSourceLabel()}`,
             `${report.filterIntegrity}: ${getFilterIntegrityLabel()}`,
             `${report.filterIntegrityDetail}: ${state.filterIntegrityMessage || STRINGS.common.none}`,
-            `${report.filterUrl}: ${resolveFilterUrl()}`,
+            `${report.filterUrl}: ${redactUrl(resolveFilterUrl())}`,
             `${report.filterVersion}: ${state.filters?.version || STRINGS.common.unknown}`,
             `${report.lastSync}: ${state.lastFilterUpdate ? new Date(state.lastFilterUpdate).toISOString() : STRINGS.common.never}`,
             `${report.lastError}: ${state.filterError || STRINGS.common.none}`,
@@ -7721,7 +7729,7 @@
             `${report.supportedScriptlets}: ${formatScriptletCoverage(coverage.supportedScriptlets)}`,
             `${report.unsupportedScriptlets}: ${formatScriptletCoverage(coverage.unsupportedScriptlets)}`,
             `${report.rejectedDangerousScriptlets}: ${formatScriptletCoverage(coverage.rejectedDangerousScriptlets)}`,
-            `${report.ssaiSignals}: detected=${state.stats.ssaiDetected || 0}, lastSeen=${state.ssaiLastSeen ? new Date(state.ssaiLastSeen).toISOString() : STRINGS.common.never}, lastUrl=${state.ssaiLastUrl || STRINGS.common.none}`,
+            `${report.ssaiSignals}: detected=${state.stats.ssaiDetected || 0}, lastSeen=${state.ssaiLastSeen ? new Date(state.ssaiLastSeen).toISOString() : STRINGS.common.never}, lastUrl=${redactUrl(state.ssaiLastUrl) || STRINGS.common.none}`,
             `${report.communityApiPermission}: ${state.communityApiPermission || STRINGS.common.unknown}`,
             `${report.webpackSignatureSource}: ${state.webpackSignatureSource || STRINGS.common.unknown}`,
             `${report.webpackSignatureVersion}: ${state.webpackSignatureVersion || STRINGS.common.unknown}`,

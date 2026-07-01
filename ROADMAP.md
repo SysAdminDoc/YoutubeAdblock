@@ -113,13 +113,6 @@ Evidence and competitive context: see RESEARCH.md (consolidated; older inline re
   Acceptance: Extension diagnostics include recent DNR rule IDs/counts for YouTube ad endpoints when feedback APIs are available, degrade cleanly without the feedback permission/API, and never expose non-YouTube browsing data.
   Complexity: M
 
-- [ ] P2 — Add diagnostics redaction controls
-  Why: Current diagnostics include page path, user agent, filter URL, SSAI URL context, features, and rule metadata; future event bundles increase the chance of leaking video IDs or private custom filter query tokens.
-  Evidence: `YoutubeAdblock.user.js:7626-7687`, SponsorBlock hash-prefix privacy pattern, existing roadmap diagnostic bundle item.
-  Touches: `buildDiagnosticsReport()` in `YoutubeAdblock.user.js`, Control Center diagnostics copy flow, `tests/engine-core.test.mjs`, `tests/browser-smoke.test.mjs`.
-  Acceptance: Copied diagnostics redact video IDs, query strings, custom filter tokens, and raw community API cache keys by default, with tests covering YouTube watch URLs, Shorts URLs, custom filter URLs, and SSAI URLs.
-  Complexity: S
-
 - [ ] P2 — Add parser and interceptor performance budgets
   Why: Remote filters, InnerTube payloads, and webpack factories are bounded but not benchmarked, so regressions in hot document-start paths can ship while functional tests remain green.
   Evidence: `YoutubeAdblock.user.js:1373-1384`, `YoutubeAdblock.user.js:3715-3817`, `tests/engine-core.test.mjs`, active uAssets commits and YouTube quick-fix churn.
