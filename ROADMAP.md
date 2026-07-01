@@ -34,16 +34,6 @@ Forward-looking scope for the split-context YouTube ad blocker (userscript + Chr
 
 Evidence and competitive context: see RESEARCH.md (consolidated; older inline research notes moved there).
 
-### P2 — larger bets / parity
-
-### P3 — polish / niche
-
-### Audit-Surfaced Items
-
-### P0 - release trust
-
-### P1 - permission and packaging hardening
-
 ### P2 - validation and migration
 
 - [ ] P2 — Turn `STRINGS` into a real i18n pipeline
@@ -81,8 +71,6 @@ Evidence and competitive context: see RESEARCH.md (consolidated; older inline re
   Acceptance: A local command fetches upstream quick-fixes, maps supported scriptlets to bundled equivalents, leaves dangerous/unsupported rules as rejected coverage, re-signs filter/signature data, and runs the relevant parser/signature tests.
   Complexity: M
 
-### P1 - distribution trust additions
-
 ### P2 - diagnostics and performance additions
 
 - [ ] P2 — Add extension DNR matched-rule diagnostics
@@ -105,9 +93,3 @@ Evidence and competitive context: see RESEARCH.md (consolidated; older inline re
 
 ### P2 - regression and API resilience
 
-- [ ] P2 — Add community API cooldown and retry diagnostics
-  Why: SponsorBlock/DeArrow/RYD failures currently collapse to null; RYD has known rate-limit pressure, and users need visible cooldown state instead of silent retry churn.
-  Evidence: `YoutubeAdblock.user.js:3294-3315`, `YoutubeAdblock.user.js:4012-4028`, `YoutubeAdblock.user.js:4170-4186`, SponsorBlock API docs, DeArrow API docs, Return YouTube Dislike issue #319, MDN HTTP 429 docs.
-  Touches: `YoutubeAdblock.user.js`, `tests/engine-core.test.mjs`, Control Center diagnostics/recovery UI.
-  Acceptance: 429 and `Retry-After` responses set per-service cooldowns, suppress repeated fetches until expiry, show cooldown/service status in diagnostics, preserve existing cache fallback, and tests cover SponsorBlock, DeArrow, and RYD cooldown behavior.
-  Complexity: M

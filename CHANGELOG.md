@@ -5,6 +5,10 @@ All notable changes to YoutubeAdblock are documented here.
 ## [Unreleased]
 
 ### Added
+- Added community API cooldown and retry handling for SponsorBlock, DeArrow,
+  and RYD. HTTP 429 responses set per-service cooldowns with Retry-After
+  parsing, suppress repeated fetches until expiry, and report cooldown status
+  in diagnostics.
 - Added parser and interceptor performance budget tests that fail when 50k-line
   filter parsing, repeated pruneObject, or webpack factory scanning exceed
   fixed time budgets.

@@ -140,6 +140,10 @@ function createTestHarness(options = {}) {
         webpackFactoryMatchesAdSignature,
         isDangerousScriptlet,
         redactUrl,
+        isApiCoolingDown,
+        setApiCooldown,
+        getApiCooldownStatus,
+        apiCooldowns,
         DEFAULT_FILTERS,
         DEFAULT_WEBPACK_SIGNATURE_DATABASE,
         state,
@@ -465,6 +469,32 @@ test('redactUrl strips query strings from SSAI URLs', () => {
 test('redactUrl preserves benign paths without video IDs', () => {
     assert.equal(harness.redactUrl('/feed/trending'), '/feed/trending');
     assert.equal(harness.redactUrl('/'), '/');
+});
+
+// ========== Community API cooldowns ==========
+
+test('setApiCooldown sets a cooldown that isApiCoolingDown detects', () => {
+    harness.setApiCooldown('ryd', null);
+    assert.equal(harness.isApiCoolingDown('ryd'), true);
+    const status = harness.getApiCooldownStatus();
+    assert.notEqual(status.ryd, 'ok');
+    harness.apiCooldowns.ryd = 0;
+});
+
+test('setApiCooldown parses Retry-After header', () => {
+    harness.setApiCooldown('sponsorblock', { responseHeaders: 'retry-after: 120\r\n' });
+    assert.equal(harness.isApiCoolingDown('sponsorblock'), true);
+    harness.apiCooldowns.sponsorblock = 0;
+});
+
+test('getApiCooldownStatus reports ok when no cooldowns active', () => {
+    harness.apiCooldowns.sponsorblock = 0;
+    harness.apiCooldowns.dearrow = 0;
+    harness.apiCooldowns.ryd = 0;
+    const status = harness.getApiCooldownStatus();
+    assert.equal(status.sponsorblock, 'ok');
+    assert.equal(status.dearrow, 'ok');
+    assert.equal(status.ryd, 'ok');
 });
 
 // ========== Webpack signature database ==========

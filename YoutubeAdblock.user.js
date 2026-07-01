@@ -97,6 +97,8 @@
     const RYD_TIMEOUT_MS = 8000;
     const RYD_CACHE_TTL = 30 * 60 * 1000; // 30 minutes
     const RYD_CACHE_MAX = 200;
+    const API_COOLDOWN_DEFAULT_MS = 60 * 1000;
+    const API_COOLDOWN_MAX_MS = 15 * 60 * 1000;
     const VOLUME_BOOST_MAX = 5; // hard cap — beyond this audio clips badly
     const SECTION_IDS = {
         overview: `${CSS_PREFIX}-section-overview`,
@@ -617,6 +619,7 @@
             rejectedDangerousScriptlets: 'Rejected dangerous scriptlets',
             ssaiSignals: 'SSAI signals',
             communityApiPermission: 'Community API permission',
+            communityApiCooldown: 'Community API cooldown',
             webpackSignatureSource: 'Webpack signature source',
             webpackSignatureVersion: 'Webpack signature version',
             webpackSignatureTokens: 'Webpack signature tokens',
@@ -3332,12 +3335,41 @@
         return entry;
     }
 
+    const apiCooldowns = { sponsorblock: 0, dearrow: 0, ryd: 0 };
+
+    function isApiCoolingDown(service) {
+        return Date.now() < (apiCooldowns[service] || 0);
+    }
+
+    function setApiCooldown(service, resp) {
+        let ms = API_COOLDOWN_DEFAULT_MS;
+        if (resp && resp.responseHeaders) {
+            const match = resp.responseHeaders.match(/retry-after:\s*(\d+)/i);
+            if (match) {
+                const seconds = Math.min(Number(match[1]), API_COOLDOWN_MAX_MS / 1000);
+                ms = seconds * 1000;
+            }
+        }
+        apiCooldowns[service] = Date.now() + Math.min(ms, API_COOLDOWN_MAX_MS);
+    }
+
+    function getApiCooldownStatus() {
+        const now = Date.now();
+        const status = {};
+        for (const [service, expiry] of Object.entries(apiCooldowns)) {
+            if (expiry > now) {
+                status[service] = Math.ceil((expiry - now) / 1000) + 's';
+            } else {
+                status[service] = 'ok';
+            }
+        }
+        return status;
+    }
+
     function sponsorBlockFetchBucket(hashPrefix) {
         return new Promise((resolve) => {
-            if (typeof GM_xmlhttpRequest !== 'function') {
-                resolve(null);
-                return;
-            }
+            if (typeof GM_xmlhttpRequest !== 'function') { resolve(null); return; }
+            if (isApiCoolingDown('sponsorblock')) { resolve(null); return; }
             const cats = encodeURIComponent(JSON.stringify([...SPONSORBLOCK_CATEGORIES, 'poi_highlight']));
             const actions = encodeURIComponent(JSON.stringify(['skip', 'full', 'poi']));
             const url = `${SPONSORBLOCK_API}/${hashPrefix}?categories=${cats}&actionTypes=${actions}`;
@@ -3347,12 +3379,11 @@
                 timeout: SPONSORBLOCK_TIMEOUT_MS,
                 onload(resp) {
                     if (!resp || resp.status !== 200) {
+                        if (resp && resp.status === 429) setApiCooldown('sponsorblock', resp);
                         resolve(null);
                         return;
                     }
                     try {
-                        // Use raw JSON.parse — this response contains no ad keys
-                        // and would waste cycles re-entering our prune pipeline.
                         resolve(jsonParseRaw(resp.responseText));
                     } catch (e) {
                         resolve(null);
@@ -4056,13 +4087,18 @@
     function dearrowFetchBucket(hashPrefix) {
         return new Promise((resolve) => {
             if (typeof GM_xmlhttpRequest !== 'function') { resolve(null); return; }
+            if (isApiCoolingDown('dearrow')) { resolve(null); return; }
             const url = `${DEARROW_API}/${hashPrefix}`;
             GM_xmlhttpRequest({
                 method: 'GET',
                 url,
                 timeout: DEARROW_TIMEOUT_MS,
                 onload(resp) {
-                    if (!resp || resp.status !== 200) { resolve(null); return; }
+                    if (!resp || resp.status !== 200) {
+                        if (resp && resp.status === 429) setApiCooldown('dearrow', resp);
+                        resolve(null);
+                        return;
+                    }
                     try { resolve(jsonParseRaw(resp.responseText)); }
                     catch (e) { resolve(null); }
                 },
@@ -4219,12 +4255,17 @@
     function rydFetch(videoId) {
         return new Promise((resolve) => {
             if (typeof GM_xmlhttpRequest !== 'function') { resolve(null); return; }
+            if (isApiCoolingDown('ryd')) { resolve(null); return; }
             GM_xmlhttpRequest({
                 method: 'GET',
                 url: `${RYD_API}?videoId=${encodeURIComponent(videoId)}`,
                 timeout: RYD_TIMEOUT_MS,
                 onload(resp) {
-                    if (!resp || resp.status !== 200) { resolve(null); return; }
+                    if (!resp || resp.status !== 200) {
+                        if (resp && resp.status === 429) setApiCooldown('ryd', resp);
+                        resolve(null);
+                        return;
+                    }
                     try {
                         const data = jsonParseRaw(resp.responseText);
                         if (data && typeof data.dislikes === 'number') {
@@ -7731,6 +7772,7 @@
             `${report.rejectedDangerousScriptlets}: ${formatScriptletCoverage(coverage.rejectedDangerousScriptlets)}`,
             `${report.ssaiSignals}: detected=${state.stats.ssaiDetected || 0}, lastSeen=${state.ssaiLastSeen ? new Date(state.ssaiLastSeen).toISOString() : STRINGS.common.never}, lastUrl=${redactUrl(state.ssaiLastUrl) || STRINGS.common.none}`,
             `${report.communityApiPermission}: ${state.communityApiPermission || STRINGS.common.unknown}`,
+            `${report.communityApiCooldown}: ${Object.entries(getApiCooldownStatus()).map(([k, v]) => `${k}=${v}`).join(', ')}`,
             `${report.webpackSignatureSource}: ${state.webpackSignatureSource || STRINGS.common.unknown}`,
             `${report.webpackSignatureVersion}: ${state.webpackSignatureVersion || STRINGS.common.unknown}`,
             `${report.webpackSignatureTokens}: ${(state.webpackSignatureDatabase?.tokens || []).length}`,
