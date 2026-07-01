@@ -4,6 +4,33 @@ All notable changes to YoutubeAdblock are documented here.
 
 ## [Unreleased]
 
+### Fixed
+- Fixed migration import always classifying untyped plain text entries as
+  channels instead of keywords (ternary fallback was `'channel' : 'channel'`).
+- Fixed rejected-dangerous scriptlet pill rendering with unstyled `'error'`
+  tone; corrected to `'danger'` which has matching CSS.
+- Fixed ServiceWorker registration block returning `Promise.reject` which
+  caused unhandled rejections; now returns `Promise.resolve(undefined)`.
+- Fixed cosmetic CSS deduplication hash only checking first and last selectors;
+  mid-list selector changes could be silently ignored until page reload.
+- Fixed duplicate `.footer-hint` CSS rule block; merged into one.
+- Fixed attribution text using `opacity: 0.7` which reduced contrast below
+  WCAG AA; replaced with explicit `color: var(--text-3)`.
+- Fixed diagnostics leaking playlist IDs and extra query parameters from
+  watch URLs; all non-video-ID query params are now stripped.
+- Fixed version format validation in release tools to reject unsafe characters
+  that could enable command injection via `execSync`.
+- Fixed extension manifest description exceeding Chrome Web Store 132-char limit;
+  shortened to 123 chars with a store-policy preflight guard.
+- Fixed background-contract test mock missing `onMessage` and `permissions` APIs
+  added by the optional permissions feature.
+- Cached duration filter settings per feed-filter batch to avoid per-renderer
+  `getSetting` calls during feed filtering.
+- Removed redundant `querySelector('#movie_player')` call that duplicates
+  `getElementById`.
+- Fixed pluralization in migration import toast message.
+- Cleaned up duplicate gitignore blocks; added explicit `!CHANGELOG.md` allowlist.
+
 ### Added
 - Added community API cooldown and retry handling for SponsorBlock, DeArrow,
   and RYD. HTTP 429 responses set per-service cooldowns with Retry-After
