@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import crypto from 'node:crypto';
+import { execSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -215,8 +216,69 @@ function verifyXpiNames() {
     return xpiFiles.map(name => path.join(outputDir, name));
 }
 
+function verifyPublication(version) {
+    const tag = `v${version}`;
+    try {
+        execSync(`git rev-parse --verify refs/tags/${tag}`, { cwd: repoRoot, stdio: 'pipe' });
+    } catch {
+        fail(`Git tag ${tag} does not exist locally. Tag the release before verifying publication.`);
+    }
+
+    let releaseJson;
+    try {
+        releaseJson = execSync(
+            `gh release view ${tag} --repo SysAdminDoc/YoutubeAdblock --json tagName,assets`,
+            { cwd: repoRoot, stdio: 'pipe', encoding: 'utf8' }
+        );
+    } catch {
+        fail(`GitHub release for ${tag} not found. Publish the release before verifying.`);
+    }
+
+    const release = JSON.parse(releaseJson);
+    if (release.tagName !== tag) fail(`Release tag mismatch: expected ${tag}, got ${release.tagName}.`);
+
+    const expectedNames = [
+        `YoutubeAdblock-v${version}.user.js`,
+        `YoutubeAdblock-extension-v${version}.zip`,
+        `YoutubeAdblock-extension-v${version}.crx`,
+        `YoutubeAdblock-v${version}.checksums.sha256`
+    ];
+    const publishedNames = new Set(release.assets.map(a => a.name));
+    const missing = expectedNames.filter(name => !publishedNames.has(name));
+    if (missing.length) fail(`GitHub release ${tag} is missing assets: ${missing.join(', ')}`);
+
+    const checksumPath = path.join(outputDir, `YoutubeAdblock-v${version}.checksums.sha256`);
+    if (!fs.existsSync(checksumPath)) {
+        fail(`Local checksum file missing: ${checksumPath}. Run the release gate first.`);
+    }
+    const localChecksums = fs.readFileSync(checksumPath, 'utf8').trim();
+
+    const checksumAsset = release.assets.find(a => a.name === `YoutubeAdblock-v${version}.checksums.sha256`);
+    let publishedChecksums;
+    try {
+        publishedChecksums = execSync(
+            `gh release download ${tag} --repo SysAdminDoc/YoutubeAdblock --pattern "${checksumAsset.name}" --output - `,
+            { cwd: repoRoot, stdio: 'pipe', encoding: 'utf8' }
+        ).trim();
+    } catch {
+        fail(`Failed to download published checksum file for ${tag}.`);
+    }
+
+    if (localChecksums !== publishedChecksums) {
+        fail(`Published checksums do not match local checksums for ${tag}.\nLocal:\n${localChecksums}\nPublished:\n${publishedChecksums}`);
+    }
+
+    console.log(`Publication verified for ${tag}: all expected assets present, checksums match.`);
+}
+
 function main() {
     const version = getVersion();
+
+    if (process.argv.includes('--verify-publication')) {
+        verifyPublication(version);
+        return;
+    }
+
     const userscriptArtifact = path.join(outputDir, `YoutubeAdblock-v${version}.user.js`);
     const zipArtifact = path.join(outputDir, `YoutubeAdblock-extension-v${version}.zip`);
     const crxArtifact = path.join(outputDir, `YoutubeAdblock-extension-v${version}.crx`);

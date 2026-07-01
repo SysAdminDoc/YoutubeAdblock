@@ -2,6 +2,14 @@
 
 All notable changes to YoutubeAdblock are documented here.
 
+## [Unreleased]
+
+### Added
+- Added a release-publication guard that verifies the current version tag has a
+  GitHub release with matching asset names and checksums. Available via
+  `--verify-publication` flag on the artifact verifier or `-VerifyPublication`
+  switch on the release gate.
+
 ## [0.5.20] - 2026-06-28
 
 ### Added

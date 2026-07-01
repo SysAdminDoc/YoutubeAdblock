@@ -274,3 +274,13 @@ test('@inject-into directive pins the userscript to the sandbox so GM_* stays av
     // explicit guards against the header silently regressing.
     assert.match(userscript, /^\/\/\s*@inject-into\s+content\s*$/m);
 });
+
+test('release publication guard verifies GitHub release assets and checksums', () => {
+    assert.match(verifyReleaseArtifacts, /--verify-publication/);
+    assert.match(verifyReleaseArtifacts, /verifyPublication/);
+    assert.match(verifyReleaseArtifacts, /gh release view/);
+    assert.match(verifyReleaseArtifacts, /checksums do not match/i);
+    assert.match(verifyReleaseArtifacts, /missing assets/i);
+    assert.match(buildRelease, /VerifyPublication/);
+    assert.match(buildRelease, /--verify-publication/);
+});

@@ -46,13 +46,6 @@ Evidence and competitive context: see RESEARCH.md (consolidated; older inline re
 
 ### P2 - validation and migration
 
-- [ ] P0 — Add a local release-publication guard
-  Why: Local artifact verification passed, but publication remained manual and drifted at v0.5.20.
-  Evidence: `Build-Release.ps1:186-190` verifies local artifacts only; `extension/README.md:164` says release assets are attached manually.
-  Touches: `Build-Release.ps1`, `tools/verify-release-artifacts.mjs`, `tests/repo-contract.test.mjs`.
-  Acceptance: A local release command or verifier fails when the current tag lacks a GitHub release with matching asset names and checksums, and repo-contract tests cover the check.
-  Complexity: M
-
 - [ ] P1 — Sign the refreshable webpack signature database
   Why: Remote JSON is data, not code, but it still steers ad-factory matching and should have the same tamper resistance as the filter list before store distribution.
   Evidence: `YoutubeAdblock.user.js:50`, `YoutubeAdblock.user.js:3803`, `webpack-ad-signatures.json`, Chrome remote-hosted-code policy, The Hacker News remote-selected scriptlet report.

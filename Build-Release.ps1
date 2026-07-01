@@ -12,7 +12,8 @@ param(
     [string]$OutputDir = 'dist',
     [ValidateSet('Userscript', 'Zip', 'Xpi', 'Crx')]
     [string[]]$Artifacts = @('Userscript', 'Zip', 'Crx'),
-    [string]$BrowserPath
+    [string]$BrowserPath,
+    [switch]$VerifyPublication
 )
 
 if ([string]::IsNullOrEmpty($RepoRoot)) {
@@ -184,6 +185,10 @@ if ($staleArtifacts) {
 }
 
 Invoke-Checked { & node $artifactVerifyScriptPath --repo-root $repoRootAbs --output-dir $outputDirAbs } 'Release artifact verification failed.'
+
+if ($VerifyPublication) {
+    Invoke-Checked { & node $artifactVerifyScriptPath --repo-root $repoRootAbs --output-dir $outputDirAbs --verify-publication } 'Release publication verification failed.'
+}
 
 Write-Host "Release gate passed for v$version"
 Get-ChildItem -LiteralPath $outputDirAbs -File | ForEach-Object {
