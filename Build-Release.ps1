@@ -180,6 +180,25 @@ if ($artifactSet.Contains('Crx')) {
     if ($LASTEXITCODE -ne 0) { throw 'Build-CRX.ps1 failed.' }
 }
 
+$provenancePath = Join-Path $outputDirAbs "YoutubeAdblock-v$version.provenance.json"
+$gitSha = & git -C $repoRootAbs rev-parse HEAD 2>$null
+$gitDirty = if ((& git -C $repoRootAbs status --porcelain 2>$null)) { $true } else { $false }
+$nodeVersion = & node --version 2>$null
+$npmVersion = & npm --version 2>$null
+$playwrightVersion = (Get-Content (Join-Path $repoRootAbs 'node_modules\playwright-core\package.json') -Raw | ConvertFrom-Json).version
+$provenance = [ordered]@{
+    schemaVersion = 1
+    version = $version
+    commitSha = if ($gitSha) { $gitSha.Trim() } else { 'unknown' }
+    dirty = $gitDirty
+    nodeVersion = if ($nodeVersion) { $nodeVersion.Trim() } else { 'unknown' }
+    npmVersion = if ($npmVersion) { $npmVersion.Trim() } else { 'unknown' }
+    playwrightVersion = if ($playwrightVersion) { $playwrightVersion } else { 'unknown' }
+    builtAt = (Get-Date -Format 'o')
+    testCommand = 'node --test tests/*.mjs'
+}
+$provenance | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $provenancePath -Encoding UTF8
+
 $staleArtifacts = Get-ChildItem -LiteralPath $outputDirAbs -File | Where-Object {
     $_.Name -ne 'YoutubeAdblock-extension.pem' -and $_.Name -notmatch [regex]::Escape("v$version")
 }

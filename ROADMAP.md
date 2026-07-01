@@ -97,13 +97,6 @@ Evidence and competitive context: see RESEARCH.md (consolidated; older inline re
   Acceptance: Release checks verify upstream filter/source attribution is present, README distinguishes project code license from bundled filter/data terms, and API attribution links remain visible in Control Center and docs.
   Complexity: M
 
-- [ ] P1 — Emit release provenance metadata
-  Why: Checksums prove artifact bytes, but current artifacts do not record git SHA, dirty-tree state, tool versions, test command, Playwright version, or browser-smoke result alongside the release.
-  Evidence: `Build-Release.ps1:186-190`, `tools/verify-release-artifacts.mjs:218-240`, GitHub release asset digest metadata for v0.5.19.
-  Touches: `Build-Release.ps1`, `tools/verify-release-artifacts.mjs`, `tests/repo-contract.test.mjs`, release assets.
-  Acceptance: The release gate writes a versioned provenance JSON or text artifact with commit SHA, tag, clean/dirty status, Node/npm/Playwright versions, built artifact hashes, and test summary; verification fails if it is missing or mismatched.
-  Complexity: M
-
 ### P2 - diagnostics and performance additions
 
 - [ ] P2 — Add extension DNR matched-rule diagnostics

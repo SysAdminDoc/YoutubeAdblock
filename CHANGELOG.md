@@ -5,6 +5,9 @@ All notable changes to YoutubeAdblock are documented here.
 ## [Unreleased]
 
 ### Added
+- Added release provenance metadata that records commit SHA, dirty-tree state,
+  Node/npm/Playwright versions, and build timestamp alongside release artifacts.
+  The artifact verifier validates the provenance file before writing checksums.
 - Added diagnostics redaction that strips video IDs from watch/Shorts URLs and
   query strings from custom filter and SSAI URLs before they appear in copied
   diagnostics.

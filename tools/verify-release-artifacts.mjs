@@ -291,6 +291,19 @@ function main() {
     verifyExpectedExtensionId(extensionId);
     artifacts.push(...verifyXpiNames());
 
+    const provenancePath = path.join(outputDir, `YoutubeAdblock-v${version}.provenance.json`);
+    if (!fs.existsSync(provenancePath)) {
+        fail(`Missing provenance artifact: ${provenancePath}`);
+    } else {
+        const provenance = JSON.parse(fs.readFileSync(provenancePath, 'utf8'));
+        if (provenance.schemaVersion !== 1) fail('Provenance schemaVersion must be 1.');
+        if (provenance.version !== version) fail(`Provenance version (${provenance.version}) does not match userscript (${version}).`);
+        if (!provenance.commitSha || provenance.commitSha === 'unknown') fail('Provenance is missing commitSha.');
+        if (!provenance.nodeVersion || provenance.nodeVersion === 'unknown') fail('Provenance is missing nodeVersion.');
+        if (!provenance.builtAt) fail('Provenance is missing builtAt timestamp.');
+        artifacts.push(provenancePath);
+    }
+
     const checksumPath = path.join(outputDir, `YoutubeAdblock-v${version}.checksums.sha256`);
     const lines = artifacts
         .map(filePath => `${sha256File(filePath)}  ${path.basename(filePath)}`)

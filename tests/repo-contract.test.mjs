@@ -305,6 +305,17 @@ test('@inject-into directive pins the userscript to the sandbox so GM_* stays av
     assert.match(userscript, /^\/\/\s*@inject-into\s+content\s*$/m);
 });
 
+test('release provenance metadata is emitted and verified', () => {
+    assert.match(buildRelease, /provenance\.json/);
+    assert.match(buildRelease, /commitSha/);
+    assert.match(buildRelease, /nodeVersion/);
+    assert.match(buildRelease, /playwrightVersion/);
+    assert.match(buildRelease, /builtAt/);
+    assert.match(verifyReleaseArtifacts, /provenance/);
+    assert.match(verifyReleaseArtifacts, /schemaVersion/);
+    assert.match(verifyReleaseArtifacts, /commitSha/);
+});
+
 test('store-policy preflight catches remote code and broad permissions', () => {
     const storePolicy = read(path.join('tools', 'verify-store-policy.mjs'));
     assert.match(storePolicy, /remote executable URL/i);
