@@ -91,5 +91,3 @@ Evidence and competitive context: see RESEARCH.md (consolidated; older inline re
   Acceptance: The service worker owns `chrome.storage.local/sync` reads and writes; bridge requests use `chrome.runtime.sendMessage`; storage access is restricted to trusted contexts where supported; tests prove page CustomEvents cannot directly reach `chrome.storage.*` and sync chunk/oversize behavior still works.
   Complexity: L
 
-### P2 - regression and API resilience
-
