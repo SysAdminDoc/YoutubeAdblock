@@ -447,6 +447,7 @@ test('isDangerousScriptlet blocks dangerous trusted scriptlets', () => {
 test('redactUrl removes video IDs from YouTube watch URLs', () => {
     assert.match(harness.redactUrl('/watch?v=dQw4w9WgXcQ&t=42'), /\[video-id\]/);
     assert.doesNotMatch(harness.redactUrl('/watch?v=dQw4w9WgXcQ&t=42'), /dQw4w9WgXcQ/);
+    assert.doesNotMatch(harness.redactUrl('/watch?v=dQw4w9WgXcQ&list=PLxyz'), /PLxyz/);
 });
 
 test('redactUrl removes video IDs from Shorts URLs', () => {

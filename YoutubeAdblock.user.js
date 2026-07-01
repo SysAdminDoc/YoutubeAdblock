@@ -7728,7 +7728,11 @@
         return url
             .replace(/([?&])v=[^&#]+/g, '$1v=[video-id]')
             .replace(/\/shorts\/[^/?#]+/g, '/shorts/[video-id]')
-            .replace(/\?(?!v=)[^#]*/g, '?[redacted]');
+            .replace(/[?][^#]*/g, (match) => {
+                if (/^\?v=\[video-id\]$/.test(match)) return match;
+                if (/^\?v=\[video-id\]&/.test(match)) return '?v=[video-id]';
+                return '?[redacted]';
+            });
     }
 
     function buildDiagnosticsReport() {
