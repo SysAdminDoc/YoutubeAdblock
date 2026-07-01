@@ -46,13 +46,6 @@ Evidence and competitive context: see RESEARCH.md (consolidated; older inline re
 
 ### P2 - validation and migration
 
-- [ ] P1 — Sign the refreshable webpack signature database
-  Why: Remote JSON is data, not code, but it still steers ad-factory matching and should have the same tamper resistance as the filter list before store distribution.
-  Evidence: `YoutubeAdblock.user.js:50`, `YoutubeAdblock.user.js:3803`, `webpack-ad-signatures.json`, Chrome remote-hosted-code policy, The Hacker News remote-selected scriptlet report.
-  Touches: `webpack-ad-signatures.json`, new signature/manifest data files, `tools/sign-filter-manifest.mjs` or a sibling signer, `YoutubeAdblock.user.js`, `tests/engine-core.test.mjs`.
-  Acceptance: Tampered remote webpack signatures are rejected, cached/built-in signatures remain active, diagnostics reports signature integrity, and tests cover valid/tampered/unsigned cases.
-  Complexity: M
-
 - [ ] P1 — Add a remote-rule capability denylist guard
   Why: Remote filters currently parse unsupported trusted scriptlets as coverage data; future parser work must make executable or DOM-creating scriptlets impossible to route into page execution.
   Evidence: `youtube-adblock-filters.txt:65`, `youtube-adblock-filters.txt:152`, Chrome remote-hosted-code policy, The Hacker News trusted scriptlet report.

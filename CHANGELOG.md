@@ -5,6 +5,10 @@ All notable changes to YoutubeAdblock are documented here.
 ## [Unreleased]
 
 ### Added
+- Added Ed25519 signing and integrity verification for the refreshable webpack
+  signature database. Remote signatures are rejected when tampered, diagnostics
+  reports integrity status, and the release gate signs/verifies both the filter
+  list and the webpack signature database.
 - Added a release-publication guard that verifies the current version tag has a
   GitHub release with matching asset names and checksums. Available via
   `--verify-publication` flag on the artifact verifier or `-VerifyPublication`

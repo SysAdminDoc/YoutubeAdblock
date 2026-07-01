@@ -16,6 +16,8 @@ const manifest = JSON.parse(read(path.join('extension', 'manifest.json')));
 const rules = JSON.parse(read(path.join('extension', 'rules', 'network-blocks.json')));
 const networkRuleSource = JSON.parse(read(path.join('extension', 'rules', 'network-rules-source.json')));
 const webpackSignatures = JSON.parse(read('webpack-ad-signatures.json'));
+const webpackSigManifest = JSON.parse(read('webpack-ad-signatures.manifest.json'));
+const webpackSigSignature = read('webpack-ad-signatures.json.sig').trim();
 const filterManifest = JSON.parse(read('youtube-adblock-filters.manifest.json'));
 const filterSignature = read('youtube-adblock-filters.txt.sig').trim();
 const gitignore = read('.gitignore');
@@ -186,6 +188,19 @@ test('filter manifest signer keeps remote rules signed without committing privat
     assert.match(filterSignature, /^[A-Za-z0-9+/]+={0,2}$/);
     assert(userscript.includes(filterManifest.publicKey), 'userscript must embed the trusted filter public key');
     assert.match(gitignore, /\*\.pem/);
+});
+
+test('webpack signature database is signed with the same key as the filter list', () => {
+    assert.equal(webpackSigManifest.algorithm, 'Ed25519');
+    assert.equal(webpackSigManifest.signedContent, 'webpack-ad-signatures.json');
+    assert.equal(webpackSigManifest.publicKey, filterManifest.publicKey);
+    assert.match(webpackSigSignature, /^[A-Za-z0-9+/]+={0,2}$/);
+    assert.match(userscript, /WEBPACK_SIGNATURE_MANIFEST_URL_DEFAULT/);
+    assert.match(userscript, /WEBPACK_SIGNATURE_SIG_URL_DEFAULT/);
+    assert.match(userscript, /verifyWebpackSignatureIntegrity/);
+    assert.match(userscript, /webpackSignatureIntegrity/);
+    assert.match(buildRelease, /webpack-ad-signatures\.json/);
+    assert.match(buildRelease, /webpack-ad-signatures\.manifest\.json/);
 });
 
 test('extension README reflects the current iconless manifest', () => {

@@ -48,6 +48,8 @@
     const FILTER_MANIFEST_URL_DEFAULT = 'https://raw.githubusercontent.com/SysAdminDoc/YoutubeAdblock/refs/heads/main/youtube-adblock-filters.manifest.json';
     const FILTER_SIGNATURE_URL_DEFAULT = 'https://raw.githubusercontent.com/SysAdminDoc/YoutubeAdblock/refs/heads/main/youtube-adblock-filters.txt.sig';
     const WEBPACK_SIGNATURE_URL_DEFAULT = 'https://raw.githubusercontent.com/SysAdminDoc/YoutubeAdblock/refs/heads/main/webpack-ad-signatures.json';
+    const WEBPACK_SIGNATURE_MANIFEST_URL_DEFAULT = 'https://raw.githubusercontent.com/SysAdminDoc/YoutubeAdblock/refs/heads/main/webpack-ad-signatures.manifest.json';
+    const WEBPACK_SIGNATURE_SIG_URL_DEFAULT = 'https://raw.githubusercontent.com/SysAdminDoc/YoutubeAdblock/refs/heads/main/webpack-ad-signatures.json.sig';
     const FILTER_PUBLIC_KEY_BASE64 = 'MCowBQYDK2VwAyEAdkjPuIDzXFI9UPn5w4t4selqoqbT4WCinGI58a2/a6E=';
     const FILTER_URL_MIRRORS = [
         'https://cdn.jsdelivr.net/gh/SysAdminDoc/YoutubeAdblock@main/youtube-adblock-filters.txt',
@@ -186,6 +188,8 @@
             webpackSignatureTooLarge: maxKb => `Remote webpack signature database exceeds ${maxKb}KB limit.`,
             webpackSignatureInvalid: 'Remote webpack signature database did not contain usable tokens.',
             webpackSignatureFetchFailed: 'Webpack signature refresh failed.',
+            webpackSignatureTampered: 'Remote webpack signature database failed integrity verification. Using cached/built-in signatures.',
+            webpackSignatureVerified: 'Webpack signature database verified.',
             refreshComplete: (count, version, integrity) => {
                 const suffix = integrity === 'unsigned-custom'
                     ? ' Unsigned custom source.'
@@ -613,6 +617,7 @@
             webpackSignatureSource: 'Webpack signature source',
             webpackSignatureVersion: 'Webpack signature version',
             webpackSignatureTokens: 'Webpack signature tokens',
+            webpackSignatureIntegrity: 'Webpack signature integrity',
             webpackSignatureError: 'Webpack signature error',
             channelBlockEntries: 'Channel block entries',
             keywordBlockEntries: 'Keyword block entries',
@@ -885,6 +890,7 @@
         webpackSignatureVersion: '',
         webpackSignatureUpdated: '',
         webpackSignatureError: '',
+        webpackSignatureIntegrity: 'built-in',
         webpackSignatureSyncing: false,
         proxiesInstalled: false,
         overlayEl: null,
@@ -1829,11 +1835,16 @@
         return bytesToBase64Url(new Uint8Array(digest));
     }
 
+    const SIGNED_CONTENT_ALLOWLIST = new Set([
+        'youtube-adblock-filters.txt',
+        'webpack-ad-signatures.json',
+    ]);
+
     function sanitizeFilterManifest(value) {
         if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
         if (value.schemaVersion !== 1 || value.algorithm !== 'Ed25519') return null;
-        if (value.signedContent !== 'youtube-adblock-filters.txt') return null;
-        if (value.signatureFile !== 'youtube-adblock-filters.txt.sig') return null;
+        if (!SIGNED_CONTENT_ALLOWLIST.has(value.signedContent)) return null;
+        if (value.signatureFile !== `${value.signedContent}.sig`) return null;
         if (value.publicKey !== FILTER_PUBLIC_KEY_BASE64) return null;
         if (typeof value.sha256 !== 'string' || !value.sha256.trim()) return null;
         if (!Number.isFinite(Number(value.bytes)) || Number(value.bytes) <= 0) return null;
@@ -3800,19 +3811,42 @@
         return !!(src && src.length < maxBytes && matcher && matcher.test(src));
     }
 
+    async function verifyWebpackSignatureIntegrity(text) {
+        try {
+            const manifestRaw = await gmFetchText(addCacheBust(WEBPACK_SIGNATURE_MANIFEST_URL_DEFAULT), FILTER_FETCH_TIMEOUT_MS);
+            const manifest = sanitizeFilterManifest(jsonParseRaw(manifestRaw));
+            if (!manifest) return 'unsigned';
+            const canonical = normalizeFilterTextForSignature(text);
+            const expectedBytes = new TextEncoder().encode(canonical).length;
+            if (manifest.bytes !== expectedBytes) return 'tampered';
+            const digest = await sha256Base64Url(canonical);
+            if (digest !== manifest.sha256) return 'tampered';
+            const sig = await gmFetchText(addCacheBust(WEBPACK_SIGNATURE_SIG_URL_DEFAULT), FILTER_FETCH_TIMEOUT_MS);
+            const verified = await verifyEd25519Signature(canonical, sig);
+            return verified ? 'verified' : 'tampered';
+        } catch {
+            return 'unsigned';
+        }
+    }
+
     function fetchWebpackSignatureDatabase() {
         if (state.webpackSignatureSyncing) return Promise.resolve(state.webpackSignatureDatabase);
         if (typeof GM_xmlhttpRequest !== 'function') return Promise.resolve(state.webpackSignatureDatabase);
         state.webpackSignatureSyncing = true;
         state.webpackSignatureError = '';
         return gmFetchText(addCacheBust(WEBPACK_SIGNATURE_URL_DEFAULT), FILTER_FETCH_TIMEOUT_MS)
-            .then(text => {
+            .then(async text => {
                 if (text.length > WEBPACK_SIGNATURE_MAX_BYTES) {
                     throw new Error(STRINGS.filters.webpackSignatureTooLarge(Math.round(WEBPACK_SIGNATURE_MAX_BYTES / 1024)));
+                }
+                const integrity = await verifyWebpackSignatureIntegrity(text);
+                if (integrity === 'tampered') {
+                    throw new Error(STRINGS.filters.webpackSignatureTampered);
                 }
                 const parsed = sanitizeWebpackSignatureDatabase(jsonParseRaw(text));
                 if (!parsed) throw new Error(STRINGS.filters.webpackSignatureInvalid);
                 applyWebpackSignatureDatabase(parsed, 'remote');
+                state.webpackSignatureIntegrity = integrity;
                 setSetting('webpack_signature_cache', parsed);
                 setSetting('webpack_signature_cache_time', Date.now());
                 return parsed;
@@ -7673,6 +7707,7 @@
             `${report.webpackSignatureSource}: ${state.webpackSignatureSource || STRINGS.common.unknown}`,
             `${report.webpackSignatureVersion}: ${state.webpackSignatureVersion || STRINGS.common.unknown}`,
             `${report.webpackSignatureTokens}: ${(state.webpackSignatureDatabase?.tokens || []).length}`,
+            `${report.webpackSignatureIntegrity}: ${state.webpackSignatureIntegrity || STRINGS.common.unknown}`,
             `${report.webpackSignatureError}: ${state.webpackSignatureError || STRINGS.common.none}`,
             `${report.channelBlockEntries}: ${parseBlocklist(getSetting('channel_blocklist', ''), { channel: true }).length}`,
             `${report.keywordBlockEntries}: ${parseBlocklist(getSetting('keyword_blocklist', '')).length}`,

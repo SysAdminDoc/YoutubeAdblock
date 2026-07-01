@@ -11,6 +11,9 @@ const userscriptSource = fs.readFileSync(path.join(repoRoot, 'YoutubeAdblock.use
 const filterText = fs.readFileSync(path.join(repoRoot, 'youtube-adblock-filters.txt'), 'utf8');
 const filterManifest = JSON.parse(fs.readFileSync(path.join(repoRoot, 'youtube-adblock-filters.manifest.json'), 'utf8'));
 const filterSignature = fs.readFileSync(path.join(repoRoot, 'youtube-adblock-filters.txt.sig'), 'utf8');
+const webpackSigText = fs.readFileSync(path.join(repoRoot, 'webpack-ad-signatures.json'), 'utf8');
+const webpackSigManifest = JSON.parse(fs.readFileSync(path.join(repoRoot, 'webpack-ad-signatures.manifest.json'), 'utf8'));
+const webpackSigSignature = fs.readFileSync(path.join(repoRoot, 'webpack-ad-signatures.json.sig'), 'utf8');
 
 // Extract the IIFE body, strip the header, and expose internal functions
 // via a module-return pattern so tests can call them without a browser env.
@@ -525,6 +528,30 @@ test('signed filter manifest rejects untrusted public keys', () => {
     const manifest = { ...filterManifest, publicKey: filterManifest.publicKey.replace(/.$/, 'A') };
 
     assert.equal(harness.sanitizeFilterManifest(manifest), null);
+});
+
+// ========== signed webpack signature manifest ==========
+
+test('signed webpack signature manifest accepts the committed database', async () => {
+    const manifest = harness.sanitizeFilterManifest(webpackSigManifest);
+
+    assert.ok(manifest);
+    assert.equal(manifest.sha256, webpackSigManifest.sha256);
+    assert.equal(
+        await harness.verifyEd25519Signature(webpackSigText, webpackSigSignature, webpackSigManifest.publicKey),
+        true
+    );
+});
+
+test('signed webpack signature manifest rejects tampered database', async () => {
+    assert.equal(
+        await harness.verifyEd25519Signature(`${webpackSigText}\n{"tampered":true}`, webpackSigSignature, webpackSigManifest.publicKey),
+        false
+    );
+});
+
+test('signed webpack signature manifest uses the same trusted public key as filters', () => {
+    assert.equal(webpackSigManifest.publicKey, filterManifest.publicKey);
 });
 
 // ========== injectNoAdFlag ==========
