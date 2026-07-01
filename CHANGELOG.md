@@ -5,6 +5,9 @@ All notable changes to YoutubeAdblock are documented here.
 ## [Unreleased]
 
 ### Added
+- Added a userscript marketplace preflight that validates metadata headers,
+  size limits, readable code, and external service disclosure for Greasy Fork
+  and OpenUserJS distribution.
 - Added release provenance metadata that records commit SHA, dirty-tree state,
   Node/npm/Playwright versions, and build timestamp alongside release artifacts.
   The artifact verifier validates the provenance file before writing checksums.

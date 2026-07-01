@@ -305,6 +305,17 @@ test('@inject-into directive pins the userscript to the sandbox so GM_* stays av
     assert.match(userscript, /^\/\/\s*@inject-into\s+content\s*$/m);
 });
 
+test('userscript marketplace preflight validates metadata and disclosure', () => {
+    const marketplace = read(path.join('tools', 'verify-userscript-marketplace.mjs'));
+    assert.match(marketplace, /@name/);
+    assert.match(marketplace, /@version/);
+    assert.match(marketplace, /@downloadURL/);
+    assert.match(marketplace, /@connect/);
+    assert.match(marketplace, /minified|obfuscated/i);
+    assert.match(marketplace, /size limit/i);
+    assert.match(buildRelease, /verify-userscript-marketplace\.mjs/);
+});
+
 test('release provenance metadata is emitted and verified', () => {
     assert.match(buildRelease, /provenance\.json/);
     assert.match(buildRelease, /commitSha/);

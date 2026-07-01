@@ -83,13 +83,6 @@ Evidence and competitive context: see RESEARCH.md (consolidated; older inline re
 
 ### P1 - distribution trust additions
 
-- [ ] P1 — Add a userscript marketplace preflight
-  Why: Raw GitHub install works, but Greasy Fork/OpenUserJS-style distribution has separate readable-code, size, `@connect`, and external-service disclosure constraints that are not covered by the extension store preflight.
-  Evidence: Greasy Fork code rules, `YoutubeAdblock.user.js:2-33`, `YoutubeAdblock.user.js` size 371190 bytes, `README.md:8-55`.
-  Touches: new non-md verifier under `tools/`, `tests/repo-contract.test.mjs`, `Build-Release.ps1`, README distribution notes.
-  Acceptance: Local release checks fail when the userscript exceeds marketplace size limits, drops required metadata/update URLs, adds undisclosed `@connect` hosts, becomes minified/obfuscated, or uses external services without README disclosure.
-  Complexity: M
-
 - [ ] P1 — Add third-party filter and API license preflight
   Why: The bundled filter list combines uBO, quick-fixes, EasyList, and annoyance sources while README only exposes the repo MIT license; community API data also has attribution and usage requirements.
   Evidence: `youtube-adblock-filters.txt:1-8`, uAssets license, SponsorBlock/DeArrow API docs, Return YouTube Dislike usage rights, `YoutubeAdblock.user.js:6600-6614`.
