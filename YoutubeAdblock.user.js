@@ -303,6 +303,7 @@
             prunePathsPill: count => `${formatNumber(count)} Prune Paths`,
             networkOnlyPill: count => `${formatNumber(count)} Network-Only`,
             unsupportedScriptletsPill: count => `${formatNumber(count)} Unsupported Scriptlets`,
+            rejectedDangerousPill: count => `${formatNumber(count)} Rejected Dangerous`,
             refreshProblem: 'Refresh Problem',
             signatureVerified: 'Signature Verified',
             verifiedFilterNote: 'The recommended remote list was verified before it replaced your active rules.',
@@ -613,6 +614,7 @@
             droppedUnsafeSelectors: 'Dropped unsafe selectors',
             supportedScriptlets: 'Supported scriptlets',
             unsupportedScriptlets: 'Unsupported scriptlets',
+            rejectedDangerousScriptlets: 'Rejected dangerous scriptlets',
             ssaiSignals: 'SSAI signals',
             webpackSignatureSource: 'Webpack signature source',
             webpackSignatureVersion: 'Webpack signature version',
@@ -1551,7 +1553,8 @@
             networkOnlyRules: Math.max(0, Number(src.networkOnlyRules ?? base.networkOnlyRules) || 0),
             droppedUnsafeSelectors: Math.max(0, Number(src.droppedUnsafeSelectors ?? base.droppedUnsafeSelectors) || 0),
             supportedScriptlets: summarizeScriptlets(src.supportedScriptlets || base.supportedScriptlets),
-            unsupportedScriptlets: summarizeScriptlets(src.unsupportedScriptlets || base.unsupportedScriptlets)
+            unsupportedScriptlets: summarizeScriptlets(src.unsupportedScriptlets || base.unsupportedScriptlets),
+            rejectedDangerousScriptlets: summarizeScriptlets(src.rejectedDangerousScriptlets || base.rejectedDangerousScriptlets)
         };
     }
 
@@ -1598,6 +1601,12 @@
         };
     }
 
+    const DANGEROUS_SCRIPTLET_RE = /^trusted-(?!replace-(?:fetch|xhr)-response$|prevent-dom-bypass$)|^(?:evaldata-prune|inject-css-in-shadow-dom|replace-node-text|href-sanitizer|trusted-replace-argument|trusted-replace-node-text|override-element-method|trusted-override-element-method|trusted-suppress-native-method|trusted-set-attr|trusted-click-element|trusted-set-constant|trusted-set-local-storage-item|trusted-set-session-storage-item|trusted-set-cookie|trusted-prune-inbound-object|trusted-prune-outbound-object)$/;
+
+    function isDangerousScriptlet(name) {
+        return DANGEROUS_SCRIPTLET_RE.test(name);
+    }
+
     function parseUBOFilterList(text) {
         // Short-circuit pathological line counts before allocating Sets
         // and running full regex per line.
@@ -1611,6 +1620,7 @@
         const replaceKeys = {};
         const supportedScriptlets = new Map();
         const unsupportedScriptlets = new Map();
+        const rejectedDangerousScriptlets = new Map();
         let networkOnlyRules = 0;
         let filterCount = 0;
         let droppedUnsafeSelectors = 0;
@@ -1671,6 +1681,8 @@
                     } else {
                         countScriptlet(unsupportedScriptlets, name);
                     }
+                } else if (isDangerousScriptlet(name)) {
+                    countScriptlet(rejectedDangerousScriptlets, name);
                 } else {
                     countScriptlet(unsupportedScriptlets, name);
                 }
@@ -1760,7 +1772,8 @@
                 networkOnlyRules,
                 droppedUnsafeSelectors,
                 supportedScriptlets: summarizeScriptlets(supportedScriptlets),
-                unsupportedScriptlets: summarizeScriptlets(unsupportedScriptlets)
+                unsupportedScriptlets: summarizeScriptlets(unsupportedScriptlets),
+                rejectedDangerousScriptlets: summarizeScriptlets(rejectedDangerousScriptlets)
             }),
             features: { ...DEFAULT_FILTERS.features }
         };
@@ -6543,6 +6556,7 @@
         details.className = `${CSS_PREFIX}-chip-row`;
         const coverage = sanitizeFilterCoverage(state.filters?.coverage);
         const unsupportedCount = coverage.unsupportedScriptlets.reduce((sum, item) => sum + item.count, 0);
+        const rejectedDangerousCount = (coverage.rejectedDangerousScriptlets || []).reduce((sum, item) => sum + item.count, 0);
         details.append(
             createPill(STRINGS.ui.ruleVersionPill(state.filters?.version), 'neutral'),
             createPill(STRINGS.ui.syncedPill(state.lastFilterUpdate), 'neutral'),
@@ -6551,7 +6565,8 @@
             createPill(STRINGS.ui.selectorsPill(coverage.appliedSelectors), 'neutral'),
             createPill(STRINGS.ui.prunePathsPill(coverage.appliedPrunePaths), 'neutral'),
             createPill(STRINGS.ui.networkOnlyPill(coverage.networkOnlyRules), coverage.networkOnlyRules ? 'info' : 'neutral'),
-            createPill(STRINGS.ui.unsupportedScriptletsPill(unsupportedCount), unsupportedCount ? 'warn' : 'neutral')
+            createPill(STRINGS.ui.unsupportedScriptletsPill(unsupportedCount), unsupportedCount ? 'warn' : 'neutral'),
+            createPill(STRINGS.ui.rejectedDangerousPill(rejectedDangerousCount), rejectedDangerousCount ? 'error' : 'neutral')
         );
         actions.appendChild(reset);
         field.append(label, help, row, actions);
@@ -7703,6 +7718,7 @@
             `${report.droppedUnsafeSelectors}: ${coverage.droppedUnsafeSelectors}`,
             `${report.supportedScriptlets}: ${formatScriptletCoverage(coverage.supportedScriptlets)}`,
             `${report.unsupportedScriptlets}: ${formatScriptletCoverage(coverage.unsupportedScriptlets)}`,
+            `${report.rejectedDangerousScriptlets}: ${formatScriptletCoverage(coverage.rejectedDangerousScriptlets)}`,
             `${report.ssaiSignals}: detected=${state.stats.ssaiDetected || 0}, lastSeen=${state.ssaiLastSeen ? new Date(state.ssaiLastSeen).toISOString() : STRINGS.common.never}, lastUrl=${state.ssaiLastUrl || STRINGS.common.none}`,
             `${report.webpackSignatureSource}: ${state.webpackSignatureSource || STRINGS.common.unknown}`,
             `${report.webpackSignatureVersion}: ${state.webpackSignatureVersion || STRINGS.common.unknown}`,

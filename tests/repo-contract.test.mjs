@@ -290,6 +290,13 @@ test('@inject-into directive pins the userscript to the sandbox so GM_* stays av
     assert.match(userscript, /^\/\/\s*@inject-into\s+content\s*$/m);
 });
 
+test('remote-rule capability denylist rejects dangerous scriptlets', () => {
+    assert.match(userscript, /DANGEROUS_SCRIPTLET_RE/);
+    assert.match(userscript, /isDangerousScriptlet/);
+    assert.match(userscript, /rejectedDangerousScriptlets/);
+    assert.match(userscript, /Rejected dangerous scriptlets/i);
+});
+
 test('release publication guard verifies GitHub release assets and checksums', () => {
     assert.match(verifyReleaseArtifacts, /--verify-publication/);
     assert.match(verifyReleaseArtifacts, /verifyPublication/);

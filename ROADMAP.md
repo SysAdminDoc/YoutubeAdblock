@@ -46,13 +46,6 @@ Evidence and competitive context: see RESEARCH.md (consolidated; older inline re
 
 ### P2 - validation and migration
 
-- [ ] P1 — Add a remote-rule capability denylist guard
-  Why: Remote filters currently parse unsupported trusted scriptlets as coverage data; future parser work must make executable or DOM-creating scriptlets impossible to route into page execution.
-  Evidence: `youtube-adblock-filters.txt:65`, `youtube-adblock-filters.txt:152`, Chrome remote-hosted-code policy, The Hacker News trusted scriptlet report.
-  Touches: `parseUBOFilterList` in `YoutubeAdblock.user.js`, `tests/engine-core.test.mjs`, `tests/repo-contract.test.mjs`.
-  Acceptance: Remote rules containing script-creating or arbitrary-code scriptlets are reported as rejected-dangerous, never counted as supported, and regression tests prove no remote text can create a script element or executable function body.
-  Complexity: M
-
 - [ ] P1 — Convert optional community API hosts to runtime permissions
   Why: RYD is optional and SponsorBlock may be disabled by users, but extension install still requests both community API hosts up front.
   Evidence: `extension/manifest.json:22-30`, Chrome/Mozilla permission guidance, README feature defaults.

@@ -5,6 +5,10 @@ All notable changes to YoutubeAdblock are documented here.
 ## [Unreleased]
 
 ### Added
+- Added a remote-rule capability denylist that rejects dangerous scriptlets
+  (e.g. trusted-set-constant, trusted-set-attr, evaldata-prune) from remote
+  filter lists. Rejected scriptlets are reported as rejected-dangerous in
+  diagnostics and the Control Center instead of silently counted as unsupported.
 - Added Ed25519 signing and integrity verification for the refreshable webpack
   signature database. Remote signatures are rejected when tampered, diagnostics
   reports integrity status, and the release gate signs/verifies both the filter

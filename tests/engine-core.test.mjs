@@ -138,6 +138,7 @@ function createTestHarness(options = {}) {
         sanitizeWebpackSignatureDatabase,
         compileWebpackSignatureMatcher,
         webpackFactoryMatchesAdSignature,
+        isDangerousScriptlet,
         DEFAULT_FILTERS,
         DEFAULT_WEBPACK_SIGNATURE_DATABASE,
         state,
@@ -353,13 +354,13 @@ test('parseUBOFilterList reports supported and unsupported scriptlet coverage', 
     ].join('\n');
     const result = harness.parseUBOFilterList(text);
     const supported = new Map(result.coverage.supportedScriptlets.map(item => [item.name, item.count]));
-    const unsupported = new Map(result.coverage.unsupportedScriptlets.map(item => [item.name, item.count]));
+    const rejected = new Map(result.coverage.rejectedDangerousScriptlets.map(item => [item.name, item.count]));
 
     assert.equal(result.coverage.appliedPrunePaths, 3);
     assert.equal(supported.get('set'), 1);
     assert.equal(supported.get('json-prune'), 1);
     assert.equal(supported.get('trusted-replace-fetch-response'), 1);
-    assert.equal(unsupported.get('trusted-json-edit-fetch-request'), 1);
+    assert.equal(rejected.get('trusted-json-edit-fetch-request'), 1);
     assert.equal(result.replaceKeys.adPlacements, 'no_ads');
 });
 
@@ -377,13 +378,63 @@ test('parseUBOFilterList supports safe response replacements and bundled bypass 
     const supported = new Map(result.coverage.supportedScriptlets.map(item => [item.name, item.count]));
     const unsupported = new Map(result.coverage.unsupportedScriptlets.map(item => [item.name, item.count]));
 
+    const rejected = new Map(result.coverage.rejectedDangerousScriptlets.map(item => [item.name, item.count]));
+
     assert.equal(result.replaceKeys.adSlots, 'no_ads');
     assert.equal(result.replaceKeys.adPlacements, 'no_ads');
     assert.equal(supported.get('trusted-replace-fetch-response'), 1);
     assert.equal(supported.get('trusted-replace-xhr-response'), 1);
     assert.equal(supported.get('trusted-prevent-dom-bypass'), 3);
     assert.equal(supported.get('nano-stb'), 1);
-    assert.equal(unsupported.get('trusted-rpnt'), 1);
+    assert.equal(rejected.get('trusted-rpnt'), 1);
+});
+
+test('parseUBOFilterList rejects dangerous scriptlets that could create executable code', () => {
+    const text = [
+        'www.youtube.com##+js(trusted-set-constant, window.ads, true)',
+        'www.youtube.com##+js(trusted-set-attr, script, src, //evil)',
+        'www.youtube.com##+js(trusted-click-element, .skip-btn)',
+        'www.youtube.com##+js(trusted-replace-node-text, script, token)',
+        'www.youtube.com##+js(evaldata-prune, payload)',
+        'www.youtube.com##+js(trusted-set-local-storage-item, key, val)',
+        'www.youtube.com##+js(trusted-suppress-native-method, fetch)',
+        'www.youtube.com##+js(trusted-override-element-method, script, text)',
+        'www.youtube.com##+js(trusted-prune-inbound-object, window)',
+    ].join('\n');
+    const result = harness.parseUBOFilterList(text);
+    const supported = new Map(result.coverage.supportedScriptlets.map(item => [item.name, item.count]));
+    const unsupported = new Map(result.coverage.unsupportedScriptlets.map(item => [item.name, item.count]));
+    const rejected = new Map(result.coverage.rejectedDangerousScriptlets.map(item => [item.name, item.count]));
+
+    for (const name of [
+        'trusted-set-constant', 'trusted-set-attr', 'trusted-click-element',
+        'trusted-replace-node-text', 'evaldata-prune', 'trusted-set-local-storage-item',
+        'trusted-suppress-native-method', 'trusted-override-element-method',
+        'trusted-prune-inbound-object',
+    ]) {
+        assert.ok(rejected.has(name), `${name} must be rejected-dangerous`);
+        assert.equal(supported.has(name), false, `${name} must never be supported`);
+        assert.equal(unsupported.has(name), false, `${name} must not be unsupported (must be rejected)`);
+    }
+});
+
+test('isDangerousScriptlet allows safe trusted scriptlets through', () => {
+    assert.equal(harness.isDangerousScriptlet('trusted-replace-fetch-response'), false);
+    assert.equal(harness.isDangerousScriptlet('trusted-replace-xhr-response'), false);
+    assert.equal(harness.isDangerousScriptlet('trusted-prevent-dom-bypass'), false);
+    assert.equal(harness.isDangerousScriptlet('json-prune'), false);
+    assert.equal(harness.isDangerousScriptlet('set'), false);
+    assert.equal(harness.isDangerousScriptlet('nano-stb'), false);
+});
+
+test('isDangerousScriptlet blocks dangerous trusted scriptlets', () => {
+    assert.equal(harness.isDangerousScriptlet('trusted-set-constant'), true);
+    assert.equal(harness.isDangerousScriptlet('trusted-set-attr'), true);
+    assert.equal(harness.isDangerousScriptlet('trusted-click-element'), true);
+    assert.equal(harness.isDangerousScriptlet('trusted-replace-node-text'), true);
+    assert.equal(harness.isDangerousScriptlet('trusted-suppress-native-method'), true);
+    assert.equal(harness.isDangerousScriptlet('evaldata-prune'), true);
+    assert.equal(harness.isDangerousScriptlet('trusted-unknown-future-scriptlet'), true);
 });
 
 // ========== Webpack signature database ==========
