@@ -46,13 +46,6 @@ Evidence and competitive context: see RESEARCH.md (consolidated; older inline re
 
 ### P2 - validation and migration
 
-- [ ] P1 — Add store-policy preflight checks for the generated extension
-  Why: Chrome and AMO reviews care about remote hosted code, broad permissions, unsigned XPI language, and background compatibility; these are currently spread across docs/tests instead of one preflight.
-  Evidence: Chrome remote-hosted-code policy, Mozilla signing docs, `extension/manifest.json`, `tests/repo-contract.test.mjs:67-115`.
-  Touches: `tools/verify-release-artifacts.mjs` or new non-md tool, `tests/repo-contract.test.mjs`, `Build-Release.ps1`.
-  Acceptance: Release gate fails on remote executable URLs in generated code, unexpected broad host permissions, stale background compatibility keys, unsigned-XPI naming drift, or missing extension ID/checksum checks.
-  Complexity: M
-
 - [ ] P2 — Turn `STRINGS` into a real i18n pipeline
   Why: Visible copy is centralized, but there is no `_locales` output, `default_locale`, or userscript locale resolver yet.
   Evidence: `YoutubeAdblock.user.js:386`, `tests/repo-contract.test.mjs:131-168`, Chrome `i18n` API docs.

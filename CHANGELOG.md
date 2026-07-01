@@ -5,6 +5,9 @@ All notable changes to YoutubeAdblock are documented here.
 ## [Unreleased]
 
 ### Added
+- Added store-policy preflight checks that fail the release gate on remote
+  executable URLs, broad host permissions, eval/new Function, invalid extension
+  ID, unsigned XPI naming, and stale background compatibility keys.
 - Converted SponsorBlock and RYD community API hosts from install-time
   `host_permissions` to `optional_host_permissions` with runtime permission
   request via the context menu. Permission status is tracked and reported in

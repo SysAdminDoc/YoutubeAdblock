@@ -305,6 +305,17 @@ test('@inject-into directive pins the userscript to the sandbox so GM_* stays av
     assert.match(userscript, /^\/\/\s*@inject-into\s+content\s*$/m);
 });
 
+test('store-policy preflight catches remote code and broad permissions', () => {
+    const storePolicy = read(path.join('tools', 'verify-store-policy.mjs'));
+    assert.match(storePolicy, /remote executable URL/i);
+    assert.match(storePolicy, /broad.*pattern/i);
+    assert.match(storePolicy, /unsigned.*xpi/i);
+    assert.match(storePolicy, /extension-id\.txt/);
+    assert.match(storePolicy, /eval\b/);
+    assert.match(storePolicy, /new\s+Function/);
+    assert.match(buildRelease, /verify-store-policy\.mjs/);
+});
+
 test('remote-rule capability denylist rejects dangerous scriptlets', () => {
     assert.match(userscript, /DANGEROUS_SCRIPTLET_RE/);
     assert.match(userscript, /isDangerousScriptlet/);
