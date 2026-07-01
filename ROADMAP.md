@@ -83,13 +83,6 @@ Evidence and competitive context: see RESEARCH.md (consolidated; older inline re
 
 ### P1 - distribution trust additions
 
-- [ ] P1 — Add third-party filter and API license preflight
-  Why: The bundled filter list combines uBO, quick-fixes, EasyList, and annoyance sources while README only exposes the repo MIT license; community API data also has attribution and usage requirements.
-  Evidence: `youtube-adblock-filters.txt:1-8`, uAssets license, SponsorBlock/DeArrow API docs, Return YouTube Dislike usage rights, `YoutubeAdblock.user.js:6600-6614`.
-  Touches: `youtube-adblock-filters.txt`, README attribution/license section, `tools/verify-release-artifacts.mjs` or a new non-md license verifier, `tests/repo-contract.test.mjs`.
-  Acceptance: Release checks verify upstream filter/source attribution is present, README distinguishes project code license from bundled filter/data terms, and API attribution links remain visible in Control Center and docs.
-  Complexity: M
-
 ### P2 - diagnostics and performance additions
 
 - [ ] P2 — Add extension DNR matched-rule diagnostics

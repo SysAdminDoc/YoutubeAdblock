@@ -95,6 +95,7 @@ $networkOutputPath = Join-Path $repoRootAbs 'extension\rules\network-blocks.json
 $filterSignScriptPath = Join-Path $repoRootAbs 'tools\sign-filter-manifest.mjs'
 $storePolicyScriptPath = Join-Path $repoRootAbs 'tools\verify-store-policy.mjs'
 $marketplaceScriptPath = Join-Path $repoRootAbs 'tools\verify-userscript-marketplace.mjs'
+$licenseScriptPath = Join-Path $repoRootAbs 'tools\verify-license-attribution.mjs'
 $artifactVerifyScriptPath = Join-Path $repoRootAbs 'tools\verify-release-artifacts.mjs'
 
 if (-not (Test-Path -LiteralPath $sourcePath)) { throw "Missing userscript: $sourcePath" }
@@ -137,6 +138,7 @@ $node = Get-Command -Name node -ErrorAction SilentlyContinue
 if (-not $node) { throw 'Node.js is required for release checks.' }
 Invoke-Checked { & node $storePolicyScriptPath --repo-root $repoRootAbs } 'Store-policy preflight failed.'
 Invoke-Checked { & node $marketplaceScriptPath --repo-root $repoRootAbs } 'Userscript marketplace preflight failed.'
+Invoke-Checked { & node $licenseScriptPath --repo-root $repoRootAbs } 'License and attribution preflight failed.'
 Invoke-Checked { & node $filterSignScriptPath --repo-root $repoRootAbs } 'Filter manifest signing/verification failed.'
 Invoke-Checked { & node $filterSignScriptPath --repo-root $repoRootAbs --filter webpack-ad-signatures.json --manifest webpack-ad-signatures.manifest.json --signature webpack-ad-signatures.json.sig } 'Webpack signature manifest signing/verification failed.'
 Invoke-Checked { & node --check $sourcePath } 'node --check failed on YoutubeAdblock.user.js'

@@ -5,6 +5,9 @@ All notable changes to YoutubeAdblock are documented here.
 ## [Unreleased]
 
 ### Added
+- Added a third-party license attribution preflight that verifies upstream
+  filter source credits, community API CC BY-NC-SA attribution in the UI,
+  README service disclosures, and LICENSE file presence.
 - Added a userscript marketplace preflight that validates metadata headers,
   size limits, readable code, and external service disclosure for Greasy Fork
   and OpenUserJS distribution.

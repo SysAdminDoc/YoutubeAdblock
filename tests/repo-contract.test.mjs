@@ -305,6 +305,18 @@ test('@inject-into directive pins the userscript to the sandbox so GM_* stays av
     assert.match(userscript, /^\/\/\s*@inject-into\s+content\s*$/m);
 });
 
+test('third-party filter and API license attribution is verified at release', () => {
+    const licenseVerifier = read(path.join('tools', 'verify-license-attribution.mjs'));
+    assert.match(licenseVerifier, /uBlock|uBO/);
+    assert.match(licenseVerifier, /EasyList/);
+    assert.match(licenseVerifier, /SponsorBlock/);
+    assert.match(licenseVerifier, /DeArrow/);
+    assert.match(licenseVerifier, /Return YouTube Dislike/);
+    assert.match(licenseVerifier, /CC BY-NC-SA/);
+    assert.match(licenseVerifier, /LICENSE/);
+    assert.match(buildRelease, /verify-license-attribution\.mjs/);
+});
+
 test('userscript marketplace preflight validates metadata and disclosure', () => {
     const marketplace = read(path.join('tools', 'verify-userscript-marketplace.mjs'));
     assert.match(marketplace, /@name/);
