@@ -54,7 +54,11 @@ function Get-UserscriptVersion([string]$Path) {
     if ($header.Groups[1].Value -ne $runtime.Groups[1].Value) {
         throw "Userscript @version and SCRIPT_VERSION differ."
     }
-    return $header.Groups[1].Value
+    $ver = $header.Groups[1].Value
+    if ($ver -notmatch '^\d+\.\d+\.\d+(-[a-zA-Z0-9.]+)?$') {
+        throw "Userscript @version contains unsafe characters: $ver"
+    }
+    return $ver
 }
 
 function Test-JsonEqual([string]$ActualPath, [string]$ExpectedJson, [string]$Label) {

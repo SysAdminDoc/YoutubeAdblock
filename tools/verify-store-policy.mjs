@@ -64,6 +64,10 @@ if (manifest.manifest_version !== 3) {
     fail(`manifest_version must be 3, got ${manifest.manifest_version}.`);
 }
 
+if (manifest.description && manifest.description.length > 132) {
+    fail(`manifest.json description is ${manifest.description.length} chars; Chrome Web Store limit is 132.`);
+}
+
 if (!manifest.browser_specific_settings?.gecko?.id) {
     fail('manifest.json missing browser_specific_settings.gecko.id for AMO submission.');
 }

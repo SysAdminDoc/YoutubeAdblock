@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "YoutubeAdblock",
   "version": "0.5.20",
-  "description": "Document-start YouTube ad blocker with no-ad request injection, Object.assign hook, toString-masked proxies, ServiceWorker block, webpack chunk prune, iframe fetch-lift defense, SponsorBlock + Return YouTube Dislike, volume boost, Unhook-style clutter hides, engine health diagnostics, and expanded DNR rules.",
+  "description": "YouTube ad blocker with payload pruning, anti-detect hardening, SponsorBlock, Return YouTube Dislike, and a Control Center.",
   "author": "SysAdminDoc",
   "homepage_url": "https://github.com/SysAdminDoc/YoutubeAdblock",
   "minimum_chrome_version": "121",

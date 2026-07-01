@@ -27,7 +27,11 @@ function getVersion() {
     const source = fs.readFileSync(sourcePath, 'utf8');
     const match = source.match(/^\/\/\s*@version\s+(\S+)/m);
     if (!match) fail('Userscript @version missing.');
-    return match[1];
+    const version = match[1];
+    if (!/^[0-9]+\.[0-9]+\.[0-9]+(?:-[a-zA-Z0-9.]+)?$/.test(version)) {
+        fail(`Userscript @version contains unsafe characters: ${version}`);
+    }
+    return version;
 }
 
 function normalizeZipName(name) {
@@ -257,7 +261,7 @@ function verifyPublication(version) {
     let publishedChecksums;
     try {
         publishedChecksums = execSync(
-            `gh release download ${tag} --repo SysAdminDoc/YoutubeAdblock --pattern "${checksumAsset.name}" --output - `,
+            `gh release download ${tag} --repo SysAdminDoc/YoutubeAdblock --pattern "${checksumAsset.name}" --output -`,
             { cwd: repoRoot, stdio: 'pipe', encoding: 'utf8' }
         ).trim();
     } catch {

@@ -209,9 +209,7 @@ chrome.contextMenus.onClicked.addListener((info) => {
             break;
         case 'ytab-grant-api-permissions':
             chrome.permissions.request({ origins: COMMUNITY_API_ORIGINS }, (granted) => {
-                if (granted) {
-                    sendToActiveTab({ type: 'ytab:api-permissions-changed', granted: true });
-                }
+                sendToActiveTab({ type: 'ytab:api-permissions-changed', granted: !!granted });
             });
             break;
     }
