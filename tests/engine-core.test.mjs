@@ -694,6 +694,80 @@ test('rewriteRequestBodyText returns null for non-player bodies', () => {
     assert.equal(harness.rewriteRequestBodyText(''), null);
 });
 
+// ========== Closed-breakage replay fixtures ==========
+
+test('issue #2 replay: pruneObject preserves streamingData and comments on a watch-page player response', () => {
+    const playerResponse = {
+        videoDetails: { videoId: 'replay_issue2' },
+        playabilityStatus: { status: 'OK' },
+        streamingData: { adaptiveFormats: [{ itag: 137 }, { itag: 140 }] },
+        adPlacements: [{ adPlacementRenderer: {} }],
+        playerAds: [{ playerLegacyDesktopWatchAdsRenderer: {} }],
+        adSlots: [{ adSlotRenderer: {} }],
+        frameworkUpdates: { entityBatchUpdate: {} },
+    };
+    const browseResponse = {
+        contents: {
+            twoColumnWatchNextResults: {
+                results: {
+                    results: {
+                        contents: [
+                            { videoPrimaryInfoRenderer: {} },
+                            { videoSecondaryInfoRenderer: {} },
+                            { itemSectionRenderer: { contents: [{ commentRenderer: { text: 'test comment' } }] } }
+                        ]
+                    }
+                }
+            }
+        }
+    };
+
+    const pruned = harness.pruneObject(playerResponse);
+    assert.equal(pruned, true);
+    assert.ok(playerResponse.streamingData, 'streamingData must survive pruning');
+    assert.ok(playerResponse.streamingData.adaptiveFormats, 'adaptiveFormats must survive pruning');
+    assert.equal(playerResponse.streamingData.adaptiveFormats.length, 2);
+    assert.ok(playerResponse.playabilityStatus, 'playabilityStatus must survive pruning');
+    assert.equal(playerResponse.playabilityStatus.status, 'OK');
+    assert.equal(playerResponse.adPlacements, undefined, 'adPlacements must be removed');
+    assert.equal(playerResponse.playerAds, undefined, 'playerAds must be removed');
+
+    const browsePruned = harness.pruneObject(browseResponse);
+    assert.equal(browsePruned, false, 'browse response without ads should not be pruned');
+    assert.ok(browseResponse.contents.twoColumnWatchNextResults.results.results.contents[2].itemSectionRenderer,
+        'comments section must survive pruning');
+});
+
+test('issue #2 replay: rewriteRequestBodyText does not inject clientScreen', () => {
+    const body = JSON.stringify({
+        context: {
+            client: { clientName: 'WEB', clientVersion: '2.20260101' }
+        },
+        playbackContext: {
+            contentPlaybackContext: { autoCaptionsDefaultOn: false }
+        }
+    });
+    const result = harness.rewriteRequestBodyText(body);
+    assert.ok(result, 'should inject noAd flag');
+    const parsed = JSON.parse(result);
+    assert.equal(parsed.context.client.clientScreen, undefined, 'clientScreen rewrite must not exist');
+    assert.equal(parsed.playbackContext.contentPlaybackContext.isInlinePlaybackNoAd, true);
+});
+
+test('issue #1 replay: pruneObject handles multi-video navigation without blocking playback', () => {
+    const videos = [
+        { videoDetails: { videoId: 'vid1' }, streamingData: { formats: [{ itag: 18 }] }, adPlacements: [{}] },
+        { videoDetails: { videoId: 'vid2' }, streamingData: { formats: [{ itag: 18 }] }, playerAds: [{}] },
+        { videoDetails: { videoId: 'vid3' }, streamingData: { formats: [{ itag: 18 }] }, adSlots: [{}] },
+    ];
+
+    for (const response of videos) {
+        harness.pruneObject(response);
+        assert.ok(response.streamingData, `streamingData must survive for ${response.videoDetails.videoId}`);
+        assert.ok(response.streamingData.formats.length > 0);
+    }
+});
+
 // ========== Original audio track forcing ==========
 
 test('pickOriginalAudioTrack selects explicitly marked original audio', () => {

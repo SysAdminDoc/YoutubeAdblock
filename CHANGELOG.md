@@ -5,6 +5,10 @@ All notable changes to YoutubeAdblock are documented here.
 ## [Unreleased]
 
 ### Added
+- Added closed-breakage replay test fixtures for issue #1 (3-video playback
+  blocker) and issue #2 (clientScreen regression). Tests verify streamingData
+  and comments survive pruning, clientScreen rewrite is absent, and multi-video
+  navigation does not block playback.
 - Added a third-party license attribution preflight that verifies upstream
   filter source credits, community API CC BY-NC-SA attribution in the UI,
   README service disclosures, and LICENSE file presence.

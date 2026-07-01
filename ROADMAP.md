@@ -112,13 +112,6 @@ Evidence and competitive context: see RESEARCH.md (consolidated; older inline re
 
 ### P2 - regression and API resilience
 
-- [ ] P2 — Add closed-breakage replay fixtures for issue #1 and issue #2
-  Why: Both real user reports were severe playback/watch-page blockers, but current tests only cover narrower helper behavior and browser smoke.
-  Evidence: GitHub issues #1/#2, `CHANGELOG.md:246-260`, `YoutubeAdblock.user.js:2511-2563`, `tests/engine-core.test.mjs`, `tests/browser-smoke.test.mjs`.
-  Touches: `tests/engine-core.test.mjs`, `tests/browser-smoke.test.mjs`, test fixture helpers.
-  Acceptance: Local tests replay the 3-video playback blocker and the `/watch` `clientScreen` regression inputs; tests fail if comments/player `streamingData` is removed or if the retired `clientScreen` rewrite behavior returns.
-  Complexity: M
-
 - [ ] P2 — Add community API cooldown and retry diagnostics
   Why: SponsorBlock/DeArrow/RYD failures currently collapse to null; RYD has known rate-limit pressure, and users need visible cooldown state instead of silent retry churn.
   Evidence: `YoutubeAdblock.user.js:3294-3315`, `YoutubeAdblock.user.js:4012-4028`, `YoutubeAdblock.user.js:4170-4186`, SponsorBlock API docs, DeArrow API docs, Return YouTube Dislike issue #319, MDN HTTP 429 docs.
