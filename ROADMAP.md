@@ -92,13 +92,6 @@ Evidence and competitive context: see RESEARCH.md (consolidated; older inline re
   Acceptance: Extension diagnostics include recent DNR rule IDs/counts for YouTube ad endpoints when feedback APIs are available, degrade cleanly without the feedback permission/API, and never expose non-YouTube browsing data.
   Complexity: M
 
-- [ ] P2 — Add parser and interceptor performance budgets
-  Why: Remote filters, InnerTube payloads, and webpack factories are bounded but not benchmarked, so regressions in hot document-start paths can ship while functional tests remain green.
-  Evidence: `YoutubeAdblock.user.js:1373-1384`, `YoutubeAdblock.user.js:3715-3817`, `tests/engine-core.test.mjs`, active uAssets commits and YouTube quick-fix churn.
-  Touches: `tests/engine-core.test.mjs` or a new non-md perf test under `tests/`, package scripts, parser/prune/webpack helper exports.
-  Acceptance: A local test command fails when parsing a 50k-line filter list, pruning representative large player/browse payloads, or scanning guarded webpack factories exceeds fixed budgets on this machine.
-  Complexity: M
-
 ## Research-Driven Additions
 
 ### P1 - trust boundary hardening

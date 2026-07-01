@@ -5,6 +5,9 @@ All notable changes to YoutubeAdblock are documented here.
 ## [Unreleased]
 
 ### Added
+- Added parser and interceptor performance budget tests that fail when 50k-line
+  filter parsing, repeated pruneObject, or webpack factory scanning exceed
+  fixed time budgets.
 - Added closed-breakage replay test fixtures for issue #1 (3-video playback
   blocker) and issue #2 (clientScreen regression). Tests verify streamingData
   and comments survive pruning, clientScreen rewrite is absent, and multi-video

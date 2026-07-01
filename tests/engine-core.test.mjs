@@ -585,6 +585,49 @@ test('server-stitched ad signal de-duplicates repeated parses for the same video
     assert.equal(h.state.stats.ssaiDetected, 1);
 });
 
+// ========== Performance budgets ==========
+
+test('parseUBOFilterList processes a 50k-line filter list within budget', () => {
+    const lines = [];
+    for (let i = 0; i < 50000; i++) {
+        if (i % 3 === 0) lines.push(`youtube.com##.ad-container-${i}`);
+        else if (i % 3 === 1) lines.push(`||youtube.com/pagead/${i}`);
+        else lines.push(`! comment line ${i}`);
+    }
+    const text = lines.join('\n');
+    const start = performance.now();
+    const result = harness.parseUBOFilterList(text);
+    const elapsed = performance.now() - start;
+    assert.ok(elapsed < 5000, `Filter parsing took ${elapsed.toFixed(0)}ms, budget is 5000ms`);
+    assert.ok(result.filterCount > 0);
+});
+
+test('pruneObject processes a large player response within budget', () => {
+    const response = {
+        videoDetails: { videoId: 'perf-test' },
+        streamingData: { adaptiveFormats: Array.from({ length: 200 }, (_, i) => ({ itag: i, url: `https://rr.google.com/vid?id=${i}` })) },
+        adPlacements: Array.from({ length: 50 }, () => ({ adPlacementRenderer: { renderer: { adSlotRenderer: {} } } })),
+        playerAds: [{ playerLegacyDesktopWatchAdsRenderer: {} }],
+    };
+    const start = performance.now();
+    for (let i = 0; i < 100; i++) {
+        const copy = JSON.parse(JSON.stringify(response));
+        harness.pruneObject(copy);
+    }
+    const elapsed = performance.now() - start;
+    assert.ok(elapsed < 2000, `100x pruneObject took ${elapsed.toFixed(0)}ms, budget is 2000ms`);
+});
+
+test('webpackFactoryMatchesAdSignature scans within budget', () => {
+    const factory = 'function(){' + 'var x=1;'.repeat(5000) + 'return adPlacements;}';
+    const start = performance.now();
+    for (let i = 0; i < 1000; i++) {
+        harness.webpackFactoryMatchesAdSignature(factory);
+    }
+    const elapsed = performance.now() - start;
+    assert.ok(elapsed < 1000, `1000x webpack scan took ${elapsed.toFixed(0)}ms, budget is 1000ms`);
+});
+
 // ========== Signed filter manifest ==========
 
 test('signed filter manifest accepts the committed filter list', async () => {
