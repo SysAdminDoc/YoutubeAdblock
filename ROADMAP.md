@@ -80,6 +80,24 @@ Evidence and competitive context: see RESEARCH.md (consolidated; older inline re
   Acceptance: Extension diagnostics include recent DNR rule IDs/counts for YouTube ad endpoints when feedback APIs are available, degrade cleanly without the feedback permission/API, and never expose non-YouTube browsing data.
   Complexity: M
 
+### Audit-surfaced items
+
+- [ ] P2 — Harden cosmetic CSS hash to fully deduplicate selector sets
+  Why: Current mid-point sampling hash still has false-positive risk for selector sets that differ only in positions not sampled.
+  Where: `YoutubeAdblock.user.js` `updateCosmeticCSS` function.
+
+- [ ] P2 — Add light theme or system-preference CSS for the Control Center
+  Why: The entire panel CSS is dark-only with hardcoded RGBA values; no `prefers-color-scheme: light` path exists.
+  Where: `YoutubeAdblock.user.js` `injectSettingsCSS` function.
+
+- [ ] P3 — Replace DeArrow `locked` boolean arithmetic with explicit comparison
+  Why: `b.locked - a.locked` relies on boolean-to-number coercion; explicit `b.locked === a.locked ? 0 : b.locked ? -1 : 1` is clearer.
+  Where: `YoutubeAdblock.user.js` `dearrowResolve` function.
+
+- [ ] P3 — Improve DOM bypass prevention script detection beyond simple string matching
+  Why: `window,"fetch"` string matching can be evaded with template literals, concatenation, or Unicode escapes.
+  Where: `YoutubeAdblock.user.js` `installDOMBypassPrevention` function.
+
 ## Research-Driven Additions
 
 ### P1 - trust boundary hardening
