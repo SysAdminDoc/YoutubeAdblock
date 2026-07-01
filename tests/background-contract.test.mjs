@@ -34,7 +34,12 @@ function createBackgroundEnv(options = {}) {
         runtime: {
             lastError: null,
             onInstalled: { addListener(fn) { listeners.installed = fn; } },
-            onStartup: { addListener(fn) { listeners.startup = fn; } }
+            onStartup: { addListener(fn) { listeners.startup = fn; } },
+            onMessage: { addListener(fn) { listeners.message = fn; } }
+        },
+        permissions: {
+            request(perms, cb) { if (cb) cb(true); },
+            contains(perms, cb) { if (cb) cb(false); }
         },
         tabs: {
             async query() { return activeTab ? [activeTab] : []; },
@@ -91,6 +96,26 @@ test('context menu rebuild includes Block This Channel action', () => {
     assert.equal(blockMenu.contexts.length, 2);
     assert.equal(blockMenu.contexts[0], 'page');
     assert.equal(blockMenu.contexts[1], 'link');
+});
+
+test('context menu rebuild includes Grant Community API Access action', () => {
+    const env = createBackgroundEnv();
+    env.listeners.installed();
+    const grantMenu = env.createdMenus.find(item => item.id === 'ytab-grant-api-permissions');
+    assert.ok(grantMenu, 'expected Grant Community API Access context menu item');
+    assert.equal(grantMenu.title, 'Grant Community API Access');
+});
+
+test('check-api-permissions message returns permission status', () => {
+    const env = createBackgroundEnv();
+    let response = null;
+    env.listeners.message(
+        { type: 'ytab:check-api-permissions' },
+        {},
+        (r) => { response = r; }
+    );
+    assert.ok(response);
+    assert.equal(typeof response.granted, 'boolean');
 });
 
 test('Block This Channel context menu dispatches ytab:block-channel to active YouTube tab', async () => {

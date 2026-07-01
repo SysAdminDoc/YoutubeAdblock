@@ -348,7 +348,7 @@
                 channelBlocklistImported: 'Channel blocklist imported.',
                 importMigration: 'Import Migration',
                 rejectedEntries: items => `Rejected entries:\n${items.join('\n')}`,
-                migrationImported: (channels, keywords, rejectedCount) => `Migration imported ${channels} channel and ${keywords} keyword entries${rejectedCount ? `; ${rejectedCount} rejected.` : '.'}`,
+                migrationImported: (channels, keywords, rejectedCount) => `Migration imported ${channels} channel and ${keywords} keyword ${channels + keywords === 1 ? 'entry' : 'entries'}${rejectedCount ? `; ${rejectedCount} rejected.` : '.'}`,
                 migrationNoSupportedEntries: 'Migration import did not find supported channel or keyword entries.',
                 importJsonParseError: 'Import JSON could not be parsed.',
                 importJsonNoSupportedSettings: 'Import JSON did not contain supported YoutubeAdblock settings.',
@@ -3696,9 +3696,7 @@
                     if (!isEnabled() || !state.features.serviceWorkerBlock) {
                         return Reflect.apply(target, thisArg, args);
                     }
-                    // Return a resolved sentinel so sites that chain .then
-                    // off the promise don't crash, but no worker installs.
-                    return Promise.reject(new Error('ServiceWorker registration blocked'));
+                    return Promise.resolve(undefined);
                 }
             });
             registerNativeMask(proxiedRegister, originalRegister);
@@ -4053,7 +4051,8 @@
         // selector set actually changed. On SPA navigations + the 1.5s
         // DeArrow sweep this short-circuits the common case (same filter
         // set, same feature flags) with zero DOM writes.
-        const hash = safe.length + ':' + safe[0] + ':' + safe[safe.length - 1];
+        const mid = safe[safe.length >> 1] || '';
+        const hash = safe.length + ':' + safe[0] + ':' + mid + ':' + safe[safe.length - 1];
         if (hash === cosmeticCSSLastHash) return;
         cosmeticCSSLastHash = hash;
         // One rule per selector — per the CSS spec, a malformed selector in
@@ -4423,7 +4422,6 @@
     function getYoutubePlayerApi() {
         const candidates = [
             document.getElementById('movie_player'),
-            document.querySelector('#movie_player'),
             document.querySelector('ytd-player #movie_player'),
             document.querySelector('#shorts-player')
         ];
@@ -5009,6 +5007,16 @@
         return matchesChannelList(identity, list);
     }
 
+    var _cachedDurationMin = NaN;
+    var _cachedDurationMax = NaN;
+    var _durationCacheStale = true;
+
+    function refreshDurationCache() {
+        _cachedDurationMin = parseInt(getSetting('duration_min', ''), 10);
+        _cachedDurationMax = parseInt(getSetting('duration_max', ''), 10);
+        _durationCacheStale = false;
+    }
+
     function videoRendererMatches(renderer, channels, keywords) {
         if (!renderer || typeof renderer !== 'object') return false;
         var title = '';
@@ -5028,17 +5036,19 @@
         if (state.features.durationFilter) {
             var dur = extractRendererDuration(renderer);
             if (dur >= 0) {
-                var minDur = parseInt(getSetting('duration_min', ''), 10);
-                var maxDur = parseInt(getSetting('duration_max', ''), 10);
-                if (!isNaN(minDur) && minDur > 0 && dur < minDur) return true;
-                if (!isNaN(maxDur) && maxDur > 0 && dur > maxDur) return true;
+                if (_durationCacheStale) refreshDurationCache();
+                if (!isNaN(_cachedDurationMin) && _cachedDurationMin > 0 && dur < _cachedDurationMin) return true;
+                if (!isNaN(_cachedDurationMax) && _cachedDurationMax > 0 && dur > _cachedDurationMax) return true;
             }
         }
         return false;
     }
 
     function feedFilterWalk(value, channels, keywords, depth) {
-        if (depth === undefined) depth = 0;
+        if (depth === undefined) {
+            depth = 0;
+            _durationCacheStale = true;
+        }
         if (!value || depth > 16) return 0;
         var dropped = 0;
         if (Array.isArray(value)) {
@@ -5982,8 +5992,6 @@
             .${CSS_PREFIX}-footer-hint {
                 font-size: 11px;
                 color: var(--text-3);
-            }
-            .${CSS_PREFIX}-footer-hint {
                 text-wrap: balance;
             }
             .${CSS_PREFIX}-toast-region {
@@ -6156,7 +6164,7 @@
             .${CSS_PREFIX}-attribution {
                 margin-top: 8px;
                 font-size: 11px;
-                opacity: 0.7;
+                color: var(--text-3);
             }
             .${CSS_PREFIX}-attribution a {
                 color: var(--accent);
@@ -6609,7 +6617,7 @@
             createPill(STRINGS.ui.prunePathsPill(coverage.appliedPrunePaths), 'neutral'),
             createPill(STRINGS.ui.networkOnlyPill(coverage.networkOnlyRules), coverage.networkOnlyRules ? 'info' : 'neutral'),
             createPill(STRINGS.ui.unsupportedScriptletsPill(unsupportedCount), unsupportedCount ? 'warn' : 'neutral'),
-            createPill(STRINGS.ui.rejectedDangerousPill(rejectedDangerousCount), rejectedDangerousCount ? 'error' : 'neutral')
+            createPill(STRINGS.ui.rejectedDangerousPill(rejectedDangerousCount), rejectedDangerousCount ? 'danger' : 'neutral')
         );
         actions.appendChild(reset);
         field.append(label, help, row, actions);
@@ -6792,7 +6800,7 @@
             target = normalizeMigrationType(explicit[1]) || target;
         }
         if (!value) return;
-        if (!target) target = looksLikeChannelEntry(value) ? 'channel' : 'channel';
+        if (!target) target = looksLikeChannelEntry(value) ? 'channel' : 'keyword';
         if (target === 'channel') {
             result.channels.push(value);
             result.seen++;

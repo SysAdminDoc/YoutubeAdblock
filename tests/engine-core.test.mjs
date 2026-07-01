@@ -1048,3 +1048,12 @@ test('migration import merges channel and keyword entries and previews rejects',
     assert.equal(h.__storage.ytab_feature_overrides.channelBlocker, true);
     assert.equal(h.__storage.ytab_feature_overrides.keywordBlocker, true);
 });
+
+test('migration import classifies plain text as keywords when not a channel entry', () => {
+    const h = createTestHarness({ storage: {} });
+    const result = h.importSettingsPayload('some random phrase\nanother word', 'migration');
+    assert.equal(result.ok, true);
+    assert.equal(result.keywords, 2);
+    assert.equal(result.channels, 0);
+    assert.equal(h.__storage.ytab_keyword_blocklist, 'some random phrase\nanother word');
+});
