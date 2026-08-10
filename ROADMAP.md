@@ -1,40 +1,32 @@
 # YoutubeAdblock Roadmap
 
-Forward-looking scope for the split-context YouTube ad blocker (userscript + Chrome MV3 extension + Firefox MV3).
+Actionable work only. Historical and completed roadmap material is archived in CHANGELOG.md; blocked work is kept in Roadmap_Blocked.md.
 
-## Planned Features
+## Actionable Items
 
-### Blocking Engine
-- `Trusted Types` full coverage audit: eliminate remaining string-HTML code paths in the Control Center.
+- [ ] `Trusted Types` full coverage audit: eliminate remaining string-HTML code paths in the Control Center.
 
-### Control Center
-- Per-surface toggles (home feed, watch, shorts, YT Music, YT Kids) with independent engine profiles.
-- Exportable diagnostic bundle (counters, last 50 prune events, UA, version) as a single JSON for bug reports.
-- Rules playground: paste a custom uBO-style selector and preview what it would hide on the current page.
-- Dark-mode CSS audit for Control Center contrast ratio ≥ AA.
+- [ ] Per-surface toggles (home feed, watch, shorts, YT Music, YT Kids) with independent engine profiles.
 
-### SponsorBlock / DeArrow Integration
-- Category-aware skip behavior: auto-skip sponsor, mute-ads-only for self-promo, manual for filler.
-- Offline vote cache: submit SponsorBlock segments from within the Control Center without leaving YouTube.
-- DeArrow submission UI for replacing clickbait titles directly from the player (gated behind opt-in).
+- [ ] Exportable diagnostic bundle (counters, last 50 prune events, UA, version) as a single JSON for bug reports.
 
-### Extension
-- Firefox MV3 stable release: drop the temporary-add-on path once `background.scripts` stops being a compat hack.
-- Declarative NetRequest dynamic rules: ship a rules update endpoint for fast response when YouTube rotates endpoints.
-- Popup (toolbar) UI mirroring Control Center for users who never use the userscript menu.
-- Enterprise policy schema (`managed_schema`) so IT admins can lock defaults.
+- [ ] Rules playground: paste a custom uBO-style selector and preview what it would hide on the current page.
 
-## Nice-to-Haves
-- Webext background job that refreshes the filter list on `chrome.alarms`, independent of page reloads.
-- A minimal variant (`Lite`) that only ships payload pruning + CSS cleanup for users on low-end hardware.
-- Playback quality forcer (auto-select 1080p/4K on load) as an optional power-user toggle.
-- Per-tab "engine disabled" indicator in the toolbar icon when a site breakage recovery was triggered.
+- [ ] Dark-mode CSS audit for Control Center contrast ratio ≥ AA.
 
-## Research-Driven Additions
+- [ ] Category-aware skip behavior: auto-skip sponsor, mute-ads-only for self-promo, manual for filler.
 
-Evidence and competitive context: see RESEARCH.md (consolidated; older inline research notes moved there).
+- [ ] Offline vote cache: submit SponsorBlock segments from within the Control Center without leaving YouTube.
 
-### P2 - validation and migration
+- [ ] DeArrow submission UI for replacing clickbait titles directly from the player (gated behind opt-in).
+
+- [ ] Firefox MV3 stable release: drop the temporary-add-on path once `background.scripts` stops being a compat hack.
+
+- [ ] Declarative NetRequest dynamic rules: ship a rules update endpoint for fast response when YouTube rotates endpoints.
+
+- [ ] Popup (toolbar) UI mirroring Control Center for users who never use the userscript menu.
+
+- [ ] Enterprise policy schema (`managed_schema`) so IT admins can lock defaults.
 
 - [ ] P2 — Turn `STRINGS` into a real i18n pipeline
   Why: Visible copy is centralized, but there is no `_locales` output, `default_locale`, or userscript locale resolver yet.
@@ -71,16 +63,12 @@ Evidence and competitive context: see RESEARCH.md (consolidated; older inline re
   Acceptance: A local command fetches upstream quick-fixes, maps supported scriptlets to bundled equivalents, leaves dangerous/unsupported rules as rejected coverage, re-signs filter/signature data, and runs the relevant parser/signature tests.
   Complexity: M
 
-### P2 - diagnostics and performance additions
-
 - [ ] P2 — Add extension DNR matched-rule diagnostics
   Why: Page diagnostics cannot prove whether the browser network-layer rules actually fired, which makes extension-specific ad reports hard to triage.
   Evidence: Chrome `declarativeNetRequest.getMatchedRules` docs, `extension/manifest.json:57-64`, `extension/rules/network-rules-source.json`, `buildDiagnosticsReport()` in `YoutubeAdblock.user.js:7626-7687`.
   Touches: `extension/background.js`, `extension/bridge.js`, `YoutubeAdblock.user.js`, `extension/manifest.json`, `tests/background-contract.test.mjs`, `tests/bridge-security.test.mjs`.
   Acceptance: Extension diagnostics include recent DNR rule IDs/counts for YouTube ad endpoints when feedback APIs are available, degrade cleanly without the feedback permission/API, and never expose non-YouTube browsing data.
   Complexity: M
-
-### Audit-surfaced items
 
 - [ ] P2 — Harden cosmetic CSS hash to fully deduplicate selector sets
   Why: Current mid-point sampling hash still has false-positive risk for selector sets that differ only in positions not sampled.
@@ -98,14 +86,9 @@ Evidence and competitive context: see RESEARCH.md (consolidated; older inline re
   Why: `window,"fetch"` string matching can be evaded with template literals, concatenation, or Unicode escapes.
   Where: `YoutubeAdblock.user.js` `installDOMBypassPrevention` function.
 
-## Research-Driven Additions
-
-### P1 - trust boundary hardening
-
 - [ ] P1 — Move extension settings storage behind a trusted-context broker
   Why: Page-world events can currently request allowlisted settings reads/writes through the bridge; Chrome supports hiding extension storage from untrusted contexts.
   Evidence: `extension/bridge.js:260-424`, `tests/bridge-security.test.mjs:230-346`, Chrome `chrome.storage.*.setAccessLevel()` docs.
   Touches: `extension/background.js`, `extension/bridge.js`, `tests/bridge-security.test.mjs`, `tests/background-contract.test.mjs`.
   Acceptance: The service worker owns `chrome.storage.local/sync` reads and writes; bridge requests use `chrome.runtime.sendMessage`; storage access is restricted to trusted contexts where supported; tests prove page CustomEvents cannot directly reach `chrome.storage.*` and sync chunk/oversize behavior still works.
   Complexity: L
-
