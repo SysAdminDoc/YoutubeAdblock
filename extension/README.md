@@ -11,8 +11,8 @@ directly — your changes will be overwritten on the next build.
 |------|------|
 | `manifest.json` | MV3 manifest for Chromium 121+ and Firefox 128+ |
 | `main.js` *(generated)* | Page-world (MAIN) content script - the ad-blocking engine |
-| `bridge.js` | Isolated-world content script, relays `chrome.*` events/messages into the page-world via DOM `CustomEvent` |
-| `background.js` | Service worker: toolbar action, keyboard commands, right-click context menu, tab-messaging relay |
+| `bridge.js` | Isolated-world content script, relays bounded `chrome.*` capabilities into the page world and re-sanitizes DNR evidence |
+| `background.js` | Service worker: toolbar action, keyboard commands, right-click context menu, tab messaging, and current-tab DNR match aggregation |
 | `rules/network-rules-source.json` | typed source for intercept-pattern metadata and DNR generation |
 | `rules/network-blocks.json` | generated declarativeNetRequest rules - network-layer blocks |
 
@@ -38,13 +38,23 @@ Three cooperating layers:
    through, plus the enforcement-message modal; a polling fallback
    mutes and 16x-fast-forwards any ad that still starts playing.
 
-The bridge is a one-way relay: `chrome.action.onClicked`,
+For control-plane actions, `chrome.action.onClicked`,
 `chrome.commands.onCommand`, and `chrome.contextMenus.onClicked`
 (all handled by `background.js`) send a `chrome.tabs.sendMessage` to
 the active tab, `bridge.js` receives it and dispatches a `CustomEvent`
-on `document`, and `main.js` listens for that event to invoke the
-in-page Control Center actions (`toggleSettings`, `setScriptEnabled`,
-and `fetchFilters`).
+on `document`, and `main.js` invokes the matching in-page action. The bounded
+reverse path handles settings and diagnostics: page events can access only the
+allowlisted settings object or request a sanitized current-tab DNR summary.
+
+The manifest's `declarativeNetRequestFeedback` permission exists only for that
+summary. `background.js` uses `getMatchedRules()` with a five-minute window,
+keeps only `ytab-network-blocks` rule IDs/counts/timestamps, and applies a
+30-second global cooldown. `bridge.js` validates the result again before the
+page can see it. No request URL, raw browser error, or unrelated-tab data is
+relayed or persisted. If feedback is unavailable, browser-level blocking still
+runs and Diagnostics reports only the evidence limitation. Firefox development
+builds may also require `extensions.dnr.feedback` in `about:config` for this
+diagnostic API; that preference is not required for the packaged rules to block.
 
 Settings persistence is three-tier:
 - `localStorage[__ytab_ext_settings__]` is the sync read path used by

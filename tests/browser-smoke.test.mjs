@@ -148,6 +148,22 @@ async function installUserscriptMode(page) {
 }
 
 async function installExtensionMode(page) {
+    await page.addInitScript(() => {
+        document.addEventListener('ytab:dnr-diagnostics-request', () => {
+            document.dispatchEvent(new CustomEvent('ytab:dnr-diagnostics-response', {
+                detail: {
+                    status: 'available',
+                    windowMinutes: 5,
+                    total: 3,
+                    matches: [
+                        { ruleId: 4, count: 1 },
+                        { ruleId: 19, count: 2 }
+                    ],
+                    lastMatchedAt: Date.now()
+                }
+            }));
+        });
+    });
     await page.addInitScript({ content: extensionSource });
 }
 
@@ -379,9 +395,24 @@ async function exercisePanel(page, mode, surface) {
         document.querySelector('#ytab-section-diagnostics details')?.open === true &&
         document.querySelector('.ytab-nav-button-active')?.dataset.sectionId === 'ytab-section-diagnostics'
     );
+    await waitForPanelScrollSettled(page, 'ytab-section-diagnostics');
     await assert.equal(await page.locator('.ytab-nav-button[aria-current="page"]').textContent(), 'Diagnostics');
     assert.equal(await page.locator('.ytab-nav-button-active').count(), 1);
     assert.equal(await page.locator('.ytab-nav-button-active').textContent(), 'Diagnostics');
+    if (mode === 'extension') {
+        await page.waitForFunction(() =>
+            document.querySelector('#ytab-dnr-diagnostics .ytab-note-title')?.textContent === '3 recent network matches'
+        );
+        assert.match(
+            await page.locator('#ytab-dnr-diagnostics .ytab-note-text').textContent(),
+            /2 packaged rules matched in the last 5 minutes/
+        );
+    } else {
+        assert.equal(
+            await page.locator('#ytab-dnr-diagnostics .ytab-note-title').textContent(),
+            'Extension-only evidence'
+        );
+    }
 
     if (mode === 'userscript' && surface.name === 'www-watch-dark') {
         await page.click('#ytab-restore-defaults');

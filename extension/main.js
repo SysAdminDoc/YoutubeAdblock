@@ -125,7 +125,7 @@
      * ===================================================================== */
 
     const SCRIPT_NAME = 'YoutubeAdblock';
-    const SCRIPT_VERSION = '0.5.22';
+    const SCRIPT_VERSION = '0.5.23';
     const PROJECT_URL = 'https://github.com/SysAdminDoc/YoutubeAdblock';
     const ISSUES_URL = `${PROJECT_URL}/issues`;
     const FILTER_URL_DEFAULT = 'https://raw.githubusercontent.com/SysAdminDoc/YoutubeAdblock/refs/heads/main/youtube-adblock-filters.txt';
@@ -157,6 +157,21 @@
         ? Math.round(performance.now())
         : null;
     const LATE_INJECTION_THRESHOLD_MS = 1500;
+    const DNR_DIAGNOSTICS_REQUEST_EVENT = 'ytab:dnr-diagnostics-request';
+    const DNR_DIAGNOSTICS_RESPONSE_EVENT = 'ytab:dnr-diagnostics-response';
+    const DNR_DIAGNOSTICS_WINDOW_MINUTES = 5;
+    const DNR_DIAGNOSTICS_WINDOW_MS = DNR_DIAGNOSTICS_WINDOW_MINUTES * 60 * 1000;
+    const DNR_DIAGNOSTICS_MAX_MATCHES = 128;
+    const DNR_DIAGNOSTICS_MAX_COUNT = 1000000;
+    const DNR_DIAGNOSTICS_REASONS = new Set([
+        'api-unavailable',
+        'permission-required',
+        'quota-exceeded',
+        'cooldown',
+        'invalid-context',
+        'query-failed',
+        'timeout'
+    ]);
     const DEFAULT_STATS = {
         blocked: 0,
         pruned: 0,
@@ -467,6 +482,28 @@
                 description: 'Copy a clean snapshot for bug reports or reset local state without reinstalling the script.',
                 installTiming: 'Install Timing',
                 installTimingHelp: 'Separate userscript-manager setup problems from YouTube rule breakage before changing settings.',
+                browserNetworkLayer: 'Browser Network Layer',
+                browserNetworkLayerHelp: 'Confirm whether the extension\'s packaged browser rules matched recently. This summary contains only rule IDs, counts, and timestamps; it never includes request URLs.',
+                networkPendingTitle: 'Checking packaged rules',
+                networkPendingBody: 'Waiting for the browser\'s privacy-bounded matched-rule summary.',
+                networkAvailableTitle: count => `${formatNumber(count)} recent network ${count === 1 ? 'match' : 'matches'}`,
+                networkAvailableBody: (ruleCount, minutes, lastMatched) => `${formatNumber(ruleCount)} packaged ${ruleCount === 1 ? 'rule' : 'rules'} matched in the last ${minutes} minutes. Last match: ${lastMatched}.`,
+                networkQuietTitle: 'No recent network matches',
+                networkQuietBody: minutes => `No packaged blocking rule matches were reported in the last ${minutes} minutes. This can be normal on a clean or already-loaded page.`,
+                networkUnavailableTitle: 'Matched-rule evidence unavailable',
+                networkUnavailableBody: {
+                    'api-unavailable': 'This browser does not expose matched-rule feedback. Network blocking stays active; only this diagnostic counter is unavailable.',
+                    'permission-required': 'The browser withheld matched-rule feedback permission. Network blocking stays active; only this diagnostic counter is unavailable.',
+                    'quota-exceeded': 'The browser diagnostics quota is temporarily exhausted. Wait a few minutes, then refresh the evidence.',
+                    cooldown: 'Another tab refreshed matched-rule evidence moments ago. Wait about 30 seconds, then try again.',
+                    'invalid-context': 'Open Diagnostics from a supported YouTube tab to read tab-scoped match evidence.',
+                    timeout: 'The extension service worker did not answer in time. Reopen the Control Center and try again.',
+                    'query-failed': 'Matched-rule feedback could not be read. Network blocking stays active; only this diagnostic counter is unavailable.'
+                },
+                networkUserscriptTitle: 'Extension-only evidence',
+                networkUserscriptBody: 'Browser matched-rule counters are available in the extension build. Userscript diagnostics continue to report page-world blocking and pruning.',
+                refreshNetworkEvidence: 'Refresh Evidence',
+                refreshingNetworkEvidence: 'Checking Evidence…',
                 shareSnapshot: 'Share a Snapshot',
                 shareSnapshotHelp: 'Copy the active Rule Library, module states, counters, and environment details, then open the repo issue tracker with clean context.',
                 copyDiagnostics: 'Copy Diagnostics',
@@ -723,6 +760,7 @@
             unsupportedScriptlets: 'Unsupported scriptlets',
             rejectedDangerousScriptlets: 'Rejected dangerous scriptlets',
             ssaiSignals: 'SSAI signals',
+            dnrMatchedRules: 'DNR matched rules',
             communityApiPermission: 'Community API permission',
             communityApiCooldown: 'Community API cooldown',
             webpackSignatureSource: 'Webpack signature source',
@@ -1025,6 +1063,15 @@
         webpackSignatureIntegrity: 'built-in',
         webpackSignatureSyncing: false,
         communityApiPermission: IS_EXTENSION_BUILD ? 'pending' : 'granted',
+        dnrDiagnostics: {
+            status: IS_EXTENSION_BUILD ? 'pending' : 'not-extension',
+            reason: '',
+            windowMinutes: DNR_DIAGNOSTICS_WINDOW_MINUTES,
+            total: 0,
+            matches: [],
+            lastMatchedAt: 0
+        },
+        dnrDiagnosticsRequestPromise: null,
         proxiesInstalled: false,
         overlayEl: null,
         panelEl: null,
@@ -7881,7 +7928,7 @@
     function createDiagnosticsSection(query = '') {
         if (query && !matchesSettingsQuery(
             query,
-            'diagnostics recovery reset defaults reset counters copy diagnostics issues local only document-start injection userscript manager setup',
+            'diagnostics recovery reset defaults reset counters copy diagnostics issues local only document-start injection userscript manager setup browser network extension dnr matched rules evidence',
             state.filterError
         )) {
             return null;
@@ -7903,6 +7950,44 @@
             STRINGS.ui.diagnosticsSection.installTimingHelp
         );
         setupGroup.appendChild(createNote(injectionStatus.title, injectionStatus.description, injectionStatus.tone));
+
+        const networkGroup = createActionGroup(
+            STRINGS.ui.diagnosticsSection.browserNetworkLayer,
+            STRINGS.ui.diagnosticsSection.browserNetworkLayerHelp
+        );
+        const networkPresentation = getDnrDiagnosticsPresentation();
+        const networkNote = createNote(
+            networkPresentation.title,
+            networkPresentation.body,
+            networkPresentation.tone
+        );
+        networkNote.id = `${CSS_PREFIX}-dnr-diagnostics`;
+        networkGroup.appendChild(networkNote);
+        if (IS_EXTENSION_BUILD) {
+            const networkActions = document.createElement('div');
+            networkActions.className = `${CSS_PREFIX}-btn-row`;
+            const refreshNetwork = document.createElement('button');
+            refreshNetwork.className = `${CSS_PREFIX}-btn ${CSS_PREFIX}-btn-secondary`;
+            refreshNetwork.type = 'button';
+            refreshNetwork.textContent = STRINGS.ui.diagnosticsSection.refreshNetworkEvidence;
+            refreshNetwork.addEventListener('click', async () => {
+                setButtonBusy(
+                    refreshNetwork,
+                    true,
+                    STRINGS.ui.diagnosticsSection.refreshingNetworkEvidence,
+                    STRINGS.ui.diagnosticsSection.refreshNetworkEvidence
+                );
+                await refreshDnrDiagnostics();
+                setButtonBusy(
+                    refreshNetwork,
+                    false,
+                    STRINGS.ui.diagnosticsSection.refreshingNetworkEvidence,
+                    STRINGS.ui.diagnosticsSection.refreshNetworkEvidence
+                );
+            });
+            networkActions.appendChild(refreshNetwork);
+            networkGroup.appendChild(networkActions);
+        }
 
         const diagnosticsGroup = createActionGroup(
             STRINGS.ui.diagnosticsSection.shareSnapshot,
@@ -7970,9 +8055,20 @@
         recoveryActions.append(resetStats, restore);
         recoveryGroup.appendChild(recoveryActions);
 
-        groups.append(setupGroup, diagnosticsGroup, recoveryGroup);
+        groups.append(setupGroup, networkGroup, diagnosticsGroup, recoveryGroup);
         surface.appendChild(groups);
-        return createCollapsibleSection(section, surface, SECTION_IDS.diagnostics);
+        const collapsed = createCollapsibleSection(section, surface, SECTION_IDS.diagnostics);
+        if (IS_EXTENSION_BUILD) {
+            const disclosure = collapsed.querySelector(`.${CSS_PREFIX}-section-disclosure`);
+            if (disclosure) {
+                const requestWhenOpen = () => {
+                    if (disclosure.open) void refreshDnrDiagnostics();
+                };
+                disclosure.addEventListener('toggle', requestWhenOpen);
+                if (disclosure.open) setTimeout(requestWhenOpen, 0);
+            }
+        }
+        return collapsed;
     }
 
     function createSearchEmptyState(query) {
@@ -8440,6 +8536,7 @@
     }
 
     async function copyDiagnosticsToClipboard() {
+        if (IS_EXTENSION_BUILD) await refreshDnrDiagnostics();
         const success = await copyTextToClipboard(buildDiagnosticsReport());
         showToast(
             success
@@ -8487,6 +8584,189 @@
                 if (/^\?v=\[video-id\]&/.test(match)) return '?v=[video-id]';
                 return '?[redacted]';
             });
+    }
+
+    function sanitizeDnrDiagnostics(value) {
+        if (!IS_EXTENSION_BUILD) {
+            return {
+                status: 'not-extension',
+                reason: '',
+                windowMinutes: DNR_DIAGNOSTICS_WINDOW_MINUTES,
+                total: 0,
+                matches: [],
+                lastMatchedAt: 0
+            };
+        }
+
+        if (value && value.status === 'pending') {
+            return {
+                status: 'pending',
+                reason: '',
+                windowMinutes: DNR_DIAGNOSTICS_WINDOW_MINUTES,
+                total: 0,
+                matches: [],
+                lastMatchedAt: 0
+            };
+        }
+
+        if (!value || typeof value !== 'object' || value.status !== 'available') {
+            const reason = value && DNR_DIAGNOSTICS_REASONS.has(value.reason)
+                ? value.reason
+                : 'query-failed';
+            return {
+                status: 'unavailable',
+                reason,
+                windowMinutes: DNR_DIAGNOSTICS_WINDOW_MINUTES,
+                total: 0,
+                matches: [],
+                lastMatchedAt: 0
+            };
+        }
+
+        const counts = new Map();
+        const sourceMatches = Array.isArray(value.matches)
+            ? value.matches.slice(0, DNR_DIAGNOSTICS_MAX_MATCHES)
+            : [];
+        for (const match of sourceMatches) {
+            const ruleId = Number(match && match.ruleId);
+            const count = Number(match && match.count);
+            if (!Number.isSafeInteger(ruleId) || ruleId <= 0) continue;
+            if (!Number.isSafeInteger(count) || count <= 0) continue;
+            const previous = counts.get(ruleId) || 0;
+            counts.set(ruleId, Math.min(DNR_DIAGNOSTICS_MAX_COUNT, previous + count));
+        }
+
+        const matches = [...counts.entries()]
+            .sort(([left], [right]) => left - right)
+            .map(([ruleId, count]) => ({ ruleId, count }));
+        const lastMatchedAt = Number(value.lastMatchedAt);
+        const now = Date.now();
+        return {
+            status: 'available',
+            reason: '',
+            windowMinutes: DNR_DIAGNOSTICS_WINDOW_MINUTES,
+            total: matches.reduce((sum, match) => sum + match.count, 0),
+            matches,
+            lastMatchedAt: Number.isFinite(lastMatchedAt) &&
+                lastMatchedAt >= now - DNR_DIAGNOSTICS_WINDOW_MS - 60000 &&
+                lastMatchedAt <= now + 60000
+                ? Math.trunc(lastMatchedAt)
+                : 0
+        };
+    }
+
+    function formatDnrDiagnosticsReport(value = state.dnrDiagnostics) {
+        const diagnostics = sanitizeDnrDiagnostics(value);
+        const rules = diagnostics.matches.length
+            ? diagnostics.matches.map(match => `${match.ruleId}x${match.count}`).join(', ')
+            : STRINGS.common.none;
+        const lastMatched = diagnostics.lastMatchedAt
+            ? new Date(diagnostics.lastMatchedAt).toISOString()
+            : STRINGS.common.never;
+        return [
+            `status=${diagnostics.status}`,
+            `window=${diagnostics.windowMinutes}m`,
+            `total=${diagnostics.total}`,
+            `rules=${rules}`,
+            `lastMatched=${lastMatched}`,
+            `reason=${diagnostics.reason || STRINGS.common.none}`
+        ].join('; ');
+    }
+
+    function getDnrDiagnosticsPresentation(value = state.dnrDiagnostics) {
+        const diagnostics = sanitizeDnrDiagnostics(value);
+        const copy = STRINGS.ui.diagnosticsSection;
+        if (diagnostics.status === 'not-extension') {
+            return {
+                title: copy.networkUserscriptTitle,
+                body: copy.networkUserscriptBody,
+                tone: 'neutral'
+            };
+        }
+        if (diagnostics.status === 'pending') {
+            return {
+                title: copy.networkPendingTitle,
+                body: copy.networkPendingBody,
+                tone: 'info'
+            };
+        }
+        if (diagnostics.status === 'available' && diagnostics.total > 0) {
+            return {
+                title: copy.networkAvailableTitle(diagnostics.total),
+                body: copy.networkAvailableBody(
+                    diagnostics.matches.length,
+                    diagnostics.windowMinutes,
+                    diagnostics.lastMatchedAt
+                        ? formatTimestamp(diagnostics.lastMatchedAt)
+                        : STRINGS.common.unknown
+                ),
+                tone: 'success'
+            };
+        }
+        if (diagnostics.status === 'available') {
+            return {
+                title: copy.networkQuietTitle,
+                body: copy.networkQuietBody(diagnostics.windowMinutes),
+                tone: 'info'
+            };
+        }
+        return {
+            title: copy.networkUnavailableTitle,
+            body: copy.networkUnavailableBody[diagnostics.reason] || copy.networkUnavailableBody['query-failed'],
+            tone: 'warn'
+        };
+    }
+
+    function updateDnrDiagnosticsUI() {
+        if (typeof document === 'undefined') return;
+        const note = document.getElementById(`${CSS_PREFIX}-dnr-diagnostics`);
+        if (!note) return;
+        const presentation = getDnrDiagnosticsPresentation();
+        note.dataset.tone = presentation.tone;
+        const title = note.querySelector(`.${CSS_PREFIX}-note-title`);
+        const body = note.querySelector(`.${CSS_PREFIX}-note-text`);
+        if (title) title.textContent = presentation.title;
+        if (body) body.textContent = presentation.body;
+    }
+
+    function refreshDnrDiagnostics() {
+        if (!IS_EXTENSION_BUILD || typeof document === 'undefined') {
+            state.dnrDiagnostics = sanitizeDnrDiagnostics(state.dnrDiagnostics);
+            return Promise.resolve(state.dnrDiagnostics);
+        }
+        if (state.dnrDiagnosticsRequestPromise) return state.dnrDiagnosticsRequestPromise;
+
+        state.dnrDiagnostics = sanitizeDnrDiagnostics({ status: 'pending' });
+        updateDnrDiagnosticsUI();
+
+        const requestPromise = new Promise((resolve) => {
+            let settled = false;
+            let timer = null;
+            const finish = (value) => {
+                if (settled) return;
+                settled = true;
+                if (timer) clearTimeout(timer);
+                document.removeEventListener(DNR_DIAGNOSTICS_RESPONSE_EVENT, onResponse);
+                state.dnrDiagnostics = sanitizeDnrDiagnostics(value);
+                updateDnrDiagnosticsUI();
+                resolve(state.dnrDiagnostics);
+            };
+            const onResponse = (event) => finish(event && event.detail);
+            document.addEventListener(DNR_DIAGNOSTICS_RESPONSE_EVENT, onResponse);
+            timer = setTimeout(() => finish({ status: 'unavailable', reason: 'timeout' }), 2500);
+            try {
+                document.dispatchEvent(new CustomEvent(DNR_DIAGNOSTICS_REQUEST_EVENT));
+            } catch (e) {
+                finish({ status: 'unavailable', reason: 'query-failed' });
+            }
+        });
+        state.dnrDiagnosticsRequestPromise = requestPromise;
+        requestPromise.then(() => {
+            if (state.dnrDiagnosticsRequestPromise === requestPromise) {
+                state.dnrDiagnosticsRequestPromise = null;
+            }
+        });
+        return requestPromise;
     }
 
     function buildDiagnosticsReport() {
@@ -8537,6 +8817,7 @@
             `${report.unsupportedScriptlets}: ${formatScriptletCoverage(coverage.unsupportedScriptlets)}`,
             `${report.rejectedDangerousScriptlets}: ${formatScriptletCoverage(coverage.rejectedDangerousScriptlets)}`,
             `${report.ssaiSignals}: detected=${state.stats.ssaiDetected || 0}, lastSeen=${state.ssaiLastSeen ? new Date(state.ssaiLastSeen).toISOString() : STRINGS.common.never}, lastUrl=${redactUrl(state.ssaiLastUrl) || STRINGS.common.none}`,
+            `${report.dnrMatchedRules}: ${formatDnrDiagnosticsReport()}`,
             `${report.communityApiPermission}: ${state.communityApiPermission || STRINGS.common.unknown}`,
             `${report.communityApiCooldown}: ${Object.entries(getApiCooldownStatus()).map(([k, v]) => `${k}=${v}`).join(', ')}`,
             `${report.webpackSignatureSource}: ${state.webpackSignatureSource || STRINGS.common.unknown}`,

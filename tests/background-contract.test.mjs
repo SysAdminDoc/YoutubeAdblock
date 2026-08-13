@@ -13,6 +13,7 @@ function createBackgroundEnv(options = {}) {
     const listeners = {};
     const sentMessages = [];
     const createdMenus = [];
+    const dnrMatchedRuleCalls = [];
     const activeTab = options.activeTab || {
         id: 42,
         url: 'https://www.youtube.com/watch?v=test',
@@ -40,6 +41,13 @@ function createBackgroundEnv(options = {}) {
         permissions: {
             request(perms, cb) { if (cb) cb(true); },
             contains(perms, cb) { if (cb) cb(false); }
+        },
+        declarativeNetRequest: options.dnrApi === false ? undefined : {
+            async getMatchedRules(filter) {
+                dnrMatchedRuleCalls.push(filter);
+                if (options.dnrError) throw new Error(options.dnrError);
+                return options.dnrResult || { rulesMatchedInfo: [] };
+            }
         },
         tabs: {
             async query() { return activeTab ? [activeTab] : []; },
@@ -81,6 +89,7 @@ function createBackgroundEnv(options = {}) {
         listeners,
         sentMessages,
         createdMenus,
+        dnrMatchedRuleCalls,
         flush: () => new Promise(resolve => setTimeout(resolve, 0))
     };
 }
@@ -116,6 +125,85 @@ test('check-api-permissions message returns permission status', () => {
     );
     assert.ok(response);
     assert.equal(typeof response.granted, 'boolean');
+});
+
+test('DNR diagnostics aggregate packaged rule IDs without exposing request URLs', async () => {
+    const now = Date.now();
+    const env = createBackgroundEnv({
+        dnrResult: {
+            rulesMatchedInfo: [
+                { rule: { ruleId: 19, rulesetId: 'ytab-network-blocks' }, tabId: 42, timeStamp: now - 100, request: { url: 'https://private.example/token' } },
+                { rule: { ruleId: 4, rulesetId: 'ytab-network-blocks' }, tabId: 42, timeStamp: now - 200 },
+                { rule: { ruleId: 19, rulesetId: 'ytab-network-blocks' }, tabId: 42, timeStamp: now - 300 },
+                { rule: { ruleId: 88, rulesetId: 'another-ruleset' }, tabId: 42, timeStamp: now - 400 },
+                { rule: { ruleId: 5, rulesetId: 'ytab-network-blocks' }, tabId: 7, timeStamp: now - 500 },
+                { rule: { ruleId: 6, rulesetId: 'ytab-network-blocks' }, tabId: 42, timeStamp: now - (6 * 60 * 1000) }
+            ]
+        }
+    });
+    let response = null;
+
+    const keepAlive = env.listeners.message(
+        { type: 'ytab:get-dnr-diagnostics' },
+        { url: 'https://www.youtube.com/watch?v=private', tab: { id: 42, url: 'https://www.youtube.com/watch?v=private' } },
+        value => { response = JSON.parse(JSON.stringify(value)); }
+    );
+    assert.equal(keepAlive, true);
+    await env.flush();
+
+    assert.ok(response);
+    assert.equal(response.status, 'available');
+    assert.equal(response.total, 3);
+    assert.deepEqual(response.matches, [
+        { ruleId: 4, count: 1 },
+        { ruleId: 19, count: 2 }
+    ]);
+    assert.equal(JSON.stringify(response).includes('private'), false);
+    assert.equal(env.dnrMatchedRuleCalls.length, 1);
+    assert.equal(env.dnrMatchedRuleCalls[0].tabId, 42);
+    assert.ok(env.dnrMatchedRuleCalls[0].minTimeStamp >= now - (5 * 60 * 1000) - 1000);
+
+    let cachedResponse = null;
+    env.listeners.message(
+        { type: 'ytab:get-dnr-diagnostics' },
+        { url: 'https://www.youtube.com/watch?v=other', tab: { id: 42, url: 'https://www.youtube.com/watch?v=other' } },
+        value => { cachedResponse = JSON.parse(JSON.stringify(value)); }
+    );
+    await env.flush();
+    assert.deepEqual(cachedResponse.matches, response.matches);
+    assert.equal(env.dnrMatchedRuleCalls.length, 1, 'the second tab-scoped request should use the service-worker cache');
+});
+
+test('DNR diagnostics reject non-YouTube senders before querying browser feedback', () => {
+    const env = createBackgroundEnv();
+    let response = null;
+
+    const keepAlive = env.listeners.message(
+        { type: 'ytab:get-dnr-diagnostics' },
+        { url: 'https://example.com/', tab: { id: 42, url: 'https://example.com/' } },
+        value => { response = JSON.parse(JSON.stringify(value)); }
+    );
+
+    assert.equal(keepAlive, undefined);
+    assert.equal(response.status, 'unavailable');
+    assert.equal(response.reason, 'invalid-context');
+    assert.equal(env.dnrMatchedRuleCalls.length, 0);
+});
+
+test('DNR diagnostics map raw browser failures to stable privacy-safe reasons', async () => {
+    const env = createBackgroundEnv({ dnrError: 'permission denied for https://private.example/token' });
+    let response = null;
+
+    env.listeners.message(
+        { type: 'ytab:get-dnr-diagnostics' },
+        { url: 'https://music.youtube.com/watch?v=test', tab: { id: 42, url: 'https://music.youtube.com/watch?v=test' } },
+        value => { response = JSON.parse(JSON.stringify(value)); }
+    );
+    await env.flush();
+
+    assert.equal(response.status, 'unavailable');
+    assert.equal(response.reason, 'permission-required');
+    assert.equal(JSON.stringify(response).includes('private'), false);
 });
 
 test('Block This Channel context menu dispatches ytab:block-channel to active YouTube tab', async () => {

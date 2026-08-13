@@ -93,7 +93,7 @@ function createTestHarness(options = {}) {
         performance: { now: () => performanceNow },
         requestAnimationFrame: noop,
         fetch: noop,
-        __YTAB_STORAGE_KEY: undefined,
+        __YTAB_STORAGE_KEY: options.extensionBuild ? '__ytab_ext_settings__' : undefined,
         // GM_* stubs for the userscript init path
         GM_getValue: (key, def) => Object.prototype.hasOwnProperty.call(storage, key) ? storage[key] : def,
         GM_setValue: (key, val) => { storage[key] = val; },
@@ -125,6 +125,9 @@ function createTestHarness(options = {}) {
         applyOriginalAudioTrack,
         getInjectionTimingStatus,
         buildDiagnosticsReport,
+        sanitizeDnrDiagnostics,
+        formatDnrDiagnosticsReport,
+        getDnrDiagnosticsPresentation,
         matchesInterceptPattern,
         replaceAdKeys,
         responseTextMightContainAds,
@@ -986,6 +989,45 @@ test('injection diagnostics confirm document-start startup separately from rule 
     assert.equal(status.likelyLate, false);
     assert.equal(status.title, 'Document-start confirmed');
     assert.match(status.description, /refresh rules or check engine health/i);
+});
+
+test('userscript diagnostics label DNR match evidence as extension-only', () => {
+    const h = createTestHarness();
+    const report = h.buildDiagnosticsReport();
+
+    assert.match(report, /DNR matched rules: status=not-extension/);
+    assert.match(h.formatDnrDiagnosticsReport(), /total=0/);
+});
+
+test('extension DNR diagnostics sanitize, merge, and format match counts without URLs', () => {
+    const h = createTestHarness({ extensionBuild: true });
+    const now = Date.now();
+    const raw = {
+        status: 'available',
+        total: 900,
+        matches: [
+            { ruleId: 19, count: 2, url: 'https://private.example/token' },
+            { ruleId: 4, count: 1 },
+            { ruleId: 19, count: 3 },
+            { ruleId: 5, count: -1 },
+            { ruleId: 'bad', count: 7 }
+        ],
+        lastMatchedAt: now,
+        requestUrl: 'https://private.example/raw'
+    };
+
+    const safe = JSON.parse(JSON.stringify(h.sanitizeDnrDiagnostics(raw)));
+    assert.equal(safe.total, 6);
+    assert.deepEqual(safe.matches, [
+        { ruleId: 4, count: 1 },
+        { ruleId: 19, count: 5 }
+    ]);
+    const formatted = h.formatDnrDiagnosticsReport(raw);
+    assert.match(formatted, /status=available; window=5m; total=6; rules=4x1, 19x5/);
+    assert.equal(formatted.includes('private'), false);
+    const presentation = h.getDnrDiagnosticsPresentation(raw);
+    assert.equal(presentation.tone, 'success');
+    assert.match(presentation.title, /6 recent network matches/);
 });
 
 // ========== Extension context-menu channel block ==========

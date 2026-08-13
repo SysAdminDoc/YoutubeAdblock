@@ -4,6 +4,28 @@ All notable changes to YoutubeAdblock are documented here.
 
 ## [Unreleased]
 
+## [0.5.23] - 2026-08-13
+
+### Added
+- Added extension-only matched-rule evidence to Diagnostics. The service worker
+  queries the browser's five-minute DNR history, aggregates only packaged
+  `ytab-network-blocks` rule IDs and counts for the requesting YouTube tab, and
+  surfaces the result in both the Control Center and copied diagnostics.
+- Added deterministic service-worker, isolated-bridge, engine-report, and
+  browser-UI coverage for DNR diagnostics. The opt-in live unpacked-extension
+  smoke now proves a blocked pagead probe also appears as recent packaged-rule
+  evidence in the rendered Control Center.
+
+### Security
+- Added the narrow `declarativeNetRequestFeedback` extension permission needed
+  for matched-rule summaries. Request URLs and raw browser errors never cross
+  the trusted-context boundary; both background and bridge layers sanitize the
+  payload to IDs, counts, a bounded timestamp, and stable status reasons.
+- Added per-tab caching and a global 30-second query cooldown to keep repeated
+  page events within Chrome's matched-rule feedback quota during a live worker
+  session. Telemetry remains ephemeral and is never written to local or sync
+  storage.
+
 ## [0.5.22] - 2026-08-13
 
 ### Fixed

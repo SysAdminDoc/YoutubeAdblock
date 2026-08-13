@@ -2,17 +2,108 @@
  * YoutubeAdblock - MV3 service worker.
  *
  * Owns: action button clicks, keyboard commands, right-click context menu,
- * and message routing between the popup/menu UI and the active tab's content
- * scripts. The actual ad-blocking engine lives in the page-world content
- * script (main.js); this file is purely a control-plane relay.
+ * message routing between the popup/menu UI and the active tab's content
+ * scripts, plus privacy-bounded diagnostics for packaged DNR rules. The
+ * actual page-world ad-blocking engine lives in main.js.
  */
 
 'use strict';
 
 const YT_ORIGIN_MATCH = /^https?:\/\/([^/]*\.)?(youtube\.com|youtube-nocookie\.com|youtubekids\.com)\//i;
+const DNR_RULESET_ID = 'ytab-network-blocks';
+const DNR_DIAGNOSTICS_WINDOW_MS = 5 * 60 * 1000;
+const DNR_DIAGNOSTICS_CACHE_MS = 30 * 1000;
+const DNR_DIAGNOSTICS_MAX_CACHE_TABS = 32;
+const dnrDiagnosticsCache = new Map();
+let dnrLastQueryAt = 0;
 
 function isYouTubeUrl(url) {
     return typeof url === 'string' && YT_ORIGIN_MATCH.test(url);
+}
+
+function unavailableDnrDiagnostics(reason) {
+    return {
+        status: 'unavailable',
+        reason,
+        windowMinutes: DNR_DIAGNOSTICS_WINDOW_MS / 60000,
+        total: 0,
+        matches: [],
+        lastMatchedAt: 0
+    };
+}
+
+function classifyDnrDiagnosticsError(error) {
+    const message = String(error && error.message || error || '').toLowerCase();
+    if (/quota|too many|max(?:imum)? number/.test(message)) return 'quota-exceeded';
+    if (/permission|declarativenetrequestfeedback|active.?tab/.test(message)) return 'permission-required';
+    return 'query-failed';
+}
+
+function cacheDnrDiagnostics(tabId, value, capturedAt) {
+    if (dnrDiagnosticsCache.size >= DNR_DIAGNOSTICS_MAX_CACHE_TABS && !dnrDiagnosticsCache.has(tabId)) {
+        const oldestTabId = dnrDiagnosticsCache.keys().next().value;
+        dnrDiagnosticsCache.delete(oldestTabId);
+    }
+    dnrDiagnosticsCache.delete(tabId);
+    dnrDiagnosticsCache.set(tabId, { capturedAt, value });
+}
+
+async function getDnrDiagnostics(tabId) {
+    const now = Date.now();
+    const cached = dnrDiagnosticsCache.get(tabId);
+    if (cached && now - cached.capturedAt < DNR_DIAGNOSTICS_CACHE_MS) {
+        return cached.value;
+    }
+
+    if (!chrome.declarativeNetRequest || typeof chrome.declarativeNetRequest.getMatchedRules !== 'function') {
+        return unavailableDnrDiagnostics('api-unavailable');
+    }
+
+    // Chrome limits non-user-gesture getMatchedRules calls. A short global
+    // cooldown plus the per-tab cache keeps the extension comfortably inside
+    // that quota even if page code repeatedly dispatches the bridge event.
+    if (dnrLastQueryAt && now - dnrLastQueryAt < DNR_DIAGNOSTICS_CACHE_MS) {
+        return unavailableDnrDiagnostics('cooldown');
+    }
+    dnrLastQueryAt = now;
+
+    try {
+        const minTimeStamp = now - DNR_DIAGNOSTICS_WINDOW_MS;
+        const result = await chrome.declarativeNetRequest.getMatchedRules({ tabId, minTimeStamp });
+        const counts = new Map();
+        let lastMatchedAt = 0;
+        const entries = Array.isArray(result && result.rulesMatchedInfo)
+            ? result.rulesMatchedInfo
+            : [];
+
+        for (const entry of entries) {
+            if (!entry || entry.tabId !== tabId || entry.rule?.rulesetId !== DNR_RULESET_ID) continue;
+            const ruleId = Number(entry.rule.ruleId);
+            const timeStamp = Number(entry.timeStamp);
+            if (!Number.isSafeInteger(ruleId) || ruleId <= 0) continue;
+            if (!Number.isFinite(timeStamp) || timeStamp < minTimeStamp || timeStamp > now + 60000) continue;
+            counts.set(ruleId, (counts.get(ruleId) || 0) + 1);
+            lastMatchedAt = Math.max(lastMatchedAt, timeStamp);
+        }
+
+        const matches = [...counts.entries()]
+            .sort(([left], [right]) => left - right)
+            .map(([ruleId, count]) => ({ ruleId, count }));
+        const value = {
+            status: 'available',
+            reason: '',
+            windowMinutes: DNR_DIAGNOSTICS_WINDOW_MS / 60000,
+            total: matches.reduce((sum, match) => sum + match.count, 0),
+            matches,
+            lastMatchedAt
+        };
+        cacheDnrDiagnostics(tabId, value, now);
+        return value;
+    } catch (error) {
+        const value = unavailableDnrDiagnostics(classifyDnrDiagnosticsError(error));
+        cacheDnrDiagnostics(tabId, value, now);
+        return value;
+    }
 }
 
 // Returns a Promise that resolves when the tab finishes loading (or
@@ -220,6 +311,18 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (msg.type === 'ytab:check-api-permissions') {
         chrome.permissions.contains({ origins: COMMUNITY_API_ORIGINS }, (result) => {
             sendResponse({ granted: !!result });
+        });
+        return true;
+    }
+    if (msg.type === 'ytab:get-dnr-diagnostics') {
+        const tabId = Number(sender?.tab?.id);
+        const senderUrl = sender?.url || sender?.tab?.url;
+        if (!Number.isSafeInteger(tabId) || tabId < 0 || !isYouTubeUrl(senderUrl)) {
+            sendResponse(unavailableDnrDiagnostics('invalid-context'));
+            return;
+        }
+        getDnrDiagnostics(tabId).then(sendResponse, () => {
+            sendResponse(unavailableDnrDiagnostics('query-failed'));
         });
         return true;
     }

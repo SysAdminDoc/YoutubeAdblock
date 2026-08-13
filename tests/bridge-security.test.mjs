@@ -16,12 +16,15 @@ const SYNC_CHUNK_PREFIX = '__ytab_ext_settings_sync_chunk_';
 const EVT_REQ = 'ytab:page-request';
 const EVT_RES = 'ytab:page-response';
 const EVT_SYNC = 'ytab:settings-changed';
+const EVT_DNR_REQ = 'ytab:dnr-diagnostics-request';
+const EVT_DNR_RES = 'ytab:dnr-diagnostics-response';
 
 function createBridgeEnv(options = {}) {
     const storageData = { ...(options.localStorage || {}) };
     const syncStorageData = { ...(options.syncStorage || {}) };
     const responses = [];
     const dispatched = [];
+    const runtimeMessages = [];
     const listeners = {};
     let storageChangedCb = null;
     let messageListener = null;
@@ -69,6 +72,20 @@ function createBridgeEnv(options = {}) {
             lastError: null,
             onMessage: {
                 addListener(fn) { messageListener = fn; }
+            },
+            sendMessage(message, cb) {
+                runtimeMessages.push(message);
+                const response = message?.type === 'ytab:get-dnr-diagnostics'
+                    ? (options.dnrResponse || {
+                        status: 'unavailable',
+                        reason: 'api-unavailable',
+                        windowMinutes: 5,
+                        total: 0,
+                        matches: [],
+                        lastMatchedAt: 0
+                    })
+                    : { granted: false };
+                if (cb) cb(response);
             }
         },
         storage: {
@@ -137,10 +154,17 @@ function createBridgeEnv(options = {}) {
         mockDocument.dispatchEvent(event);
     }
 
+    function requestDnrDiagnostics() {
+        const event = new sandbox.CustomEvent(EVT_DNR_REQ);
+        mockDocument.dispatchEvent(event);
+    }
+
     return {
         sendRequest,
+        requestDnrDiagnostics,
         responses,
         dispatched,
+        runtimeMessages,
         storageData,
         syncStorageData,
         localStorageData,
@@ -385,6 +409,60 @@ test('service-worker message relay ignores malformed messages', () => {
     env.messageListener({ notType: true });
     env.messageListener({ type: 123 });
     assert.equal(env.dispatched.length, before);
+});
+
+test('DNR diagnostics bridge exposes only bounded rule IDs and counts', () => {
+    const env = createBridgeEnv({
+        dnrResponse: {
+            status: 'available',
+            total: 999,
+            matches: [
+                { ruleId: 19, count: 2, url: 'https://private.example/one' },
+                { ruleId: 4, count: 1 },
+                { ruleId: 19, count: 3 },
+                { ruleId: -1, count: 100 },
+                { ruleId: 5, count: 'not-a-count' }
+            ],
+            lastMatchedAt: Date.now(),
+            requestUrl: 'https://private.example/two',
+            rawError: 'private browser error'
+        }
+    });
+
+    env.requestDnrDiagnostics();
+    env.requestDnrDiagnostics();
+
+    const runtimeQueries = env.runtimeMessages.filter(message => message.type === 'ytab:get-dnr-diagnostics');
+    assert.equal(runtimeQueries.length, 1, 'the second request should use the short-lived bridge cache');
+    const responses = env.dispatched.filter(event => event.type === EVT_DNR_RES);
+    assert.equal(responses.length, 2);
+    const detail = JSON.parse(JSON.stringify(responses.at(-1).detail));
+    assert.equal(detail.status, 'available');
+    assert.equal(detail.total, 6);
+    assert.deepEqual(detail.matches, [
+        { ruleId: 4, count: 1 },
+        { ruleId: 19, count: 5 }
+    ]);
+    assert.equal(JSON.stringify(detail).includes('private'), false);
+});
+
+test('DNR diagnostics bridge replaces unknown failures with a stable reason', () => {
+    const env = createBridgeEnv({
+        dnrResponse: {
+            status: 'unavailable',
+            reason: 'https://private.example/raw-error',
+            error: 'secret'
+        }
+    });
+
+    env.requestDnrDiagnostics();
+
+    const detail = env.dispatched.find(event => event.type === EVT_DNR_RES)?.detail;
+    assert.ok(detail);
+    assert.equal(detail.status, 'unavailable');
+    assert.equal(detail.reason, 'query-failed');
+    assert.equal(JSON.stringify(detail).includes('private'), false);
+    assert.equal(JSON.stringify(detail).includes('secret'), false);
 });
 
 test('storage.onChanged only forwards the allowlisted key', () => {

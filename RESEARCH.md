@@ -6,7 +6,7 @@ Snapshot date: 2026-08-13. Confidence labels are `Verified`, `Likely`, or `Needs
 
 YoutubeAdblock remains the right project for a focused zero-ad pass. It is the only sibling repository whose primary job is blocking YouTube ads across both userscript and generated MV3-extension builds. Astra Deck overlaps in SponsorBlock, DeArrow, dislike counts, filtering, and general YouTube enhancements, but its 200+ feature surface makes it a broader product rather than the canonical blocker. Chapterizer, WolfPack, YT Reaction Spammer, and the YouTube MCP server have narrower, non-blocking roles. No sibling repository was edited.
 
-This pass verified the current desktop YouTube family, repaired compatibility, persistence, privacy, and desktop-fit defects, redesigned the real Control Center from an ImageGen reference, and exercised deterministic fixtures plus an isolated live unpacked-extension smoke. The strongest network proof is extension-specific: Playwright Chromium loaded the unpacked build, reported `ytab-network-blocks` enabled, rejected a real `https://www.google.com/pagead/lvz` image request with `net::ERR_BLOCKED_BY_CLIENT`, and showed no visible or audible ad state. Live signed-session recon independently confirmed the current request and DOM surface, but ad creative was not served in that session and several ad hosts were already DNS-blocked by the browser environment. Those observations must not be presented as proof that every account, region, or experiment is ad-free.
+This pass verified the current desktop YouTube family, repaired compatibility, persistence, privacy, and desktop-fit defects, redesigned the real Control Center from an ImageGen reference, and exercised deterministic fixtures plus an isolated live unpacked-extension smoke. The strongest network proof is extension-specific: Playwright Chromium loaded the unpacked build, reported `ytab-network-blocks` enabled, rejected a real `https://www.google.com/pagead/lvz` image request with `net::ERR_BLOCKED_BY_CLIENT`, showed no visible or audible ad state, and rendered privacy-bounded feedback for 9 recent matches across 4 packaged rules. Live signed-session recon independently confirmed the current request and DOM surface, but ad creative was not served in that session and several ad hosts were already DNS-blocked by the browser environment. Those observations must not be presented as proof that every account, region, or experiment is ad-free.
 
 ## Repository and Sibling Inventory
 
@@ -46,6 +46,7 @@ Search-to-watch navigation produced `Page.navigatedWithinDocument`, confirming t
 | Page containers | Desktop ad renderers, player ad modules, promotions, TV `ytu-ads-title-tray` | Signed cosmetic list and built-in fallback; TV tray added |
 | Mixed telemetry | `/youtubei/v1/log_event`, `/youtubei/v1/att/log`, `generate_204` | Existing extension DNR remains intentionally aggressive. The new userscript guard does not swallow these mixed-purpose endpoints, avoiding a broader page-world regression |
 | Server-side insertion | `serverStitchedAd`, SSAP/SSAI markers | Detection/warning only; safe automatic removal still needs real marker captures |
+| Browser rule evidence | Chrome/Firefox `getMatchedRules()` for the requesting tab | Extension Diagnostics aggregates only `ytab-network-blocks` rule IDs/counts from the last five minutes; URLs and raw errors remain in trusted browser context |
 
 ## Defects and Repairs
 
@@ -62,6 +63,7 @@ Search-to-watch navigation produced `Page.navigatedWithinDocument`, confirming t
 11. `Verified` — The extension context-menu channel action wrote `ytab_channelBlocker`, which the runtime did not read as a feature override after reload. It now writes the shared override map and migrates the legacy orphan value once.
 12. `Verified` — The redesigned Overview placed its quick-action row below the bounded content viewport at both tested desktop sizes. Compact summary geometry plus a bounding-box assertion keeps every Overview action above the footer at 1440×900 and 1920×1080.
 13. `Verified` — The ignored live-extension JSON evidence retained full YouTube queries and ad-request identifiers. Report URLs now discard queries/fragments and redact video and pagead audience path segments before writing to disk.
+14. `Verified` — Extension diagnostics could not show whether packaged browser rules fired, leaving a critical early blocking layer silent in user reports. A feedback-permission-backed service-worker query now aggregates only current-tab packaged rule IDs/counts, the isolated bridge re-sanitizes and caches the result, and the rendered/copyable diagnostic degrades to stable reasons without retaining URLs.
 
 ## Verification Matrix
 
@@ -78,21 +80,21 @@ The product has one settings route/dialog rather than ten separate pages. Its te
 | Enhancements | DeArrow, RYD, original audio, volume boost | Verified; RYD rendered duplicate and Music volume rail exercised |
 | Interface Cleanup | desktop feed/related/comments/chat/merch and other clutter toggles | Verified section/disclosure |
 | Focus & Filters | Shorts redirect, channel/keyword/whitelist/duration/ad-allow lists, import/export | Verified explicit-off defaults, persisted toggle rebuilds, standalone duration pruning, creator allowlisting, legacy migration, and block-channel write |
-| Diagnostics | injection health, copy, issue link, counters, restore-default confirmation | Verified section/disclosure and recovery placement |
+| Diagnostics | injection health, current-tab DNR evidence, copy, issue link, counters, restore-default confirmation | Verified privacy-bounded extension match summary, userscript fallback state, section/disclosure, and recovery placement |
 
-Selected ImageGen reference: `design/mockups/control-center-desktop-dark-v2.png`. Current implementation renders: `design/screenshots/control-center-desktop-dark-v0.5.22.png` and `design/screenshots/control-center-desktop-light-v0.5.22.png`.
+Selected ImageGen reference: `design/mockups/control-center-desktop-dark-v2.png`. Current implementation renders: `design/screenshots/control-center-desktop-dark-v0.5.23.png` and `design/screenshots/control-center-desktop-light-v0.5.23.png`.
 
 | Evidence | Result | What it proves |
 | --- | --- | --- |
 | Pure engine and repository contracts | Pass | URL classification, TV endpoint/source parity, visible RYD duplicate selection, settings-schema/default parity, standalone duration filtering, context-menu migration, version/build/filter contracts |
 | Browser fixture matrix | Pass in userscript and generated-extension modes on main dark/light/wide, Music, TV, and Kids | Control Center behavior, ten-destination navigation, theme, settings persistence, unclipped Overview actions, Music volume insertion, RYD duplicate handling, no console errors |
 | Browser-level fetch/XHR leak probe | Pass | Ad-only DoubleClick fetch and Google pagead XHR are answered locally and never reach Playwright routing |
-| Live unpacked extension | Pass | Actual packaged extension loads; static DNR ruleset is enabled; pagead image probe is blocked by the browser; no visible/audible ad state; generated evidence is URL-scrubbed |
-| Local release gate | Pass for userscript + ZIP | Generated source, 142 passing tests plus one gated skip, signed data, ZIP paths/content, provenance, and checksums agree |
+| Live unpacked extension | Pass | Actual packaged extension loads; static DNR ruleset is enabled; pagead image probe is blocked by the browser; Diagnostics reports 9 recent matches across 4 packaged rules; no visible/audible ad state; generated evidence is URL-scrubbed |
+| Local release gate | Pass for userscript + ZIP | Generated source, 150 passing tests plus one gated live skip, signed data, ZIP paths/content, provenance, and checksums agree |
 | Built-in-browser signed-session recon | Pass for surface discovery | Current DOM/request names and SPA lifecycle across main, Music, Shorts, TV, and Kids setup |
 | Real ad creative across accounts/regions | Not observed | Needs a non-Premium/signed-out matrix where YouTube actually returns pre-roll, mid-roll, overlay, and feed creative |
 | Real Tampermonkey/Violentmonkey/Safari manager installs | Not run | Requires manager-specific desktop environments; fixture mode is not a substitute |
-| Stable-ID CRX v0.5.22 | Blocked before packaging | Historical private key for pinned ID `jpeojodihepmkpdhibnnbgamnakclnnj` is not present; rotating identity is not an automatic repair |
+| Stable-ID CRX v0.5.23 | Blocked before packaging | Historical private key for pinned ID `jpeojodihepmkpdhibnnbgamnakclnnj` is not present; rotating identity is not an automatic repair |
 
 ## Architecture and Product Assessment
 
@@ -100,13 +102,14 @@ Selected ImageGen reference: `design/mockups/control-center-desktop-dark-v2.png`
 - Preserve the layered model: browser DNR first in extension builds, then document-start request/data pruning, targeted cosmetics, and media fast-forward only as the final safety net.
 - Keep remote inputs as signed, parsed data. Chrome Web Store MV3 policy disallows remotely supplied executable logic, and Greasy Fork requires the primary inspectable functionality to remain in the posted script.
 - Keep ad-only URL blocking narrow in page-world code. `log_event` and `generate_204` carry mixed telemetry; broad synthetic responses there could hide regressions. Extension policy can remain more aggressive because its current product promise includes tracking suppression, but matched-rule diagnostics should make that behavior observable.
+- Keep DNR feedback tab-scoped, aggregate-only, and ephemeral. Chrome retains only five minutes of match history and limits non-user-gesture queries to 20 per ten minutes, so the 30-second background cooldown and bridge cache are part of the privacy/reliability contract rather than optional optimization.
 - The runtime contains no `eval`, `new Function`, `document.write`, `innerHTML`, `outerHTML`, or `insertAdjacentHTML` sink. The extension packages all executable logic, restricts required hosts to the YouTube family plus the signed-rule origin, and keeps SponsorBlock/RYD hosts optional. The userscript's `@connect *` remains a documented tradeoff required for user-supplied filter URLs rather than a remote-code path.
 - Keep observers and timers bounded: the cleanup observer uses a narrow target, engine intervals are centrally registered, and the browser/performance tests protect against an accidental document-wide mutation loop or hot-path parser regression.
 - Avoid merging Astra Deck. Shared concepts are useful comparison points, but cross-repo coupling would expand the blocker’s risk surface and release complexity.
 
 ## Competitive and Platform Findings
 
-- Chrome and Firefox both evaluate MV3 Declarative Net Request rules in the browser rather than routing request contents through extension JavaScript. Static rules must be packaged and validated; unpacked Chrome exposes feedback APIs useful for testing.
+- Chrome and Firefox both evaluate MV3 Declarative Net Request rules in the browser rather than routing request contents through extension JavaScript. Static rules must be packaged and validated. `getMatchedRules()` exposes rule identity/tab/timestamp feedback when permission is available; unlike `onRuleMatchedDebug`, this implementation never receives or relays raw request details.
 - uBlock Origin/uAssets and AdGuard treat YouTube as a continuously maintained filter problem. Their useful pattern is layered network rules plus tightly scoped response/scriptlet transforms and rapid breakage triage—not a single permanent selector list.
 - uBO’s `json-prune`, fetch-response, and XHR-response primitives validate this project’s response-pruning architecture, while its safety model reinforces rejecting executable or dangerous remote scriptlets.
 - SponsorBlock remains a separate community-data product with its own API, dataset, and rate constraints. Hash-prefix reads and explicit attribution remain preferable to full video-ID lookups or automated write paths.
@@ -126,17 +129,18 @@ Selected ImageGen reference: `design/mockups/control-center-desktop-dark-v2.png`
 2. Run actual desktop Tampermonkey on Chrome and Violentmonkey on Firefox, record document-start health, and compare network/DOM results to the unpacked extension.
 3. Host a `youtube-nocookie.com/embed/*` player inside a real referrer-bearing test page to distinguish Error 153 from blocker behavior.
 4. Complete YouTube Kids parental setup in a disposable test profile, then validate browse/watch/ad surfaces without changing a personal family configuration.
-5. Add extension-only DNR matched-rule counts/IDs to diagnostics when the browser exposes feedback APIs, keeping all non-YouTube URLs out of reports.
+5. Move extension settings reads/writes behind a bounded service-worker message broker while preserving sync chunking, oversize fallback, and context-menu behavior.
 6. Capture a real `serverStitchedAd`/SSAI session before implementing any SponsorBlock offset correction or automatic seek.
 7. Recover the private CRX key matching `extension/extension-id.txt`; if it is permanently lost, plan an explicit extension-ID/storage/update migration rather than silently accepting a new key.
 
 ## Sources
 
-Primary platform and distribution:
+Primary platform and distribution (accessed 2026-08-13):
 
 - https://developer.chrome.com/docs/extensions/reference/api/declarativeNetRequest
 - https://developer.chrome.com/docs/webstore/program-policies/mv3-requirements
 - https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/API/declarativeNetRequest
+- https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/API/declarativeNetRequest/getMatchedRules
 - https://greasyfork.org/en/help/code-rules
 - https://greasyfork.org/en/help/external-scripts
 

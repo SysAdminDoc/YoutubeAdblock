@@ -1,11 +1,11 @@
 # YoutubeAdblock
 
-![Version](https://img.shields.io/badge/version-0.5.22-58A6FF)
+![Version](https://img.shields.io/badge/version-0.5.23-58A6FF)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
 > A document-start YouTube ad blocker with a split-context proxy engine, remote rule support, and a premium Control Center for tuning protection.
 
-Desktop validation snapshot (2026-08-13): deterministic userscript/generated-extension fixtures pass on main YouTube dark/light/wide layouts, Music, TV, and Kids; an isolated live unpacked extension on Playwright Chromium 149 loaded its packaged DNR ruleset and rejected a real `google.com/pagead` probe with `net::ERR_BLOCKED_BY_CLIENT`. See [`RESEARCH.md`](RESEARCH.md) for the evidence boundary and remaining real-ad/account matrix.
+Desktop validation snapshot (2026-08-13): deterministic userscript/generated-extension fixtures pass on main YouTube dark/light/wide layouts, Music, TV, and Kids; an isolated live unpacked extension on Playwright Chromium 149 loaded its packaged DNR ruleset, rejected a real `google.com/pagead` probe with `net::ERR_BLOCKED_BY_CLIENT`, and showed 9 recent matches across 4 packaged rules in Diagnostics. See [`RESEARCH.md`](RESEARCH.md) for the evidence boundary and remaining real-ad/account matrix.
 
 ## Quick Start
 
@@ -59,6 +59,8 @@ For the safe local release gate, run `npm ci` once, then run `powershell -NoProf
 4. Open YouTube — this is currently the only mainstream mobile path for full YouTube ad blocking in a browser
 
 The extension ships the same blocking engine as the userscript plus **declarativeNetRequest rules** that block ad-serving endpoints (`/pagead/`, `/api/stats/ads`, `/youtubei/v1/player/ad_break`, googlevideo `ctier=SA` segments, DoubleClick, Google Syndication, Google Ad Services, and `google.com/pagead/*` from YouTube origins) at the browser network layer — outside the reach of page-level anti-adblock code. When browser DNR is unavailable, the userscript fetch/XHR engine also short-circuits ad-exclusive requests locally and scrubs text DASH/HLS manifests that reference googlevideo `ctier=SA` or `ctier=SR` ad segments.
+
+The extension requests `declarativeNetRequestFeedback` only to power the Browser Network Layer card in Diagnostics. That card reads the requesting YouTube tab's recent packaged-rule IDs, counts, and last-match time; it does not expose request URLs, raw browser errors, or unrelated tabs, and it never writes match evidence to extension storage. When the browser withholds feedback, blocking continues and the card reports that only the evidence is unavailable.
 If you trigger the extension while you are not already on YouTube, YoutubeAdblock opens a YouTube tab and carries the action forward there automatically.
 
 ## Highlights
@@ -102,6 +104,7 @@ If you trigger the extension while you are not already on YouTube, YoutubeAdbloc
 | Channel + Keyword Blocklist | Strips videos whose channel or title matches local blocklists. Channel entries support names, `UC...` IDs, `@handles`, channel URLs, regex, JSON/plain-text import-export, and BlockTube/FilterTube-style migration import | Optional |
 | Shorts → /watch Redirect | Rewrites `/shorts/VIDEO_ID` to the full watch player | Optional |
 | DNR Network Blocking *(extension only)* | Blocks `/pagead/*`, `/api/stats/ads`, `/api/stats/atr`, `/pcs/activeview`, `/youtubei/v1/player/ad_break`, selected tracking posts, googlevideo ad-tier media, DoubleClick, Google Syndication, Google Ad Services, and `google.com/pagead/*` for YouTube initiators. DNR output is generated from the same typed source that validates userscript intercept metadata | Enabled |
+| DNR Match Evidence *(extension only)* | Reports five-minute packaged-rule IDs and counts for the current YouTube tab in Diagnostics, with no request URLs or persisted history | Available |
 | Remote Filter List | Fetches and applies uBO-compatible filter lists from a configurable URL | Enabled |
 | Control Center | Desktop section rail, searchable settings, protection overview, quick actions, module toggles, rule refresh, blocklist editors, diagnostics, recovery tools, and explicit save/sync status | Enabled |
 | Extension Settings Sync | MV3 builds mirror toggles, blocklists, allowlists, and thresholds through `chrome.storage.sync`; oversized blocklists stay local instead of failing saves | Enabled |
@@ -144,9 +147,9 @@ All settings persist via `GM_setValue`. Open the userscript menu and choose `You
 
 ### Control Center
 
-![YoutubeAdblock v0.5.22 desktop Control Center](design/screenshots/control-center-desktop-dark-v0.5.22.png)
+![YoutubeAdblock v0.5.23 desktop Control Center diagnostics](design/screenshots/control-center-desktop-dark-v0.5.23.png)
 
-The v0.5.22 desktop Control Center was checked against an ImageGen visual reference and implemented in the existing userscript DOM/CSS system. The screenshot above is the tested implementation, not a standalone mockup.
+The v0.5.23 Control Center keeps the selected ImageGen-led desktop shell and adds the tested Browser Network Layer evidence state shown above. The screenshot is the generated-extension implementation, not a standalone mockup.
 
 | Setting | Description | Default |
 |---------|-------------|---------|
@@ -161,7 +164,7 @@ The v0.5.22 desktop Control Center was checked against an ImageGen visual refere
 | Enhancements | Configure DeArrow, RYD, original audio, and the desktop volume boost control | Optional |
 | Interface Cleanup | Hide selected feeds, shelves, comments, chat, merchandise, and other desktop clutter | Optional |
 | Focus & Filters | Configure Shorts redirect, channel/keyword filtering, whitelist mode, duration limits, creator ad exceptions, and import/export | Off |
-| Diagnostics | Copy privacy-scrubbed diagnostics, reset counters, or restore recommended defaults | Available |
+| Diagnostics | Inspect extension packaged-rule matches, copy a privacy-scrubbed snapshot, reset counters, or restore recommended defaults | Available |
 
 ### Filter List
 
@@ -214,6 +217,7 @@ Issues and PRs welcome. When reporting bugs, include:
 
 - Browser and version
 - Userscript manager and version
+- The **Copy Diagnostics** output (extension reports include packaged DNR rule IDs/counts, never request URLs)
 - Console errors (F12 → Console, filter by `YoutubeAdblock`)
 - Which settings are enabled
 

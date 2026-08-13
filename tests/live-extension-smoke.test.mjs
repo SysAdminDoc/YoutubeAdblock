@@ -149,6 +149,20 @@ test('live unpacked extension blocks an ad-only image request on desktop YouTube
     });
     assert.match(await page.locator('#ytab-dialog-title').textContent(), /YoutubeAdblock/);
 
+    await page.click('.ytab-nav-button[data-section-id="ytab-section-diagnostics"]');
+    await page.waitForFunction(() => {
+        const title = document.querySelector('#ytab-dnr-diagnostics .ytab-note-title')?.textContent || '';
+        return title && title !== 'Checking packaged rules';
+    }, null, { timeout: 10_000 });
+    const dnrDiagnostics = await page.locator('#ytab-dnr-diagnostics').evaluate(note => ({
+        title: note.querySelector('.ytab-note-title')?.textContent || '',
+        body: note.querySelector('.ytab-note-text')?.textContent || '',
+        tone: note.dataset.tone || ''
+    }));
+    assert.match(dnrDiagnostics.title, /[1-9][0-9]* recent network match/);
+    assert.match(dnrDiagnostics.body, /packaged rules? matched in the last 5 minutes/);
+    assert.equal(dnrDiagnostics.tone, 'success');
+
     const visibleAdSelectors = await page.locator(AD_SELECTOR).evaluateAll(elements =>
         elements.filter(element => {
             const rect = element.getBoundingClientRect();
@@ -169,6 +183,10 @@ test('live unpacked extension blocks an ad-only image request on desktop YouTube
     fs.mkdirSync(outputDir, { recursive: true });
     assert.equal(await page.locator('.ytab-overlay.ytab-active .ytab-panel').count(), 1,
         'Control Center should survive live YouTube hydration');
+    await page.locator('#ytab-section-diagnostics').evaluate(section => {
+        section.scrollIntoView({ behavior: 'auto', block: 'start' });
+    });
+    await page.waitForTimeout(100);
     await page.screenshot({
         path: path.join(outputDir, 'live-extension-smoke.png'),
         fullPage: false,
@@ -186,6 +204,7 @@ test('live unpacked extension blocks an ad-only image request on desktop YouTube
         },
         visibleAdSelectors,
         audibleAd,
+        dnrDiagnostics,
         observedAdRequestCount: adRequests.length,
         failedAdRequests: failedRequests
             .filter(entry =>

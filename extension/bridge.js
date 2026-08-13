@@ -10,7 +10,9 @@
  *     a) restrict writes to a single allowlisted storage key,
  *     b) cap the serialized value size,
  *     c) debounce writes so a misbehaving (or hostile) page script can't
- *        flood chrome.storage quota.
+ *        flood chrome.storage quota, and
+ *     d) expose DNR diagnostics as bounded rule IDs/counts only. Request
+ *        URLs and raw browser errors never cross into the page world.
  *   - Incoming `chrome.runtime.onMessage` events come only from the
  *     extension itself (Chrome enforces this), so we trust their shape
  *     after a basic type check.
@@ -25,6 +27,8 @@
     const EVT_SETTINGS_CHANGED = 'ytab:settings-changed';
     const EVT_PAGE_REQUEST = 'ytab:page-request';
     const EVT_PAGE_RESPONSE = 'ytab:page-response';
+    const EVT_DNR_DIAGNOSTICS_REQUEST = 'ytab:dnr-diagnostics-request';
+    const EVT_DNR_DIAGNOSTICS_RESPONSE = 'ytab:dnr-diagnostics-response';
 
     // Only the main-world script is allowed to write to this single key.
     // Any other key passed through EVT_PAGE_REQUEST is silently dropped.
@@ -55,8 +59,24 @@
     const GET_COALESCE_MS = 16;
     const RATE_WINDOW_MS = 1000;
     const RATE_MAX_OPS = 30;
+    const DNR_DIAGNOSTICS_CACHE_MS = 30 * 1000;
+    const DNR_DIAGNOSTICS_TIMEOUT_MS = 2000;
+    const DNR_DIAGNOSTICS_WINDOW_MS = 5 * 60 * 1000;
+    const DNR_DIAGNOSTICS_MAX_MATCHES = 128;
+    const DNR_DIAGNOSTICS_MAX_COUNT = 1000000;
+    const DNR_DIAGNOSTICS_REASONS = new Set([
+        'api-unavailable',
+        'permission-required',
+        'quota-exceeded',
+        'cooldown',
+        'invalid-context',
+        'query-failed'
+    ]);
     let rateWindowStart = 0;
     let rateWindowCount = 0;
+    let dnrDiagnosticsCache = null;
+    let dnrDiagnosticsCacheAt = 0;
+    let dnrDiagnosticsInFlight = false;
 
     function storageArea(name) {
         try {
@@ -311,6 +331,104 @@
         try { return JSON.stringify(value).length; } catch (e) { return Infinity; }
     }
 
+    function unavailableDnrDiagnostics(reason = 'query-failed') {
+        return {
+            status: 'unavailable',
+            reason: DNR_DIAGNOSTICS_REASONS.has(reason) ? reason : 'query-failed',
+            windowMinutes: 5,
+            total: 0,
+            matches: [],
+            lastMatchedAt: 0
+        };
+    }
+
+    function sanitizeDnrDiagnostics(value) {
+        if (!value || typeof value !== 'object' || value.status !== 'available') {
+            return unavailableDnrDiagnostics(value && value.reason);
+        }
+
+        const counts = new Map();
+        const sourceMatches = Array.isArray(value.matches)
+            ? value.matches.slice(0, DNR_DIAGNOSTICS_MAX_MATCHES)
+            : [];
+        for (const match of sourceMatches) {
+            const ruleId = Number(match && match.ruleId);
+            const count = Number(match && match.count);
+            if (!Number.isSafeInteger(ruleId) || ruleId <= 0) continue;
+            if (!Number.isSafeInteger(count) || count <= 0) continue;
+            const previous = counts.get(ruleId) || 0;
+            counts.set(ruleId, Math.min(DNR_DIAGNOSTICS_MAX_COUNT, previous + count));
+        }
+
+        const matches = [...counts.entries()]
+            .sort(([left], [right]) => left - right)
+            .map(([ruleId, count]) => ({ ruleId, count }));
+        const lastMatchedAt = Number(value.lastMatchedAt);
+        const now = Date.now();
+        return {
+            status: 'available',
+            reason: '',
+            windowMinutes: 5,
+            total: matches.reduce((sum, match) => sum + match.count, 0),
+            matches,
+            lastMatchedAt: Number.isFinite(lastMatchedAt) &&
+                lastMatchedAt >= now - DNR_DIAGNOSTICS_WINDOW_MS - 60000 &&
+                lastMatchedAt <= now + 60000
+                ? Math.trunc(lastMatchedAt)
+                : 0
+        };
+    }
+
+    function dispatchDnrDiagnostics(value) {
+        document.dispatchEvent(new CustomEvent(EVT_DNR_DIAGNOSTICS_RESPONSE, {
+            detail: value
+        }));
+    }
+
+    function requestDnrDiagnostics() {
+        const now = Date.now();
+        if (dnrDiagnosticsCache && now - dnrDiagnosticsCacheAt < DNR_DIAGNOSTICS_CACHE_MS) {
+            dispatchDnrDiagnostics(dnrDiagnosticsCache);
+            return;
+        }
+        if (dnrDiagnosticsInFlight) return;
+        dnrDiagnosticsInFlight = true;
+        let settled = false;
+        let timer = null;
+
+        function finish(response) {
+            if (settled) return;
+            settled = true;
+            if (timer) clearTimeout(timer);
+            dnrDiagnosticsInFlight = false;
+            dnrDiagnosticsCache = sanitizeDnrDiagnostics(response);
+            dnrDiagnosticsCacheAt = Date.now();
+            dispatchDnrDiagnostics(dnrDiagnosticsCache);
+        }
+
+        try {
+            timer = setTimeout(
+                () => finish(unavailableDnrDiagnostics('query-failed')),
+                DNR_DIAGNOSTICS_TIMEOUT_MS
+            );
+            const maybePromise = chrome.runtime.sendMessage(
+                { type: 'ytab:get-dnr-diagnostics' },
+                (response) => {
+                    if (lastErrorText()) {
+                        finish(unavailableDnrDiagnostics('query-failed'));
+                        return;
+                    }
+                    finish(response);
+                }
+            );
+            if (maybePromise && typeof maybePromise.then === 'function') {
+                maybePromise.then(finish, () => finish(unavailableDnrDiagnostics('query-failed')));
+            }
+        } catch (e) {
+            finish(unavailableDnrDiagnostics('query-failed'));
+        }
+    }
+
     // Relay service-worker messages into the page-world as DOM events.
     try {
         chrome.runtime.onMessage.addListener((msg) => {
@@ -421,6 +539,8 @@
             }));
         }
     });
+
+    document.addEventListener(EVT_DNR_DIAGNOSTICS_REQUEST, requestDnrDiagnostics);
 
     // Push cross-subdomain setting changes down into the page world.
     // Only forward the allowlisted key to avoid leaking any unrelated

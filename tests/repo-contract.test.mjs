@@ -29,6 +29,7 @@ const signFilterManifest = read(path.join('tools', 'sign-filter-manifest.mjs'));
 const verifyReleaseArtifacts = read(path.join('tools', 'verify-release-artifacts.mjs'));
 const expectedExtensionId = read(path.join('extension', 'extension-id.txt')).trim();
 const background = read(path.join('extension', 'background.js'));
+const bridge = read(path.join('extension', 'bridge.js'));
 const extensionReadme = read(path.join('extension', 'README.md'));
 const generatedMain = read(path.join('extension', 'main.js'));
 const readme = read('README.md');
@@ -129,6 +130,16 @@ test('community API hosts use optional runtime permissions instead of install-ti
     assert.match(background, /permissions\.request/);
     assert.match(background, /check-api-permissions/);
     assert.match(userscript, /communityApiPermission/);
+});
+
+test('matched-rule diagnostics use privacy-bounded DNR feedback', () => {
+    assert.ok(manifest.permissions.includes('declarativeNetRequestFeedback'));
+    assert.match(background, /declarativeNetRequest\.getMatchedRules/);
+    assert.match(background, /rulesetId\s*!==\s*DNR_RULESET_ID/);
+    assert.match(bridge, /DNR diagnostics as bounded rule IDs\/counts only/);
+    assert.match(userscript, /DNR matched rules/);
+    assert.doesNotMatch(background, /onRuleMatchedDebug/);
+    assert.doesNotMatch(bridge, /onRuleMatchedDebug/);
 });
 
 test('release gate verifies install artifacts before publishing', () => {
@@ -306,6 +317,13 @@ test('version strings stay in lockstep across userscript, manifest, generated bu
     assert(readmeBadge, 'README version badge missing');
     assert.equal(readmeBadge[1], version,
         `README version badge (${readmeBadge[1]}) differs from userscript (${version})`);
+
+    const screenshotMatch = readme.match(/design\/screenshots\/control-center-desktop-dark-v([0-9][0-9A-Za-z.+-]*)\.png/);
+    assert(screenshotMatch, 'README current Control Center screenshot is missing');
+    assert.equal(screenshotMatch[1], version,
+        `README screenshot (${screenshotMatch[1]}) differs from userscript (${version})`);
+    assert.equal(fs.existsSync(path.join(repoRoot, screenshotMatch[0])), true,
+        `README screenshot file is missing: ${screenshotMatch[0]}`);
 });
 
 test('generated extension/main.js carries the required shim + command-bridge markers', () => {

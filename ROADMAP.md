@@ -25,17 +25,17 @@ Incomplete, actionable work only. Completed work belongs in `CHANGELOG.md`. Ever
   Blocker: requires the historical private key or an explicit maintainer decision to rotate identity.
   Complexity: M
 
-- [ ] **P1 — Add extension DNR matched-rule diagnostics**
-  Why: the live smoke proves the static ruleset is enabled and a pagead probe is blocked, but user diagnostics cannot identify which browser-layer rule fired in a real report.
-  Next investigation: prototype `getMatchedRules()` / `onRuleMatchedDebug` only where feedback APIs are available; verify Chrome unpacked and Firefox preference requirements.
-  Acceptance: diagnostics report recent YouTube-only DNR rule IDs and counts, degrade cleanly when feedback is unavailable, and never include unrelated browsing URLs.
-  Complexity: M
-
 - [ ] **P1 — Move extension settings behind a trusted-context broker**
   Why: page-world events currently request allowlisted settings reads/writes through the isolated bridge; a service-worker broker can reduce the exposed storage boundary.
   Next investigation: map every bridge setting operation and `chrome.storage.local/sync` consumer before changing access levels.
   Acceptance: the service worker owns storage reads/writes; bridge mutations use a bounded runtime-message protocol; trusted-context access is restricted where supported; sync chunking, oversize fallback, and context-menu actions retain contract tests.
   Complexity: L
+
+- [ ] **P2 — Export a privacy-scrubbed diagnostic bundle**
+  Why: copied text now includes browser-layer DNR evidence, but issue triage still lacks a structured bundle of bounded recent engine events and integrity state.
+  Next investigation: define a versioned JSON schema over existing counters, engine health, rule integrity, API cooldowns, and DNR summaries; add a small in-memory prune-event ring that records keys and endpoint classes without URLs or media identifiers.
+  Acceptance: one explicit export produces deterministic JSON, schema validation rejects private fields, redaction tests cover video/playlist/custom-filter data, and no event history is persisted unless the user downloads it.
+  Complexity: M
 
 ## Backlog
 
@@ -47,9 +47,6 @@ Incomplete, actionable work only. Completed work belongs in `CHANGELOG.md`. Ever
 
 - [ ] **P2 — Trusted Types completion audit**
   Remove or wrap every remaining string-to-HTML path, add a Trusted Types-enforced browser fixture, and downgrade README claims until the audit passes.
-
-- [ ] **P2 — Exportable privacy-scrubbed diagnostic bundle**
-  Export counters, engine health, rule integrity, bounded recent prune events, and DNR telemetry as JSON without video IDs, playlist IDs, custom-filter queries, or unrelated browsing data.
 
 - [ ] **P2 — Community API cache controls**
   Show SponsorBlock, DeArrow, and RYD cache counts/ages; clear each independently; retain hash-prefix privacy and cooldown reporting.
