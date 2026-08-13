@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         YoutubeAdblock
 // @namespace    https://github.com/SysAdminDoc
-// @version      0.5.21
+// @version      0.5.22
 // @description  YouTube ad blocker with remote rules, anti-detect hardening, toString-hiding proxies, DeArrow + RYD, volume boost, UI cleanup, and an in-page Control Center
 // @author       SysAdminDoc
 // @license      MIT
@@ -41,7 +41,7 @@
      * ===================================================================== */
 
     const SCRIPT_NAME = 'YoutubeAdblock';
-    const SCRIPT_VERSION = '0.5.21';
+    const SCRIPT_VERSION = '0.5.22';
     const PROJECT_URL = 'https://github.com/SysAdminDoc/YoutubeAdblock';
     const ISSUES_URL = `${PROJECT_URL}/issues`;
     const FILTER_URL_DEFAULT = 'https://raw.githubusercontent.com/SysAdminDoc/YoutubeAdblock/refs/heads/main/youtube-adblock-filters.txt';
@@ -788,6 +788,9 @@
             shortsRedirect: false,
             channelBlocker: false,
             keywordBlocker: false,
+            whitelistMode: false,
+            durationFilter: false,
+            adAllowlist: false,
             // v0.4.0 interface cleanup (Unhook-style)
             hideHomeFeed: false,
             hideShortsShelf: false,
@@ -1033,12 +1036,23 @@
             if (key in DEFAULT_FILTERS.features) clean[key] = !!value;
             else droppedStaleKey = true;
         }
+        // v0.5.22 migration: the extension context-menu action in older
+        // builds wrote `ytab_channelBlocker` instead of updating the shared
+        // feature-overrides map. Preserve that intent once, then retire the
+        // orphan key so blocking stays enabled after the next reload.
+        const legacyChannelBlocker = getSetting('channelBlocker', null);
+        const migratedLegacyChannelBlocker = legacyChannelBlocker === true &&
+            !Object.prototype.hasOwnProperty.call(clean, 'channelBlocker');
+        if (migratedLegacyChannelBlocker) clean.channelBlocker = true;
         // One-time migration: persist the cleaned map when a removed
         // feature key (e.g. clientScreenSpoof, retired in v0.5.0) is
         // still present in storage, so stale toggles don't live forever
         // in the settings blob.
-        if (droppedStaleKey) {
+        if (droppedStaleKey || migratedLegacyChannelBlocker) {
             try { setSetting('feature_overrides', clean); } catch (e) { /* non-fatal */ }
+        }
+        if (legacyChannelBlocker !== null) {
+            try { setSetting('channelBlocker', null); } catch (e) { /* non-fatal */ }
         }
         return clean;
     }
@@ -2281,13 +2295,17 @@
                 if (obj.entries.length !== before) pruned = true;
             }
         }
-        // v0.4.0: apply user blocklists (channels + keywords) during the
-        // same walk. The walk only runs when at least one list is non-empty
-        // so the common case (both empty) pays zero cost.
-        if (isEnabled() && (state.features.channelBlocker || state.features.keywordBlocker)) {
+        // Apply user blocklists and the duration filter during the same walk.
+        // Duration filtering must be able to run independently; older builds
+        // silently skipped it unless a channel or keyword filter was also on.
+        if (isEnabled() && (
+            state.features.channelBlocker ||
+            state.features.keywordBlocker ||
+            state.features.durationFilter
+        )) {
             const channels = getChannelBlocklist();
             const keywords = getKeywordBlocklist();
-            if (channels.length || keywords.length) {
+            if (channels.length || keywords.length || state.features.durationFilter) {
                 const dropped = feedFilterWalk(obj, channels, keywords);
                 if (dropped > 0) {
                     incrementStat('feedFiltered', dropped);
@@ -5212,7 +5230,9 @@
             setSetting('channel_blocklist', lines.filter(Boolean).join('\n'));
             if (!state.features.channelBlocker) {
                 state.features.channelBlocker = true;
-                setSetting('channelBlocker', true);
+                const overrides = getFeatureOverrides();
+                overrides.channelBlocker = true;
+                setSetting('feature_overrides', overrides);
             }
         } catch (e) { /* ignore */ }
     }
@@ -6517,19 +6537,22 @@
                 padding: 20px;
             }
             .${CSS_PREFIX}-summary {
+                gap: 12px;
+                padding: 16px 18px;
                 background: linear-gradient(135deg, var(--surface-1), var(--surface-2));
             }
             .${CSS_PREFIX}-summary-hero {
                 grid-template-columns: minmax(0, 1fr) minmax(300px, 0.8fr);
-                gap: 24px;
+                gap: 20px;
                 align-items: center;
             }
             .${CSS_PREFIX}-summary-control {
-                min-height: 92px;
+                min-height: 84px;
+                padding: 12px 14px;
                 background: var(--surface-2);
             }
             .${CSS_PREFIX}-summary-facts {
-                gap: 12px;
+                gap: 10px;
             }
             .${CSS_PREFIX}-glance,
             .${CSS_PREFIX}-metric {
@@ -6537,7 +6560,14 @@
             }
             .${CSS_PREFIX}-metric-grid {
                 grid-template-columns: repeat(4, minmax(0, 1fr));
-                gap: 12px;
+                gap: 10px;
+            }
+            .${CSS_PREFIX}-metric {
+                padding: 12px 14px;
+                border-radius: 14px;
+            }
+            .${CSS_PREFIX}-metric-label {
+                margin-bottom: 6px;
             }
             .${CSS_PREFIX}-row:hover,
             .${CSS_PREFIX}-input:hover {

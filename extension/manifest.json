@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "YoutubeAdblock",
-  "version": "0.5.21",
+  "version": "0.5.22",
   "description": "YouTube ad blocker with payload pruning, anti-detect hardening, SponsorBlock, Return YouTube Dislike, and a Control Center.",
   "author": "SysAdminDoc",
   "homepage_url": "https://github.com/SysAdminDoc/YoutubeAdblock",

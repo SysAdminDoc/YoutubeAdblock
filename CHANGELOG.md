@@ -4,6 +4,39 @@ All notable changes to YoutubeAdblock are documented here.
 
 ## [Unreleased]
 
+## [0.5.22] - 2026-08-13
+
+### Fixed
+- Fixed `Whitelist Mode`, `Duration Filter`, and `Creator Ad Allowlist`
+  appearing enabled in the Control Center while their runtime values were
+  actually undefined/off. Every exposed feature toggle now has an explicit
+  default and a repository contract prevents the UI/runtime schema drifting.
+- Fixed duration filtering doing nothing unless the channel or keyword blocker
+  was also enabled. Duration-only feed pruning now runs independently and has
+  a focused engine regression test.
+- Fixed the extension's `Block This Channel` context-menu action writing an
+  orphan setting instead of the persisted feature-overrides map. Existing
+  orphaned `channelBlocker` values migrate once so the action remains enabled
+  after reload.
+- Fixed the desktop Overview quick actions extending behind the Control Center
+  footer at both 1440x900 and 1920x1080. The summary layout is more compact and
+  browser smoke now fails if the actions leave the bounded content viewport.
+- Fixed the opt-in live-extension evidence artifact retaining YouTube query
+  strings, playlist identifiers, video path identifiers, and pagead audience
+  segments. Evidence URLs are now normalized to origin/path-only records with
+  sensitive path segments replaced.
+
+### Changed
+- Refreshed live desktop recon across YouTube home/search/watch, Shorts, Music,
+  TV, Kids setup, and no-cookie embed surfaces; retained explicit limits where
+  real ad creative, parental setup, or a referrer-bearing embed was unavailable.
+- Advanced the desktop Control Center visual reference to an ImageGen-generated
+  v2 mockup with all ten real destinations and an unclipped Overview, then
+  kept the implementation within the existing code-native DOM/CSS system.
+- Expanded browser smoke to capture every Control Center destination in the
+  canonical dark desktop journey and added optional mode/surface filters for
+  faster focused diagnosis.
+
 ## [0.5.21] - 2026-08-13
 
 ### Changed

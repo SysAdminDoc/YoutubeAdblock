@@ -196,6 +196,30 @@ test('Control Center user-visible strings resolve through the STRINGS table', ()
     }
 });
 
+test('every Control Center feature toggle has an explicit runtime default', () => {
+    const normalizedUserscript = userscript.replace(/\r\n/g, '\n');
+    const featureBlockStart = normalizedUserscript.indexOf('const FEATURE_GROUPS = [');
+    const stateBlockStart = normalizedUserscript.indexOf('/* =========================================================================\n     * STATE', featureBlockStart);
+    const defaultsStart = normalizedUserscript.indexOf('features: {', normalizedUserscript.indexOf('const DEFAULT_FILTERS = {'));
+    const defaultsEnd = normalizedUserscript.indexOf('\n        }\n    };', defaultsStart);
+    assert.notEqual(featureBlockStart, -1);
+    assert.notEqual(stateBlockStart, -1);
+    assert.notEqual(defaultsStart, -1);
+    assert.notEqual(defaultsEnd, -1);
+
+    const exposedKeys = [...normalizedUserscript.slice(featureBlockStart, stateBlockStart)
+        .matchAll(/\{\s*key:\s*'([^']+)'/g)]
+        .map(match => match[1]);
+    const defaultBlock = normalizedUserscript.slice(defaultsStart, defaultsEnd);
+    for (const key of exposedKeys) {
+        assert.match(
+            defaultBlock,
+            new RegExp(`\\b${key}:\\s*(?:true|false)\\b`),
+            `Control Center toggle ${key} is missing an explicit DEFAULT_FILTERS.features value`
+        );
+    }
+});
+
 test('browser smoke matrix is wired into the local test suite', () => {
     assert.equal(packageJson.private, true);
     assert.equal(packageJson.scripts.test, 'node --test tests/*.mjs');

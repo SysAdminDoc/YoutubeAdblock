@@ -1,6 +1,6 @@
 # YoutubeAdblock
 
-![Version](https://img.shields.io/badge/version-0.5.21-58A6FF)
+![Version](https://img.shields.io/badge/version-0.5.22-58A6FF)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
 > A document-start YouTube ad blocker with a split-context proxy engine, remote rule support, and a premium Control Center for tuning protection.
@@ -144,9 +144,9 @@ All settings persist via `GM_setValue`. Open the userscript menu and choose `You
 
 ### Control Center
 
-![YoutubeAdblock v0.5.21 desktop Control Center](design/screenshots/control-center-desktop-dark-v0.5.21.png)
+![YoutubeAdblock v0.5.22 desktop Control Center](design/screenshots/control-center-desktop-dark-v0.5.22.png)
 
-The 0.5.21 desktop redesign was derived from an ImageGen concept and then implemented in the existing userscript DOM/CSS system. The screenshot above is the tested implementation, not a standalone mockup.
+The v0.5.22 desktop Control Center was checked against an ImageGen visual reference and implemented in the existing userscript DOM/CSS system. The screenshot above is the tested implementation, not a standalone mockup.
 
 | Setting | Description | Default |
 |---------|-------------|---------|
@@ -157,7 +157,10 @@ The 0.5.21 desktop redesign was derived from an ImageGen concept and then implem
 | Core Blocking | Control JSON pruning, fetch/XHR interception, property traps, and request rewriting | On |
 | Anti-Interference | Control abnormality bypass, iframe defense, SSAP skipping, spoofing, and timer neutralization | On |
 | Ad & Overlay Cleanup | Control video-ad fallbacks, cosmetic cleanup, upsell blocking, and Shorts ad removal | On |
+| SponsorBlock | Skip community-identified sponsor segments with hash-prefix lookups and explicit service status | Optional |
 | Enhancements | Configure DeArrow, RYD, original audio, and the desktop volume boost control | Optional |
+| Interface Cleanup | Hide selected feeds, shelves, comments, chat, merchandise, and other desktop clutter | Optional |
+| Focus & Filters | Configure Shorts redirect, channel/keyword filtering, whitelist mode, duration limits, creator ad exceptions, and import/export | Off |
 | Diagnostics | Copy privacy-scrubbed diagnostics, reset counters, or restore recommended defaults | Available |
 
 ### Filter List

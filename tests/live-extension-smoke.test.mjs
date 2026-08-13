@@ -13,6 +13,18 @@ const liveEnabled = process.env.YTAB_LIVE_EXTENSION === '1';
 const chromiumPath = chromium.executablePath();
 const canLaunch = fs.existsSync(chromiumPath);
 
+function redactEvidenceUrl(rawUrl) {
+    try {
+        const parsed = new URL(rawUrl);
+        const pathname = parsed.pathname
+            .replace(/\/(shorts|embed|live)\/[^/]+/i, '/$1/[video-id]')
+            .replace(/(\/pagead\/1p-user-list\/)[^/]+/i, '$1[redacted]');
+        return `${parsed.origin}${pathname}`;
+    } catch {
+        return String(rawUrl).split(/[?#]/, 1)[0];
+    }
+}
+
 const AD_SELECTOR = [
     'ytd-ad-slot-renderer',
     'ytd-display-ad-renderer',
@@ -22,6 +34,25 @@ const AD_SELECTOR = [
     '.ytp-ad-module',
     'ytu-ads-title-tray',
 ].join(',');
+
+test('live evidence URLs remove query strings and media identifiers', () => {
+    assert.equal(
+        redactEvidenceUrl('https://www.youtube.com/watch?v=private-video&list=private-list'),
+        'https://www.youtube.com/watch'
+    );
+    assert.equal(
+        redactEvidenceUrl('https://www.youtube.com/shorts/private-video?feature=share'),
+        'https://www.youtube.com/shorts/[video-id]'
+    );
+    assert.equal(
+        redactEvidenceUrl('https://www.google.com/pagead/lvz?event=private-token'),
+        'https://www.google.com/pagead/lvz'
+    );
+    assert.equal(
+        redactEvidenceUrl('https://www.google.com/pagead/1p-user-list/123456/?data=private-token'),
+        'https://www.google.com/pagead/1p-user-list/[redacted]/'
+    );
+});
 
 test('live unpacked extension blocks an ad-only image request on desktop YouTube', {
     skip: !liveEnabled
@@ -147,14 +178,20 @@ test('live unpacked extension blocks an ad-only image request on desktop YouTube
         browserVersion: await context.browser()?.version(),
         extensionId,
         enabledRulesets,
-        pageUrl: page.url(),
-        pageadProbe: { url: pageadProbeUrl, outcome: pageadProbe, failure: probeFailure.errorText },
+        pageUrl: redactEvidenceUrl(page.url()),
+        pageadProbe: {
+            url: redactEvidenceUrl(pageadProbeUrl),
+            outcome: pageadProbe,
+            failure: probeFailure.errorText,
+        },
         visibleAdSelectors,
         audibleAd,
         observedAdRequestCount: adRequests.length,
-        failedAdRequests: failedRequests.filter(entry =>
-            /(?:doubleclick\.net|google\.com\/pagead\/|youtube\.com\/pagead\/)/i.test(entry.url)
-        ),
+        failedAdRequests: failedRequests
+            .filter(entry =>
+                /(?:doubleclick\.net|google\.com\/pagead\/|youtube\.com\/pagead\/)/i.test(entry.url)
+            )
+            .map(entry => ({ ...entry, url: redactEvidenceUrl(entry.url) })),
     };
     fs.writeFileSync(
         path.join(outputDir, 'live-extension-smoke.json'),

@@ -249,6 +249,54 @@ test('pruneObject strips enforcement/framework keys', () => {
     assert.ok(obj.responseContext.serviceTrackingParams);
 });
 
+test('Focus & Filters settings have explicit off defaults', () => {
+    for (const key of ['whitelistMode', 'durationFilter', 'adAllowlist']) {
+        assert.equal(harness.DEFAULT_FILTERS.features[key], false, `${key} should default off`);
+        assert.equal(harness.state.features[key], false, `${key} runtime state should match its toggle`);
+    }
+});
+
+test('duration filtering works without channel or keyword filtering', () => {
+    const h = createTestHarness({
+        storage: {
+            ytab_duration_min: '120',
+            ytab_feature_overrides: { durationFilter: true },
+        }
+    });
+    const obj = {
+        contents: [
+            { videoRenderer: { title: { simpleText: 'Short clip' }, lengthText: { simpleText: '0:45' } } },
+            { videoRenderer: { title: { simpleText: 'Long clip' }, lengthText: { simpleText: '3:00' } } },
+        ]
+    };
+
+    assert.equal(h.state.features.channelBlocker, false);
+    assert.equal(h.state.features.keywordBlocker, false);
+    assert.equal(h.pruneObject(obj), true);
+    assert.equal(obj.contents.length, 1);
+    assert.equal(obj.contents[0].videoRenderer.title.simpleText, 'Long clip');
+});
+
+test('ad allowlist override persists and skips player ad pruning', () => {
+    const h = createTestHarness({
+        storage: {
+            ytab_ad_allowlist: 'UCabcdefghijklmnopqrstuv',
+            ytab_feature_overrides: { adAllowlist: true },
+        }
+    });
+    const obj = {
+        adPlacements: [{}],
+        videoDetails: {
+            author: 'Allowed Creator',
+            channelId: 'UCabcdefghijklmnopqrstuv',
+        }
+    };
+
+    assert.equal(h.state.features.adAllowlist, true);
+    assert.equal(h.pruneObject(obj), false);
+    assert.equal(obj.adPlacements.length, 1);
+});
+
 // ========== sanitizeFilterPayload ==========
 
 test('sanitizeFilterPayload rejects non-objects', () => {
@@ -952,7 +1000,8 @@ test('extension block-channel handler adds current channel and enables blocker',
     h.handleExtensionBlockChannel();
 
     assert.equal(h.__storage.ytab_channel_blocklist, 'Existing Channel\nNew Channel');
-    assert.equal(h.__storage.ytab_channelBlocker, true);
+    assert.equal(h.__storage.ytab_feature_overrides.channelBlocker, true);
+    assert.equal(h.__storage.ytab_channelBlocker, undefined);
     assert.equal(h.state.features.channelBlocker, true);
 });
 
@@ -967,6 +1016,16 @@ test('extension block-channel handler avoids duplicate channel names', () => {
 
     assert.equal(h.__storage.ytab_channel_blocklist, 'Existing Channel');
     assert.equal(h.__storage.ytab_channelBlocker, undefined);
+});
+
+test('legacy context-menu channel blocker key migrates into feature overrides', () => {
+    const h = createTestHarness({
+        storage: { ytab_channelBlocker: true }
+    });
+
+    assert.equal(h.state.features.channelBlocker, true);
+    assert.equal(h.__storage.ytab_feature_overrides.channelBlocker, true);
+    assert.equal(h.__storage.ytab_channelBlocker, null);
 });
 
 test('channel blocklist parser recognizes names, UC IDs, handles, and URLs', () => {

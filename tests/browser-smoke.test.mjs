@@ -185,6 +185,67 @@ async function assertPanelLayout(page, width, height) {
     assert.ok(overflow.x <= 2, `panel has horizontal overflow: ${overflow.x}`);
 }
 
+async function assertOverviewActionsVisible(page) {
+    const bounds = await page.evaluate(() => {
+        const content = document.querySelector('.ytab-content');
+        const actions = document.querySelector('.ytab-summary-actions');
+        if (!content || !actions) return null;
+        const contentRect = content.getBoundingClientRect();
+        const actionsRect = actions.getBoundingClientRect();
+        return {
+            contentBottom: contentRect.bottom,
+            actionsBottom: actionsRect.bottom,
+            actionsTop: actionsRect.top,
+        };
+    });
+    assert.ok(bounds, 'Overview content and quick actions should exist');
+    assert.ok(bounds.actionsTop >= 0, 'Overview quick actions should start inside the viewport');
+    assert.ok(
+        bounds.actionsBottom <= bounds.contentBottom + 1,
+        `Overview quick actions are clipped (${bounds.actionsBottom} > ${bounds.contentBottom})`
+    );
+}
+
+async function waitForPanelScrollSettled(page, sectionId) {
+    const bounds = await page.evaluate(async (targetSectionId) => {
+        const content = document.querySelector('.ytab-content');
+        const section = document.getElementById(targetSectionId);
+        if (!content || !section) return null;
+
+        await new Promise(resolve => {
+            let lastTop = content.scrollTop;
+            let stableFrames = 0;
+            let totalFrames = 0;
+            const sample = () => {
+                const nextTop = content.scrollTop;
+                stableFrames = Math.abs(nextTop - lastTop) < 0.5 ? stableFrames + 1 : 0;
+                lastTop = nextTop;
+                totalFrames += 1;
+                if ((totalFrames >= 12 && stableFrames >= 8) || totalFrames >= 180) {
+                    resolve();
+                    return;
+                }
+                requestAnimationFrame(sample);
+            };
+            requestAnimationFrame(sample);
+        });
+
+        const contentRect = content.getBoundingClientRect();
+        const sectionRect = section.getBoundingClientRect();
+        return {
+            contentTop: contentRect.top,
+            contentBottom: contentRect.bottom,
+            sectionTop: sectionRect.top,
+            sectionBottom: sectionRect.bottom,
+        };
+    }, sectionId);
+    assert.ok(bounds, `panel content and section should exist: ${sectionId}`);
+    assert.ok(
+        bounds.sectionBottom > bounds.contentTop + 1 && bounds.sectionTop < bounds.contentBottom - 1,
+        `selected section is outside the content viewport: ${sectionId}`
+    );
+}
+
 async function assertAdExclusiveRequestsShortCircuit(page, requestLog) {
     const requestStart = requestLog.length;
     const result = await page.evaluate(async () => {
@@ -219,6 +280,9 @@ async function exercisePanel(page, mode, surface) {
     await assert.equal(await page.locator('.ytab-nav-button').count(), 10);
     await assert.equal(await page.locator('.ytab-nav-button[aria-current="page"]').textContent(), 'Overview');
     await assert.equal(await page.locator('.ytab-panel').evaluate(el => getComputedStyle(el).colorScheme), surface.theme);
+    if (surface.width >= 1440 && surface.height >= 900) {
+        await assertOverviewActionsVisible(page);
+    }
     await page.keyboard.press('Tab');
     assert.equal(await page.evaluate(() => !!document.activeElement?.closest('.ytab-panel')), true);
     await page.click('#ytab-master-toggle');
@@ -258,6 +322,27 @@ async function exercisePanel(page, mode, surface) {
         assert.equal(hiddenCount, 0, 'RYD count must not be written into hidden duplicate controls');
     }
 
+    if (mode === 'userscript' && surface.name === 'www-watch-dark') {
+        await page.click('.ytab-nav-button[data-section-id="ytab-section-blocklist"]');
+        await page.waitForFunction(() => document.querySelector('#ytab-section-blocklist details')?.open === true);
+        assert.equal(await page.locator('#ytab-toggle-whitelistMode').isChecked(), false);
+        assert.equal(await page.locator('#ytab-toggle-durationFilter').isChecked(), false);
+        assert.equal(await page.locator('#ytab-toggle-adAllowlist').isChecked(), false);
+        await page.click('#ytab-toggle-durationFilter');
+        await page.waitForFunction(() => document.querySelector('#ytab-toggle-durationFilter')?.checked === true);
+        // Invoke the current checkbox directly so this exercises the rebuilt
+        // row's real change handler without retaining a stale element handle.
+        await page.evaluate(() => document.querySelector('#ytab-toggle-keywordBlocker')?.click());
+        const focusOverrides = await page.evaluate((mode) => {
+            if (mode === 'userscript') return window.__ytabStore?.ytab_feature_overrides || {};
+            const raw = localStorage.getItem('__ytab_ext_settings__') || '{}';
+            return JSON.parse(raw).ytab_feature_overrides || {};
+        }, mode);
+        assert.equal(focusOverrides.durationFilter, true,
+            'duration filter should survive a second feature-toggle rebuild');
+        assert.equal(focusOverrides.keywordBlocker, true);
+    }
+
     if (surface.name === 'www-watch-dark') {
         const destinations = await page.locator('.ytab-nav-button').evaluateAll(buttons =>
             buttons.map(button => ({
@@ -278,6 +363,14 @@ async function exercisePanel(page, mode, surface) {
                 await page.locator('.ytab-nav-button[aria-current="page"]').textContent(),
                 destination.label
             );
+            await waitForPanelScrollSettled(page, destination.sectionId);
+            if (mode === 'userscript') {
+                const sectionSlug = destination.sectionId.replace(/^ytab-section-/, '');
+                await page.screenshot({
+                    path: path.join(repoRoot, 'dist', 'browser-smoke', `userscript-www-watch-dark-section-${sectionSlug}.png`),
+                    fullPage: false,
+                });
+            }
         }
     }
 
@@ -313,8 +406,18 @@ test('browser smoke matrix opens Control Center across modes and surfaces', { sk
     const screenshotDir = path.join(repoRoot, 'dist', 'browser-smoke');
     fs.mkdirSync(screenshotDir, { recursive: true });
 
-    for (const mode of ['userscript', 'extension']) {
-        for (const surface of surfaces) {
+    const requestedMode = process.env.YTAB_SMOKE_MODE;
+    const requestedSurface = process.env.YTAB_SMOKE_SURFACE;
+    const modes = requestedMode ? [requestedMode] : ['userscript', 'extension'];
+    const selectedSurfaces = requestedSurface
+        ? surfaces.filter(surface => surface.name === requestedSurface)
+        : surfaces;
+    assert.ok(modes.every(mode => mode === 'userscript' || mode === 'extension'),
+        `unknown YTAB_SMOKE_MODE: ${requestedMode}`);
+    assert.ok(selectedSurfaces.length > 0, `unknown YTAB_SMOKE_SURFACE: ${requestedSurface}`);
+
+    for (const mode of modes) {
+        for (const surface of selectedSurfaces) {
             await t.test(`${mode} ${surface.name}`, async () => {
                 const context = await browser.newContext({
                     viewport: { width: surface.width, height: surface.height },
