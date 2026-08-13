@@ -13,7 +13,8 @@ function read(relativePath) {
 
 const userscript = read('YoutubeAdblock.user.js');
 const manifest = JSON.parse(read(path.join('extension', 'manifest.json')));
-const rules = JSON.parse(read(path.join('extension', 'rules', 'network-blocks.json')));
+const generatedRulesText = read(path.join('extension', 'rules', 'network-blocks.json'));
+const rules = JSON.parse(generatedRulesText);
 const networkRuleSource = JSON.parse(read(path.join('extension', 'rules', 'network-rules-source.json')));
 const webpackSignatures = JSON.parse(read('webpack-ad-signatures.json'));
 const webpackSigManifest = JSON.parse(read('webpack-ad-signatures.manifest.json'));
@@ -57,6 +58,9 @@ test('network rules scope external ad domains to all supported YouTube initiator
 
 test('network rule source drives DNR output and userscript intercept patterns', () => {
     assert.deepEqual(rules, networkRuleSource.dnrRules);
+    assert.equal(generatedRulesText.trim(), JSON.stringify(networkRuleSource.dnrRules),
+        'generated DNR rules must be byte-stable across PowerShell editions');
+    assert.match(buildExtension, /ConvertTo-Json -Depth 30 -Compress/);
     assert.match(buildExtension, /network-rules-source\.json/);
     for (const pattern of networkRuleSource.interceptPatterns) {
         assert(userscript.includes(`'${pattern}'`), `userscript interceptPatterns missing ${pattern}`);

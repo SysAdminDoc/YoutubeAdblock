@@ -67,7 +67,9 @@ if (Test-Path -LiteralPath $networkSourcePath) {
     if (-not (Test-Path -LiteralPath $networkOutDir)) {
         New-Item -ItemType Directory -Path $networkOutDir | Out-Null
     }
-    $dnrJson = $dnrRules | ConvertTo-Json -Depth 30
+    # PowerShell 5.1 and PowerShell 7 use different pretty-print indentation.
+    # Keep generated rules compact so rebuilding is byte-stable in either host.
+    $dnrJson = $dnrRules | ConvertTo-Json -Depth 30 -Compress
     [System.IO.File]::WriteAllText($networkOutPath, $dnrJson + [Environment]::NewLine, (New-Object System.Text.UTF8Encoding($false)))
 }
 

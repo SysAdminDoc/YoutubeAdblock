@@ -26,6 +26,10 @@ All notable changes to YoutubeAdblock are documented here.
   session. Telemetry remains ephemeral and is never written to local or sync
   storage.
 
+### Changed
+- Made generated DNR JSON byte-stable across Windows PowerShell 5.1 and
+  PowerShell 7 so a release rebuild does not dirty an otherwise clean tree.
+
 ## [0.5.22] - 2026-08-13
 
 ### Fixed
