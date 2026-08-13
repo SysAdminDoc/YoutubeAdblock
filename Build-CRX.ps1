@@ -1,8 +1,8 @@
 # Build-CRX.ps1
 #
 # Packages the MV3 extension folder into a signed Chromium `.crx`.
-# The first run generates a reusable private key in `dist/`; future runs
-# reuse that key so the CRX keeps the same extension ID.
+# A repository with a pinned extension ID must be packed with its matching
+# private key. Refuse to invent a replacement identity when that key is absent.
 
 [CmdletBinding()]
 param(
@@ -94,6 +94,11 @@ if ([string]::IsNullOrWhiteSpace($KeyPath)) {
     $KeyPath = Resolve-AbsolutePath $repoRootAbs $KeyPath
 }
 
+$expectedIdPath = Join-Path $extensionDirAbs 'extension-id.txt'
+if ((Test-Path -LiteralPath $expectedIdPath) -and -not (Test-Path -LiteralPath $KeyPath)) {
+    throw "Stable CRX key not found at $KeyPath. Supply the private key matching $expectedIdPath with -KeyPath. Refusing to generate a new extension identity."
+}
+
 $browserBinary = Resolve-BrowserBinary $BrowserPath
 $version = [string]$manifest.version
 $artifactName = "YoutubeAdblock-extension-v$version.crx"
@@ -128,6 +133,12 @@ if (Test-Path -LiteralPath $KeyPath) {
 $process = Start-Process -FilePath $browserBinary -ArgumentList $args -Wait -PassThru
 if (-not (Test-Path -LiteralPath $generatedCrx)) {
     throw "Chromium pack step failed (exit code $($process.ExitCode)); no CRX was generated."
+}
+
+$verifyScriptPath = Join-Path $repoRootAbs 'tools\verify-release-artifacts.mjs'
+& node $verifyScriptPath --repo-root $repoRootAbs --crx-path $generatedCrx
+if ($LASTEXITCODE -ne 0) {
+    throw 'Generated CRX failed identity or signature verification.'
 }
 
 if (-not (Test-Path -LiteralPath $KeyPath) -and (Test-Path -LiteralPath $generatedPem)) {

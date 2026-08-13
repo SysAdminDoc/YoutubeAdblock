@@ -94,15 +94,16 @@ Chrome 121; earlier MV3 builds reject it.
 Run the repo-root packer when you need a signed Chromium release artifact:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\Build-CRX.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\Build-CRX.ps1 -KeyPath <private-key.pem>
 ```
 
-That writes `YoutubeAdblock-extension-v<version>.crx` plus a reusable private
-key to `dist/`. Keep the generated `.pem` private and reuse it for future
-builds so the packaged extension keeps the same Chromium extension ID. For
-most desktop Chrome/Edge users, the unpacked install path is still the
-friendliest option because local `.crx` installs are typically restricted
-outside developer-mode or managed-policy flows.
+The key must match the pinned extension ID in `extension/extension-id.txt`. The packer
+refuses to generate a replacement key because rotating that identity would
+break update continuity and extension storage. Keep the matching PEM private;
+it is deliberately ignored rather than committed. For most desktop
+Chrome/Edge users, the unpacked install path is still the friendliest option
+because local CRX installs are typically restricted outside managed or
+supported self-hosted flows.
 
 ## Install — Firefox
 
@@ -136,11 +137,17 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\Build-Release.ps1
 ```
 
 Run `npm ci` once before the full gate so browser-smoke dependencies are
-present. That command regenerates generated files, runs syntax checks and
-tests, validates DNR freshness, signs or verifies the filter manifest, runs
-the browser smoke matrix, verifies ZIP/CRX artifact integrity, checks the
-pinned extension ID, writes SHA-256 checksums, cleans stale artifacts, and
-writes current artifacts to `dist/`. For manual steps:
+present. The default command regenerates generated files, runs syntax checks
+and tests, validates DNR freshness, signs or verifies the filter manifest,
+runs the browser smoke matrix, verifies the userscript/ZIP artifacts, writes
+SHA-256 checksums, cleans stale artifacts, and writes current artifacts to
+`dist/`. Add CRX only when the stable signing key is available:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\Build-Release.ps1 -Artifacts Userscript,Zip,Crx -CrxKeyPath <private-key.pem>
+```
+
+For manual steps:
 
 1. Regenerate the extension engine:
 
@@ -157,9 +164,10 @@ writes current artifacts to `dist/`. For manual steps:
 3. Package a signed Chromium CRX when a CRX artifact is needed:
 
    ```powershell
-   powershell -NoProfile -ExecutionPolicy Bypass -File .\Build-CRX.ps1
+   powershell -NoProfile -ExecutionPolicy Bypass -File .\Build-CRX.ps1 -KeyPath <private-key.pem>
    ```
 
-4. Attach the generated userscript, unpacked-extension zip, CRX, and checksum
-   artifacts to GitHub Releases manually. If `-Artifacts Xpi` was requested,
-   treat the generated `.unsigned.xpi` as a development artifact only.
+4. Attach only the generated and verified userscript, unpacked-extension ZIP,
+   optional stable-ID CRX, and checksum artifacts to GitHub Releases manually.
+   If `-Artifacts Xpi` was requested, treat the generated `.unsigned.xpi` as a
+   development artifact only.

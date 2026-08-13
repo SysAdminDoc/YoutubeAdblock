@@ -304,5 +304,32 @@
                                                 "image"
                                             ]
                       }
+    },
+    {
+        "id":  19,
+        "priority":  100,
+        "action":  {
+                       "type":  "block"
+                   },
+        "condition":  {
+                          "urlFilter":  "||google.com/pagead/",
+                          "initiatorDomains":  [
+                                                   "youtube.com",
+                                                   "www.youtube.com",
+                                                   "m.youtube.com",
+                                                   "music.youtube.com",
+                                                   "tv.youtube.com",
+                                                   "youtube-nocookie.com",
+                                                   "youtubekids.com",
+                                                   "www.youtubekids.com"
+                                               ],
+                          "resourceTypes":  [
+                                                "xmlhttprequest",
+                                                "image",
+                                                "sub_frame",
+                                                "script",
+                                                "ping"
+                                            ]
+                      }
     }
 ]

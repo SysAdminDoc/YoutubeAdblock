@@ -16,10 +16,12 @@ const filterSignature = fs.readFileSync(path.join(repoRoot, 'youtube-adblock-fil
 const webpackSignatureJson = fs.readFileSync(path.join(repoRoot, 'webpack-ad-signatures.json'), 'utf8');
 
 const surfaces = [
-    { name: 'www-watch', url: 'https://www.youtube.com/watch?v=smoketest01', width: 1366, height: 820 },
-    { name: 'mobile-watch', url: 'https://m.youtube.com/watch?v=smoketest02', width: 390, height: 844 },
-    { name: 'music-watch', url: 'https://music.youtube.com/watch?v=smoketest03', width: 1280, height: 760 },
-    { name: 'kids-watch', url: 'https://www.youtubekids.com/watch?v=smoketest04', width: 1024, height: 768 },
+    { name: 'www-watch-dark', url: 'https://www.youtube.com/watch?v=smoketest01', width: 1440, height: 900, theme: 'dark' },
+    { name: 'www-watch-light', url: 'https://www.youtube.com/watch?v=smoketest02&theme=light', width: 1440, height: 900, theme: 'light' },
+    { name: 'www-watch-wide', url: 'https://www.youtube.com/watch?v=smoketest03', width: 1920, height: 1080, theme: 'dark' },
+    { name: 'music-watch-dark', url: 'https://music.youtube.com/watch?v=smoketest04', width: 1440, height: 900, theme: 'dark' },
+    { name: 'tv-home-dark', url: 'https://tv.youtube.com/', width: 1440, height: 900, theme: 'dark' },
+    { name: 'kids-setup-dark', url: 'https://www.youtubekids.com/', width: 1440, height: 900, theme: 'dark' },
 ];
 
 function findBrowserPath() {
@@ -36,23 +38,32 @@ function findBrowserPath() {
 }
 
 function fixtureHtml(label) {
+    const light = /[?&]theme=light(?:&|$)/.test(label);
     return `<!doctype html>
-<html>
+<html${light ? '' : ' dark'}>
 <head>
   <meta charset="utf-8">
   <title>${label}</title>
   <style>
-    body { margin: 0; min-height: 120vh; background: #0f0f0f; color: #fff; font-family: Arial, sans-serif; }
+    body { margin: 0; min-height: 120vh; background: ${light ? '#f4f6f8' : '#0f0f0f'}; color: ${light ? '#17212b' : '#fff'}; font-family: Arial, sans-serif; }
     #page { padding: 24px; }
     ytd-rich-grid-renderer { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
-    ytd-rich-item-renderer { min-height: 120px; background: #202020; border-radius: 8px; padding: 12px; }
+    ytd-rich-item-renderer { min-height: 120px; background: ${light ? '#fff' : '#202020'}; border-radius: 8px; padding: 12px; }
+    .fixture-hidden { display: none !important; }
   </style>
 </head>
 <body>
   <div id="page">
     <div id="owner"><div id="channel-name"><a href="/@SmokeChannel">Smoke Channel</a></div></div>
     <div id="upload-info"><div id="channel-name"><a href="/@SmokeChannel">Smoke Channel</a></div></div>
-    <div id="movie_player"></div>
+    <div id="movie_player"><video class="html5-main-video"></video></div>
+    <segmented-like-dislike-button-view-model>
+      <dislike-button-view-model class="fixture-hidden"><button aria-label="Dislike this video"></button></dislike-button-view-model>
+      <dislike-button-view-model><button aria-label="Dislike this video"></button></dislike-button-view-model>
+      <dislike-button-view-model class="fixture-hidden"><button aria-label="Dislike this video"></button></dislike-button-view-model>
+    </segmented-like-dislike-button-view-model>
+    <ytmusic-player-bar><div id="right-controls"><tp-yt-paper-slider id="volume-slider" role="slider" aria-label="Volume"></tp-yt-paper-slider></div></ytmusic-player-bar>
+    <ytu-ads-title-tray class="fixture-hidden"></ytu-ads-title-tray>
     <ytd-rich-grid-renderer>
       <ytd-rich-item-renderer><a href="/watch?v=one">Fixture video</a></ytd-rich-item-renderer>
       <ytd-rich-item-renderer><a href="/watch?v=two">Another fixture video</a></ytd-rich-item-renderer>
@@ -72,9 +83,10 @@ function fixtureHtml(label) {
 </html>`;
 }
 
-async function installRoutes(context) {
+async function installRoutes(context, requestLog = []) {
     await context.route('**/*', async route => {
         const requestUrl = route.request().url();
+        requestLog.push(requestUrl);
         if (requestUrl.includes('youtube-adblock-filters.manifest.json')) {
             await route.fulfill({ status: 200, contentType: 'application/json', body: filterManifest });
             return;
@@ -89,6 +101,10 @@ async function installRoutes(context) {
         }
         if (requestUrl.includes('webpack-ad-signatures.json')) {
             await route.fulfill({ status: 200, contentType: 'application/json', body: webpackSignatureJson });
+            return;
+        }
+        if (requestUrl.includes('returnyoutubedislikeapi.com/votes')) {
+            await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ dislikes: 1234 }) });
             return;
         }
         if (/^https:\/\/([^/]+\.)?(youtube\.com|youtube-nocookie\.com|youtubekids\.com)\//i.test(requestUrl)) {
@@ -119,6 +135,7 @@ async function installUserscriptMode(page) {
                 if (opts.url.includes('youtube-adblock-filters.manifest.json')) body = filterManifest;
                 else if (opts.url.includes('youtube-adblock-filters.txt.sig')) body = filterSignature;
                 else if (opts.url.includes('webpack-ad-signatures.json')) body = webpackSignatureJson;
+                else if (opts.url.includes('returnyoutubedislikeapi.com/votes')) body = JSON.stringify({ dislikes: 1234 });
                 else if (!opts.url.includes('youtube-adblock-filters.txt')) {
                     status = 404;
                     body = '';
@@ -147,6 +164,10 @@ async function openControlCenter(page, mode) {
         });
     }
     await page.waitForSelector('.ytab-overlay.ytab-active .ytab-panel', { timeout: 5000 });
+    await page.locator('.ytab-panel').evaluate(async panel => {
+        const animations = panel.getAnimations({ subtree: true });
+        await Promise.all(animations.map(animation => animation.finished.catch(() => {})));
+    });
 }
 
 async function assertPanelLayout(page, width, height) {
@@ -164,14 +185,50 @@ async function assertPanelLayout(page, width, height) {
     assert.ok(overflow.x <= 2, `panel has horizontal overflow: ${overflow.x}`);
 }
 
-async function exercisePanel(page, mode) {
+async function assertAdExclusiveRequestsShortCircuit(page, requestLog) {
+    const requestStart = requestLog.length;
+    const result = await page.evaluate(async () => {
+        const response = await fetch('https://googleads.g.doubleclick.net/pagead/id?ytab-smoke=1');
+        const fetchBody = await response.text();
+        const xhr = await new Promise((resolve, reject) => {
+            const request = new XMLHttpRequest();
+            request.open('GET', 'https://www.google.com/pagead/lvz?ytab-smoke=1');
+            request.addEventListener('load', () => resolve({
+                status: request.status,
+                body: request.responseText,
+            }), { once: true });
+            request.addEventListener('error', () => reject(new Error('blocked ad XHR emitted an error')), { once: true });
+            request.send();
+        });
+        return { fetchStatus: response.status, fetchBody, xhr };
+    });
+
+    assert.deepEqual(result, {
+        fetchStatus: 200,
+        fetchBody: '{}',
+        xhr: { status: 200, body: '{}' },
+    });
+    const escaped = requestLog.slice(requestStart).filter(requestUrl =>
+        /(?:doubleclick\.net|google\.com\/pagead\/)/i.test(requestUrl)
+    );
+    assert.deepEqual(escaped, [], `ad-exclusive requests escaped to the network: ${escaped.join(', ')}`);
+}
+
+async function exercisePanel(page, mode, surface) {
     await assert.match(await page.locator('#ytab-dialog-title').textContent(), /YoutubeAdblock/);
+    await assert.equal(await page.locator('.ytab-nav-button').count(), 10);
+    await assert.equal(await page.locator('.ytab-nav-button[aria-current="page"]').textContent(), 'Overview');
+    await assert.equal(await page.locator('.ytab-panel').evaluate(el => getComputedStyle(el).colorScheme), surface.theme);
+    await page.keyboard.press('Tab');
+    assert.equal(await page.evaluate(() => !!document.activeElement?.closest('.ytab-panel')), true);
     await page.click('#ytab-master-toggle');
     await page.waitForFunction(() => document.body.textContent.includes('Protection Paused'));
     await page.click('#ytab-master-toggle');
     await page.waitForFunction(() => document.body.textContent.includes('Protection On'));
     await page.click('#ytab-quick-refresh');
     await page.waitForFunction(() => document.body.textContent.includes('Rule refresh complete'));
+    await page.waitForFunction(() => document.querySelector('.ytab-toast-region')?.parentElement?.classList.contains('ytab-toast-lane'));
+    assert.equal(await page.locator('.ytab-toast-lane .ytab-toast').count(), 1);
     await page.evaluate(() => document.dispatchEvent(new CustomEvent('ytab:block-channel')));
     const blocked = await page.evaluate((mode) => {
         if (mode === 'userscript') return window.__ytabStore?.ytab_channel_blocklist || '';
@@ -179,6 +236,68 @@ async function exercisePanel(page, mode) {
         return JSON.parse(raw).ytab_channel_blocklist || '';
     }, mode);
     assert.match(blocked, /Smoke Channel|@SmokeChannel/i);
+
+    if (surface.name === 'music-watch-dark') {
+        await page.click('.ytab-nav-button[data-section-id="ytab-section-enhance"]');
+        await page.waitForFunction(() => document.querySelector('#ytab-section-enhance details')?.open === true);
+        await page.click('#ytab-toggle-volumeBoost');
+        await page.waitForSelector('ytmusic-player-bar #right-controls > #ytab-vol-boost', { timeout: 5000 });
+        await assert.equal(await page.locator('#ytab-vol-boost input[type="range"]').getAttribute('aria-label'), 'YoutubeAdblock volume boost');
+    }
+
+    if (mode === 'userscript' && surface.name === 'www-watch-dark') {
+        await page.click('.ytab-nav-button[data-section-id="ytab-section-enhance"]');
+        await page.waitForFunction(() => document.querySelector('#ytab-section-enhance details')?.open === true);
+        await page.click('#ytab-toggle-returnYoutubeDislike');
+        await page.waitForFunction(() => {
+            const buttons = [...document.querySelectorAll('dislike-button-view-model button')];
+            const visible = buttons.find(button => button.getBoundingClientRect().width > 0);
+            return visible?.querySelector('.ytab-ryd-count')?.textContent === '1.2K';
+        }, { timeout: 6000 });
+        const hiddenCount = await page.locator('.fixture-hidden .ytab-ryd-count').count();
+        assert.equal(hiddenCount, 0, 'RYD count must not be written into hidden duplicate controls');
+    }
+
+    if (surface.name === 'www-watch-dark') {
+        const destinations = await page.locator('.ytab-nav-button').evaluateAll(buttons =>
+            buttons.map(button => ({
+                sectionId: button.dataset.sectionId,
+                label: button.textContent.trim(),
+            }))
+        );
+        for (const destination of destinations) {
+            await page.click(`.ytab-nav-button[data-section-id="${destination.sectionId}"]`);
+            await page.waitForFunction(({ sectionId }) => {
+                const active = document.querySelector('.ytab-nav-button-active');
+                const section = document.getElementById(sectionId);
+                const disclosure = section?.querySelector('.ytab-section-disclosure');
+                return active?.dataset.sectionId === sectionId && !!section &&
+                    (!disclosure || disclosure.open);
+            }, destination);
+            assert.equal(
+                await page.locator('.ytab-nav-button[aria-current="page"]').textContent(),
+                destination.label
+            );
+        }
+    }
+
+    await page.click('.ytab-nav-button[data-section-id="ytab-section-diagnostics"]');
+    await page.waitForFunction(() =>
+        document.querySelector('#ytab-section-diagnostics details')?.open === true &&
+        document.querySelector('.ytab-nav-button-active')?.dataset.sectionId === 'ytab-section-diagnostics'
+    );
+    await assert.equal(await page.locator('.ytab-nav-button[aria-current="page"]').textContent(), 'Diagnostics');
+    assert.equal(await page.locator('.ytab-nav-button-active').count(), 1);
+    assert.equal(await page.locator('.ytab-nav-button-active').textContent(), 'Diagnostics');
+
+    if (mode === 'userscript' && surface.name === 'www-watch-dark') {
+        await page.click('#ytab-restore-defaults');
+        assert.equal(await page.locator('#ytab-restore-defaults').textContent(), 'Confirm Restore');
+        await page.click('#ytab-restore-defaults');
+        await page.waitForFunction(() => document.body.textContent.includes('Recommended defaults restored'));
+        assert.equal(await page.locator('#ytab-master-toggle').isChecked(), true);
+        assert.equal(await page.locator('.ytab-toast-lane .ytab-toast').count(), 1);
+    }
 }
 
 const browserPath = findBrowserPath();
@@ -201,7 +320,8 @@ test('browser smoke matrix opens Control Center across modes and surfaces', { sk
                     viewport: { width: surface.width, height: surface.height },
                     deviceScaleFactor: 1,
                 });
-                await installRoutes(context);
+                const requestLog = [];
+                await installRoutes(context, requestLog);
                 const page = await context.newPage();
                 const consoleErrors = [];
                 page.on('console', msg => {
@@ -215,12 +335,24 @@ test('browser smoke matrix opens Control Center across modes and surfaces', { sk
                 await page.goto(surface.url, { waitUntil: 'domcontentloaded' });
                 await openControlCenter(page, mode);
                 await assertPanelLayout(page, surface.width, surface.height);
-                await exercisePanel(page, mode);
+                if (surface.name === 'www-watch-dark' || surface.name === 'www-watch-light') {
+                    await page.screenshot({
+                        path: path.join(screenshotDir, `${mode}-${surface.name}-initial.png`),
+                        fullPage: false,
+                    });
+                }
+                if (surface.name === 'www-watch-dark') {
+                    await assertAdExclusiveRequestsShortCircuit(page, requestLog);
+                }
+                await exercisePanel(page, mode, surface);
                 await page.screenshot({
                     path: path.join(screenshotDir, `${mode}-${surface.name}.png`),
                     fullPage: false,
                 });
                 assert.deepEqual(consoleErrors, []);
+                await page.keyboard.press('Escape');
+                await page.waitForFunction(() => !document.querySelector('.ytab-overlay')?.classList.contains('ytab-active'));
+                await assert.equal(await page.locator('.ytab-toast-region').evaluate(el => el.parentElement === document.body), true);
                 await context.close();
             });
         }

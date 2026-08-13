@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         YoutubeAdblock
 // @namespace    https://github.com/SysAdminDoc
-// @version      0.5.20
+// @version      0.5.21
 // @description  YouTube ad blocker with remote rules, anti-detect hardening, toString-hiding proxies, DeArrow + RYD, volume boost, UI cleanup, and an in-page Control Center
 // @author       SysAdminDoc
 // @license      MIT
@@ -41,7 +41,7 @@
      * ===================================================================== */
 
     const SCRIPT_NAME = 'YoutubeAdblock';
-    const SCRIPT_VERSION = '0.5.20';
+    const SCRIPT_VERSION = '0.5.21';
     const PROJECT_URL = 'https://github.com/SysAdminDoc/YoutubeAdblock';
     const ISSUES_URL = `${PROJECT_URL}/issues`;
     const FILTER_URL_DEFAULT = 'https://raw.githubusercontent.com/SysAdminDoc/YoutubeAdblock/refs/heads/main/youtube-adblock-filters.txt';
@@ -247,7 +247,28 @@
             findSetting: 'Find a setting',
             findSettingPlaceholder: 'Find a setting…',
             closeControlCenter: 'Close the YoutubeAdblock Control Center',
-            footerHint: 'Search or scroll. Changes save instantly. Press Esc to close.',
+            notifications: 'Control Center notifications',
+            footerHint: 'Tab moves between controls. Press Esc to close.',
+            settingsNavigation: 'Settings sections',
+            workspace: 'Workspace',
+            productMark: 'YA',
+            localSettings: 'Changes stay on this device unless extension sync is available.',
+            savedStatus: 'Saved · Changes save automatically.',
+            savedWithRefreshProblem: 'Saved locally · Rule refresh needs attention.',
+            syncingStatus: 'Refreshing the Rule Library while your current protection stays active.',
+            footerSync: timestamp => `Last synced: ${formatTimestamp(timestamp)}`,
+            navigation: {
+                overview: 'Overview',
+                rules: 'Rule Library',
+                core: 'Core Blocking',
+                anti: 'Anti-Interference',
+                cleanup: 'Ad & Overlay Cleanup',
+                sponsor: 'SponsorBlock',
+                enhance: 'Enhancements',
+                clutter: 'Interface Cleanup',
+                blocklist: 'Focus & Filters',
+                diagnostics: 'Diagnostics'
+            },
             quickActions: 'Quick actions',
             protectionOn: 'Protection On',
             protectionPaused: 'Protection Paused',
@@ -706,6 +727,7 @@
             '/youtubei/v1/reel_watch_sequence',
             '/youtubei/v1/get_survey',
             '/youtubei/v1/player/ad_break',
+            '/youtubei/v1/tenx_player',
             '/watch?', '/playlist?list=', '/reel_watch_sequence'
         ],
         cosmeticSelectors: [
@@ -733,7 +755,11 @@
             'ytd-compact-promoted-video-renderer',
             'ytd-action-companion-ad-renderer',
             'ytd-brand-video-shelf-renderer',
-            'ytd-brand-video-singleton-renderer'
+            'ytd-brand-video-singleton-renderer',
+            // YouTube TV uses the ytu-* component family rather than ytd-*.
+            // The ad title tray is present even before playback and becomes
+            // visible when first-party TV ad media is active.
+            'ytu-ads-title-tray'
         ],
         upsellSelectors: [
             'ytd-popup-container > .ytd-popup-container > #contentWrapper > .ytd-popup-container[position-type="OPEN_POPUP_POSITION_BOTTOMLEFT"]'
@@ -871,6 +897,19 @@
         }
     ];
 
+    const SETTINGS_NAV_ITEMS = [
+        { sectionId: SECTION_IDS.overview, label: STRINGS.ui.navigation.overview },
+        { sectionId: SECTION_IDS.rules, label: STRINGS.ui.navigation.rules },
+        { sectionId: SECTION_IDS.core, label: STRINGS.ui.navigation.core },
+        { sectionId: SECTION_IDS.anti, label: STRINGS.ui.navigation.anti },
+        { sectionId: SECTION_IDS.cleanup, label: STRINGS.ui.navigation.cleanup },
+        { sectionId: SECTION_IDS.sponsor, label: STRINGS.ui.navigation.sponsor },
+        { sectionId: SECTION_IDS.enhance, label: STRINGS.ui.navigation.enhance },
+        { sectionId: SECTION_IDS.clutter, label: STRINGS.ui.navigation.clutter },
+        { sectionId: SECTION_IDS.blocklist, label: STRINGS.ui.navigation.blocklist },
+        { sectionId: SECTION_IDS.diagnostics, label: STRINGS.ui.navigation.diagnostics }
+    ];
+
     /* =========================================================================
      * STATE
      * ===================================================================== */
@@ -905,6 +944,12 @@
         lastFocusedEl: null,
         cosmeticStyleEl: null,
         toastRegionEl: null,
+        toastLaneEl: null,
+        settingsNavEl: null,
+        activeSettingsSection: SECTION_IDS.overview,
+        settingsScrollFrame: 0,
+        settingsNavIntentSection: '',
+        settingsNavIntentUntil: 0,
         originals: {},
         // Roots already guarded by installPropertyTraps — prevents TypeError on re-install
         trappedRoots: new Set(),
@@ -2542,7 +2587,39 @@
     // shape, and we only annotate a contentPlaybackContext that already
     // exists — parents are never fabricated, so a malformed body can't gain
     // structure it didn't have.
-    const PLAYER_ENDPOINT_RE = /\/youtubei\/v1\/(?:player|get_watch)(?:\?|$)/;
+    const PLAYER_ENDPOINT_RE = /\/youtubei\/v1\/(?:player|get_watch|tenx_player)(?:\?|$)/;
+    const YOUTUBE_AD_REQUEST_PATH_RE = /^(?:\/pagead\/|\/api\/stats\/(?:ads|atr)(?:\/|$)|\/pcs\/activeview(?:\/|$)|\/get_midroll_info(?:\/|$)|\/ptracking(?:\/|$)|\/youtubei\/v1\/player\/ad_break(?:\?|$))/i;
+
+    // Fetch/XHR requests do not need to leave the page just so a later layer
+    // can hide their result. DNR remains the earliest extension layer; this
+    // userscript fallback rejects only endpoints that are ad-exclusive on the
+    // covered YouTube origins. Mixed-purpose telemetry such as log_event and
+    // generate_204 intentionally stays outside this list.
+    function isKnownAdRequestUrl(value) {
+        if (!value) return false;
+        try {
+            const parsed = new URL(String(value), location.href);
+            const host = parsed.hostname.toLowerCase();
+            if (host === 'doubleclick.net' || host.endsWith('.doubleclick.net')) return true;
+            if (host === 'googlesyndication.com' || host.endsWith('.googlesyndication.com')) return true;
+            if (host === 'googleadservices.com' || host.endsWith('.googleadservices.com')) return true;
+            if ((host === 'google.com' || host === 'www.google.com') && parsed.pathname.startsWith('/pagead/')) return true;
+            const youtubeHost = host === 'youtube.com' || host.endsWith('.youtube.com') ||
+                host === 'youtube-nocookie.com' || host.endsWith('.youtube-nocookie.com') ||
+                host === 'youtubekids.com' || host.endsWith('.youtubekids.com');
+            return youtubeHost && YOUTUBE_AD_REQUEST_PATH_RE.test(parsed.pathname);
+        } catch (e) {
+            return false;
+        }
+    }
+
+    function createBlockedAdResponse() {
+        return new Response('{}', {
+            status: 200,
+            statusText: 'OK',
+            headers: { 'content-type': 'application/json' }
+        });
+    }
 
     function injectNoAdFlag(obj) {
         try {
@@ -2584,6 +2661,11 @@
 
                 if (!isEnabled()) {
                     return Reflect.apply(target, thisArg, args);
+                }
+
+                if (state.features.fetchIntercept && isKnownAdRequestUrl(url)) {
+                    incrementStat('blocked');
+                    return Promise.resolve(createBlockedAdResponse());
                 }
 
                 // Outbound no-ad signal on player requests. Historical note:
@@ -2696,13 +2778,25 @@
             // String#includes calls never throw on a non-string.
             const urlStr = (typeof url === 'string') ? url : (url != null ? String(url) : '');
             this._ytab_url = urlStr;
+            this._ytab_blocked_ad_request = isEnabled() && state.features.xhrIntercept && isKnownAdRequestUrl(urlStr);
 
-            return originalOpen.call(this, method, url, ...rest);
+            // A data URL keeps the native XHR lifecycle intact (readystatechange,
+            // load, responseType handling) while ensuring no ad request reaches
+            // the network. Preserve the original URL separately for diagnostics.
+            const effectiveUrl = this._ytab_blocked_ad_request
+                ? 'data:application/json,%7B%7D'
+                : url;
+            return originalOpen.call(this, method, effectiveUrl, ...rest);
         };
 
         const proxiedSend = function(body) {
             if (!isEnabled()) {
                 return originalSend.call(this, body);
+            }
+
+            if (this._ytab_blocked_ad_request) {
+                incrementStat('blocked');
+                return originalSend.call(this, null);
             }
 
             // Outbound no-ad signal — same additive isInlinePlaybackNoAd flag
@@ -4287,6 +4381,29 @@
         return Math.floor(n / 1_000_000) + 'M';
     }
 
+    function isElementVisiblyRendered(element) {
+        if (!element || !element.isConnected || typeof element.getBoundingClientRect !== 'function') return false;
+        try {
+            const rect = element.getBoundingClientRect();
+            if (rect.width <= 0 || rect.height <= 0) return false;
+            const style = getComputedStyle(element);
+            return style.display !== 'none' && style.visibility !== 'hidden';
+        } catch (e) {
+            return false;
+        }
+    }
+
+    function findRydDislikeButton(root = document) {
+        if (!root || typeof root.querySelectorAll !== 'function') return null;
+        const candidates = root.querySelectorAll(
+            'dislike-button-view-model button, ' +
+            'segmented-like-dislike-button-view-model dislike-button-view-model button, ' +
+            'ytd-toggle-button-renderer[is-disabled] #text, ' +
+            'button[aria-label*="Dislike" i]'
+        );
+        return [...candidates].find(isElementVisiblyRendered) || null;
+    }
+
     async function applyRyd(videoId) {
         let entry = rydCacheGet(videoId);
         if (!entry) {
@@ -4294,14 +4411,10 @@
             if (!entry) return;
             rydCacheSet(videoId, entry);
         }
-        // Find the dislike button — YT buries it in segmented-like-dislike-button-view-model
-        // or in the legacy like-button-view-model. Fall back to segmented button text span.
-        const dislikeBtn = document.querySelector(
-            'dislike-button-view-model button, ' +
-            'segmented-like-dislike-button-view-model dislike-button-view-model button, ' +
-            'ytd-toggle-button-renderer[is-disabled] #text, ' +
-            'button[aria-label*="Dislike" i]'
-        );
+        // YouTube currently keeps hidden duplicate dislike controls mounted
+        // around the visible segmented button. querySelector() returns the
+        // first hidden copy, so resolve the rendered control explicitly.
+        const dislikeBtn = findRydDislikeButton();
         if (!dislikeBtn) return;
         const label = formatCompact(entry.dislikes);
         // Try to write into an existing count span first.
@@ -4582,12 +4695,14 @@
             return;
         }
         if (document.getElementById(`${CSS_PREFIX}-vol-boost`)) return;
+        const musicVolume = document.querySelector('ytmusic-player-bar #volume-slider');
         const anchor = document.querySelector('.ytp-chrome-controls .ytp-right-controls') ||
-                       document.querySelector('.ytp-chrome-bottom .ytp-chrome-controls');
+                       document.querySelector('.ytp-chrome-bottom .ytp-chrome-controls') ||
+                       musicVolume?.parentElement;
         if (!anchor) return;
         const host = document.createElement('div');
         host.id = `${CSS_PREFIX}-vol-boost`;
-        host.style.cssText = 'display:inline-flex;align-items:center;gap:6px;padding:0 8px;color:#fff;font:12px Aptos,system-ui,sans-serif;';
+        host.style.cssText = 'display:inline-flex;align-items:center;gap:6px;flex:0 0 auto;padding:0 8px;color:#fff;font:12px Aptos,system-ui,sans-serif;';
         const tag = document.createElement('span');
         tag.textContent = STRINGS.volumeBoost.tag;
         tag.style.opacity = '0.75';
@@ -4599,13 +4714,19 @@
         slider.value = String(getStoredVolumeBoost());
         slider.style.width = '80px';
         slider.title = STRINGS.volumeBoost.title;
+        slider.setAttribute('aria-label', STRINGS.volumeBoost.title);
         const label = document.createElement('span');
         label.textContent = `${Math.round(getStoredVolumeBoost() * 100)}%`;
         slider.addEventListener('input', () => setVolumeBoost(Number(slider.value)));
         volumeBoostState.sliderEl = slider;
         volumeBoostState.labelEl = label;
         host.append(tag, slider, label);
-        anchor.prepend(host);
+        if (musicVolume && musicVolume.parentElement === anchor) {
+            host.classList.add(`${CSS_PREFIX}-vol-boost-music`);
+            anchor.insertBefore(host, musicVolume);
+        } else {
+            anchor.prepend(host);
+        }
     }
 
     function installVolumeBoost() {
@@ -5182,7 +5303,10 @@
 
         // Drop the oldest toasts once we exceed the visible cap so a burst of
         // errors can't fill the viewport or overlap with the settings panel.
-        while (region.childElementCount >= TOAST_MAX_VISIBLE) {
+        const visibleCap = region.parentElement?.classList.contains(`${CSS_PREFIX}-toast-lane`)
+            ? 1
+            : TOAST_MAX_VISIBLE;
+        while (region.childElementCount >= visibleCap) {
             const oldest = region.firstElementChild;
             if (!oldest) break;
             oldest.remove();
@@ -5228,6 +5352,18 @@
         document.body.appendChild(region);
         state.toastRegionEl = region;
         return region;
+    }
+
+    function placeToastRegion(inSettingsPanel) {
+        const region = ensureToastRegion();
+        if (!region || !document.body) return;
+        const target = inSettingsPanel && state.toastLaneEl?.isConnected
+            ? state.toastLaneEl
+            : document.body;
+        if (region.parentElement !== target) target.appendChild(region);
+        if (inSettingsPanel) {
+            while (region.childElementCount > 1) region.firstElementChild?.remove();
+        }
     }
 
     /* =========================================================================
@@ -6170,8 +6306,477 @@
                 color: var(--accent);
                 text-decoration: underline;
             }
+
+            /* v0.5.21 desktop Control Center redesign. The existing component
+               rules remain as conservative fallbacks; these tokens and shell
+               rules provide the ImageGen-led 1440x900 direction without
+               changing any setting keys or behavior. */
+            .${CSS_PREFIX}-panel {
+                --accent: #49c7ab;
+                --accent-strong: #65d8bf;
+                --accent-focus: rgba(73, 199, 171, 0.2);
+                --accent-focus-border: rgba(73, 199, 171, 0.62);
+                --accent-tap: rgba(73, 199, 171, 0.16);
+                --accent-glow: rgba(73, 199, 171, 0.2);
+                --panel-border: rgba(186, 204, 225, 0.13);
+                --panel-border-strong: rgba(197, 215, 235, 0.24);
+                --surface-0: #0c121a;
+                --surface-1: #111923;
+                --surface-2: #16212d;
+                --surface-3: #1b2734;
+                --surface-hover: #202d3b;
+                --nav-surface: #0a1119;
+                --success: #5dd6b2;
+                --info: #82bfff;
+                --warning: #f3bd68;
+                --danger: #ff8f9b;
+                --text: #f4f7fb;
+                --text-2: #c0cbda;
+                --text-3: #8f9daf;
+                width: min(1180px, calc(100vw - 48px));
+                height: min(852px, calc(100vh - 48px));
+                max-height: min(852px, calc(100vh - 48px));
+                display: block;
+                position: relative;
+                border-radius: 18px;
+                background: var(--surface-0);
+                box-shadow: 0 30px 80px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(0, 0, 0, 0.3);
+            }
+            .${CSS_PREFIX}-settings-shell {
+                display: grid;
+                grid-template-columns: 230px minmax(0, 1fr);
+                height: 100%;
+                min-height: 0;
+            }
+            .${CSS_PREFIX}-settings-nav {
+                min-width: 0;
+                min-height: 0;
+                display: grid;
+                grid-template-rows: auto minmax(0, 1fr) auto;
+                gap: 22px;
+                padding: 22px 14px 18px;
+                border-right: 1px solid var(--panel-border);
+                background: var(--nav-surface);
+            }
+            .${CSS_PREFIX}-nav-brand {
+                display: flex;
+                align-items: center;
+                gap: 11px;
+                padding: 0 8px;
+            }
+            .${CSS_PREFIX}-nav-mark {
+                width: 38px;
+                height: 38px;
+                display: grid;
+                place-items: center;
+                flex: 0 0 auto;
+                border: 1px solid rgba(73, 199, 171, 0.38);
+                border-radius: 12px;
+                background: rgba(73, 199, 171, 0.12);
+                color: var(--success);
+                font-size: 12px;
+                font-weight: 800;
+                letter-spacing: 0.04em;
+            }
+            .${CSS_PREFIX}-nav-eyebrow {
+                margin-bottom: 3px;
+                color: var(--text-3);
+                font-size: 9px;
+                font-weight: 760;
+                letter-spacing: 0.12em;
+                text-transform: uppercase;
+            }
+            .${CSS_PREFIX}-nav-product {
+                color: var(--text);
+                font-size: 13px;
+                font-weight: 740;
+                letter-spacing: -0.01em;
+            }
+            .${CSS_PREFIX}-nav-list {
+                display: grid;
+                align-content: start;
+                gap: 4px;
+                min-height: 0;
+                overflow: auto;
+                scrollbar-width: thin;
+            }
+            .${CSS_PREFIX}-nav-button {
+                min-height: 42px;
+                width: 100%;
+                display: grid;
+                grid-template-columns: 8px minmax(0, 1fr);
+                gap: 10px;
+                align-items: center;
+                padding: 9px 11px;
+                border: 1px solid transparent;
+                border-radius: 11px;
+                background: transparent;
+                color: var(--text-2);
+                font: 650 12px/1.3 inherit;
+                text-align: left;
+                cursor: pointer;
+                transition: color 0.16s ease, background 0.16s ease, border-color 0.16s ease;
+            }
+            .${CSS_PREFIX}-nav-button::before {
+                content: '';
+                width: 7px;
+                height: 7px;
+                border-radius: 999px;
+                border: 1px solid var(--text-3);
+            }
+            .${CSS_PREFIX}-nav-button:hover:not(:disabled) {
+                color: var(--text);
+                background: var(--surface-2);
+            }
+            .${CSS_PREFIX}-nav-button-active,
+            .${CSS_PREFIX}-nav-button[aria-current="page"] {
+                color: var(--success);
+                border-color: rgba(73, 199, 171, 0.2);
+                background: rgba(73, 199, 171, 0.13);
+            }
+            .${CSS_PREFIX}-nav-button-active::before,
+            .${CSS_PREFIX}-nav-button[aria-current="page"]::before {
+                border-color: var(--success);
+                background: var(--success);
+                box-shadow: 0 0 0 3px rgba(73, 199, 171, 0.12);
+            }
+            .${CSS_PREFIX}-nav-button:disabled {
+                opacity: 0.36;
+                cursor: default;
+            }
+            .${CSS_PREFIX}-nav-button:focus-visible {
+                outline: none;
+                box-shadow: 0 0 0 3px var(--accent-focus);
+                border-color: var(--accent-focus-border);
+            }
+            .${CSS_PREFIX}-nav-meta {
+                display: grid;
+                gap: 6px;
+                padding: 14px 9px 0;
+                border-top: 1px solid var(--panel-border);
+                color: var(--text-3);
+                font-size: 10px;
+                line-height: 1.5;
+            }
+            .${CSS_PREFIX}-nav-meta strong {
+                color: var(--text-2);
+                font-size: 11px;
+            }
+            .${CSS_PREFIX}-main-column {
+                min-width: 0;
+                min-height: 0;
+                display: grid;
+                grid-template-rows: auto auto minmax(0, 1fr) auto;
+                background: var(--surface-0);
+            }
+            .${CSS_PREFIX}-header {
+                align-items: flex-start;
+                padding: 22px 24px 18px;
+                background: var(--surface-1);
+            }
+            .${CSS_PREFIX}-header-left {
+                flex: 1 1 auto;
+            }
+            .${CSS_PREFIX}-header-search {
+                max-width: 440px;
+                margin-top: 12px;
+            }
+            .${CSS_PREFIX}-search-input {
+                min-height: 44px;
+                font-family: "Cascadia Code", "SF Mono", Consolas, monospace;
+            }
+            .${CSS_PREFIX}-content {
+                background: var(--surface-0);
+                scrollbar-gutter: stable;
+            }
+            .${CSS_PREFIX}-layout {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+                gap: 18px;
+                padding: 20px 22px 28px;
+            }
+            #${SECTION_IDS.overview},
+            #${SECTION_IDS.rules},
+            #${SECTION_IDS.blocklist},
+            #${SECTION_IDS.diagnostics} {
+                grid-column: 1 / -1;
+            }
+            .${CSS_PREFIX}-surface,
+            .${CSS_PREFIX}-summary-control,
+            .${CSS_PREFIX}-glance,
+            .${CSS_PREFIX}-detail-card,
+            .${CSS_PREFIX}-metric,
+            .${CSS_PREFIX}-row,
+            .${CSS_PREFIX}-note,
+            .${CSS_PREFIX}-input,
+            .${CSS_PREFIX}-blocklist-textarea {
+                border-color: var(--panel-border);
+                background: var(--surface-1);
+            }
+            .${CSS_PREFIX}-surface {
+                gap: 16px;
+                padding: 20px;
+            }
+            .${CSS_PREFIX}-summary {
+                background: linear-gradient(135deg, var(--surface-1), var(--surface-2));
+            }
+            .${CSS_PREFIX}-summary-hero {
+                grid-template-columns: minmax(0, 1fr) minmax(300px, 0.8fr);
+                gap: 24px;
+                align-items: center;
+            }
+            .${CSS_PREFIX}-summary-control {
+                min-height: 92px;
+                background: var(--surface-2);
+            }
+            .${CSS_PREFIX}-summary-facts {
+                gap: 12px;
+            }
+            .${CSS_PREFIX}-glance,
+            .${CSS_PREFIX}-metric {
+                background: var(--surface-2);
+            }
+            .${CSS_PREFIX}-metric-grid {
+                grid-template-columns: repeat(4, minmax(0, 1fr));
+                gap: 12px;
+            }
+            .${CSS_PREFIX}-row:hover,
+            .${CSS_PREFIX}-input:hover {
+                background: var(--surface-hover);
+                border-color: var(--panel-border-strong);
+            }
+            .${CSS_PREFIX}-input:focus-visible {
+                background: var(--surface-2);
+            }
+            .${CSS_PREFIX}-btn-primary {
+                color: #071713;
+                background: var(--accent);
+                box-shadow: 0 8px 22px rgba(73, 199, 171, 0.15);
+            }
+            .${CSS_PREFIX}-btn-primary:hover {
+                background: var(--accent-strong);
+            }
+            .${CSS_PREFIX}-btn-secondary,
+            .${CSS_PREFIX}-btn-ghost,
+            .${CSS_PREFIX}-close {
+                color: var(--text-2);
+                border-color: var(--panel-border);
+                background: var(--surface-1);
+            }
+            .${CSS_PREFIX}-btn-secondary:hover,
+            .${CSS_PREFIX}-btn-ghost:hover,
+            .${CSS_PREFIX}-close:hover {
+                color: var(--text);
+                border-color: var(--panel-border-strong);
+                background: var(--surface-hover);
+            }
+            .${CSS_PREFIX}-btn-danger,
+            .${CSS_PREFIX}-btn[data-armed="true"] {
+                color: var(--danger);
+            }
+            .${CSS_PREFIX}-toggle-track {
+                border-color: var(--panel-border);
+                background: var(--surface-3);
+            }
+            .${CSS_PREFIX}-footer {
+                min-height: 64px;
+                flex-wrap: nowrap;
+                padding: 12px 24px 14px;
+                background: var(--surface-1);
+            }
+            .${CSS_PREFIX}-footer-status {
+                display: inline-flex;
+                align-items: center;
+                gap: 8px;
+                color: var(--text-2);
+                font-weight: 650;
+            }
+            .${CSS_PREFIX}-footer-status::before {
+                content: '';
+                width: 8px;
+                height: 8px;
+                flex: 0 0 auto;
+                border-radius: 999px;
+                background: var(--success);
+                box-shadow: 0 0 0 3px rgba(93, 214, 178, 0.12);
+            }
+            .${CSS_PREFIX}-footer-status[data-tone="info"]::before {
+                background: var(--info);
+                box-shadow: 0 0 0 3px rgba(130, 191, 255, 0.12);
+            }
+            .${CSS_PREFIX}-footer-status[data-tone="warn"]::before {
+                background: var(--warning);
+                box-shadow: 0 0 0 3px rgba(243, 189, 104, 0.12);
+            }
+            .${CSS_PREFIX}-footer-sync {
+                flex: 0 0 auto;
+                padding: 6px 10px;
+                border: 1px solid rgba(73, 199, 171, 0.2);
+                border-radius: 999px;
+                background: rgba(73, 199, 171, 0.08);
+                color: var(--success);
+                font-size: 10px;
+                font-weight: 650;
+            }
+            .${CSS_PREFIX}-toast-lane {
+                min-height: 0;
+                background: var(--surface-1);
+            }
+            .${CSS_PREFIX}-toast-lane .${CSS_PREFIX}-toast-region:empty {
+                display: none;
+            }
+            .${CSS_PREFIX}-panel .${CSS_PREFIX}-toast-region {
+                position: static;
+                width: auto;
+                grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+                padding: 0 24px 12px;
+            }
+            .${CSS_PREFIX}-panel .${CSS_PREFIX}-toast {
+                border-color: var(--panel-border);
+                background: var(--surface-2);
+                box-shadow: none;
+                backdrop-filter: none;
+                -webkit-backdrop-filter: none;
+            }
+            html:not([dark]) .${CSS_PREFIX}-overlay {
+                background: rgba(21, 30, 41, 0.44);
+            }
+            html:not([dark]) .${CSS_PREFIX}-panel {
+                --panel-border: rgba(24, 43, 63, 0.13);
+                --panel-border-strong: rgba(24, 43, 63, 0.24);
+                --surface-0: #f2f5f8;
+                --surface-1: #ffffff;
+                --surface-2: #f7f9fb;
+                --surface-3: #e3e9ef;
+                --surface-hover: #edf3f6;
+                --nav-surface: #f7f9fb;
+                --text: #17212b;
+                --text-2: #435365;
+                --text-3: #68798c;
+                --success: #087b65;
+                --info: #1768aa;
+                --warning: #8a5a08;
+                --danger: #b62f43;
+                color-scheme: light;
+                box-shadow: 0 28px 70px rgba(18, 32, 48, 0.28), 0 0 0 1px rgba(255, 255, 255, 0.8);
+            }
+            html:not([dark]) .${CSS_PREFIX}-summary {
+                background: linear-gradient(135deg, #ffffff, #f5faf8);
+            }
+            html:not([dark]) .${CSS_PREFIX}-toggle-track::after {
+                box-shadow: 0 3px 10px rgba(31, 48, 65, 0.2);
+            }
         `;
         ensureStyleElement(`${CSS_PREFIX}-ui`).textContent = css;
+    }
+
+    function setActiveSettingsSection(sectionId) {
+        if (!sectionId) return;
+        state.activeSettingsSection = sectionId;
+        const nav = state.settingsNavEl;
+        if (!nav) return;
+        for (const button of nav.querySelectorAll(`.${CSS_PREFIX}-nav-button`)) {
+            const active = button.dataset.sectionId === sectionId;
+            button.classList.toggle(`${CSS_PREFIX}-nav-button-active`, active);
+            if (active) button.setAttribute('aria-current', 'page');
+            else button.removeAttribute('aria-current');
+        }
+    }
+
+    function updateSettingsNavigationAvailability() {
+        const nav = state.settingsNavEl;
+        if (!nav) return;
+        let firstAvailable = '';
+        for (const button of nav.querySelectorAll(`.${CSS_PREFIX}-nav-button`)) {
+            const available = !!document.getElementById(button.dataset.sectionId);
+            button.disabled = !available;
+            button.setAttribute('aria-disabled', String(!available));
+            if (available && !firstAvailable) firstAvailable = button.dataset.sectionId;
+        }
+        if (!document.getElementById(state.activeSettingsSection) && firstAvailable) {
+            setActiveSettingsSection(firstAvailable);
+        } else {
+            setActiveSettingsSection(state.activeSettingsSection);
+        }
+    }
+
+    function updateSettingsNavigationFromScroll() {
+        state.settingsScrollFrame = 0;
+        const content = document.getElementById(`${CSS_PREFIX}-content`);
+        if (!content) return;
+        if (state.settingsNavIntentSection && Date.now() < state.settingsNavIntentUntil) {
+            setActiveSettingsSection(state.settingsNavIntentSection);
+            return;
+        }
+        state.settingsNavIntentSection = '';
+        state.settingsNavIntentUntil = 0;
+        const contentTop = content.getBoundingClientRect().top;
+        let nearestIds = [];
+        let bestDistance = Number.POSITIVE_INFINITY;
+        for (const item of SETTINGS_NAV_ITEMS) {
+            const section = document.getElementById(item.sectionId);
+            if (!section) continue;
+            const distance = Math.abs(section.getBoundingClientRect().top - contentTop - 18);
+            if (distance < bestDistance - 1) {
+                bestDistance = distance;
+                nearestIds = [item.sectionId];
+            } else if (Math.abs(distance - bestDistance) <= 1) {
+                nearestIds.push(item.sectionId);
+            }
+        }
+        const activeId = nearestIds.includes(state.activeSettingsSection)
+            ? state.activeSettingsSection
+            : nearestIds[0];
+        if (activeId) setActiveSettingsSection(activeId);
+    }
+
+    function createSettingsNavigation() {
+        const nav = document.createElement('nav');
+        nav.className = `${CSS_PREFIX}-settings-nav`;
+        nav.setAttribute('aria-label', STRINGS.ui.settingsNavigation);
+
+        const brand = document.createElement('div');
+        brand.className = `${CSS_PREFIX}-nav-brand`;
+        const mark = document.createElement('span');
+        mark.className = `${CSS_PREFIX}-nav-mark`;
+        mark.setAttribute('aria-hidden', 'true');
+        mark.textContent = STRINGS.ui.productMark;
+        const brandCopy = document.createElement('div');
+        const workspace = document.createElement('div');
+        workspace.className = `${CSS_PREFIX}-nav-eyebrow`;
+        workspace.textContent = STRINGS.ui.workspace;
+        const product = document.createElement('div');
+        product.className = `${CSS_PREFIX}-nav-product`;
+        product.textContent = SCRIPT_NAME;
+        brandCopy.append(workspace, product);
+        brand.append(mark, brandCopy);
+
+        const list = document.createElement('div');
+        list.className = `${CSS_PREFIX}-nav-list`;
+        for (const item of SETTINGS_NAV_ITEMS) {
+            const button = document.createElement('button');
+            button.className = `${CSS_PREFIX}-nav-button`;
+            button.type = 'button';
+            button.dataset.sectionId = item.sectionId;
+            button.textContent = item.label;
+            button.addEventListener('click', () => {
+                setActiveSettingsSection(item.sectionId);
+                scrollSectionIntoView(item.sectionId);
+            });
+            list.appendChild(button);
+        }
+
+        const meta = document.createElement('div');
+        meta.className = `${CSS_PREFIX}-nav-meta`;
+        const version = document.createElement('strong');
+        version.textContent = `${SCRIPT_NAME} v${SCRIPT_VERSION}`;
+        const detail = document.createElement('span');
+        detail.textContent = STRINGS.ui.localSettings;
+        meta.append(version, detail);
+
+        nav.append(brand, list, meta);
+        state.settingsNavEl = nav;
+        setActiveSettingsSection(state.activeSettingsSection);
+        return nav;
     }
 
     function buildSettingsPanel() {
@@ -6301,6 +6906,14 @@
         const contentEl = document.createElement('div');
         contentEl.className = `${CSS_PREFIX}-content`;
         contentEl.id = `${CSS_PREFIX}-content`;
+        contentEl.addEventListener('scroll', () => {
+            if (state.settingsScrollFrame) return;
+            state.settingsScrollFrame = requestAnimationFrame(updateSettingsNavigationFromScroll);
+        }, { passive: true });
+
+        const toastLane = document.createElement('div');
+        toastLane.className = `${CSS_PREFIX}-toast-lane`;
+        toastLane.setAttribute('aria-label', STRINGS.ui.notifications);
 
         const footer = document.createElement('div');
         footer.className = `${CSS_PREFIX}-footer`;
@@ -6317,10 +6930,22 @@
         footerHint.className = `${CSS_PREFIX}-footer-hint`;
         footerHint.textContent = STRINGS.ui.footerHint;
 
-        footerMeta.append(footerStatus, footerHint);
-        footer.append(footerMeta);
+        const footerSync = document.createElement('div');
+        footerSync.className = `${CSS_PREFIX}-footer-sync`;
+        footerSync.id = `${CSS_PREFIX}-footer-sync`;
 
-        panel.append(header, contentEl, footer);
+        footerMeta.append(footerStatus, footerHint);
+        footer.append(footerMeta, footerSync);
+
+        const mainColumn = document.createElement('div');
+        mainColumn.className = `${CSS_PREFIX}-main-column`;
+        mainColumn.append(header, toastLane, contentEl, footer);
+
+        const shell = document.createElement('div');
+        shell.className = `${CSS_PREFIX}-settings-shell`;
+        shell.append(createSettingsNavigation(), mainColumn);
+
+        panel.append(shell);
 
         overlay.appendChild(panel);
         document.body.appendChild(overlay);
@@ -6331,6 +6956,7 @@
         buildContent();
         state.overlayEl = overlay;
         state.panelEl = panel;
+        state.toastLaneEl = toastLane;
         refreshSettingsUI();
     }
 
@@ -6352,6 +6978,7 @@
         }
         layout.append(...sections);
         content.appendChild(layout);
+        updateSettingsNavigationAvailability();
     }
 
     function createOverviewSection(query = '') {
@@ -7494,7 +8121,16 @@
             pill.dataset.tone = summary.tone;
         }
         const footerStatus = document.getElementById(`${CSS_PREFIX}-footer-status`);
-        if (footerStatus) footerStatus.textContent = summary.description;
+        if (footerStatus) {
+            footerStatus.textContent = state.filterSyncing
+                ? STRINGS.ui.syncingStatus
+                : state.filterError
+                    ? STRINGS.ui.savedWithRefreshProblem
+                    : STRINGS.ui.savedStatus;
+            footerStatus.dataset.tone = state.filterError ? 'warn' : state.filterSyncing ? 'info' : 'success';
+        }
+        const footerSync = document.getElementById(`${CSS_PREFIX}-footer-sync`);
+        if (footerSync) footerSync.textContent = STRINGS.ui.footerSync(state.lastFilterUpdate);
     }
 
     function refreshSettingsUI(rebuild = false) {
@@ -7703,6 +8339,10 @@
     function scrollSectionIntoView(sectionId) {
         const section = document.getElementById(sectionId);
         if (!section) return;
+        const reducedMotion = prefersReducedMotion();
+        state.settingsNavIntentSection = sectionId;
+        state.settingsNavIntentUntil = Date.now() + (reducedMotion ? 120 : 900);
+        setActiveSettingsSection(sectionId);
         const disclosure = section.querySelector(`.${CSS_PREFIX}-section-disclosure`);
         if (disclosure && !disclosure.open) {
             disclosure.open = true;
@@ -7710,7 +8350,7 @@
         }
         try {
             section.scrollIntoView({
-                behavior: prefersReducedMotion() ? 'auto' : 'smooth',
+                behavior: reducedMotion ? 'auto' : 'smooth',
                 block: 'start'
             });
         } catch (e) {
@@ -7877,6 +8517,8 @@
         if (state.overlayEl && !state.overlayEl.isConnected) {
             state.overlayEl = null;
             state.panelEl = null;
+            state.toastLaneEl = null;
+            state.settingsNavEl = null;
         }
         if (show) injectSettingsCSS();
         // Build lazily: menu-triggered opens that happen before DOMContentLoaded
@@ -7894,10 +8536,12 @@
         if (show) {
             state.lastFocusedEl = document.activeElement instanceof HTMLElement ? document.activeElement : null;
             state.overlayEl.classList.add(`${CSS_PREFIX}-active`);
+            document.body.classList.add(`${CSS_PREFIX}-settings-open`);
             // Remove rather than set to "false" — explicit aria-hidden="false"
             // can conflict with ancestor inheritance semantics in some AT.
             state.overlayEl.removeAttribute('aria-hidden');
             setBackgroundInert(true);
+            placeToastRegion(true);
             buildContent();
             refreshSettingsUI();
             requestAnimationFrame(() => {
@@ -7905,8 +8549,10 @@
                 target?.focus();
             });
         } else {
+            placeToastRegion(false);
             state.overlayEl.classList.remove(`${CSS_PREFIX}-active`);
             state.overlayEl.setAttribute('aria-hidden', 'true');
+            document.body.classList.remove(`${CSS_PREFIX}-settings-open`);
             setBackgroundInert(false);
             // Drop uncommitted URL edits when the panel closes so the next
             // open shows the committed value rather than stale scratch text.
@@ -7914,6 +8560,10 @@
             state.settingsQuery = '';
             const searchInput = document.getElementById(`${CSS_PREFIX}-settings-search`);
             if (searchInput) searchInput.value = '';
+            state.activeSettingsSection = SECTION_IDS.overview;
+            state.settingsNavIntentSection = '';
+            state.settingsNavIntentUntil = 0;
+            state.settingsScrollFrame = 0;
             state.lastFocusedEl?.focus?.();
         }
     }

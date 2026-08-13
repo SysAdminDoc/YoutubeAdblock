@@ -4,7 +4,39 @@ All notable changes to YoutubeAdblock are documented here.
 
 ## [Unreleased]
 
+## [0.5.21] - 2026-08-13
+
+### Changed
+- Redesigned the real desktop Control Center from an ImageGen-led concept with
+  a persistent section rail, searchable settings, dark/light design tokens,
+  overview metrics, explicit saved/sync status, bounded scrolling, and
+  in-dialog notifications that no longer cover settings.
+- Replaced the old mobile-inclusive browser-smoke matrix with desktop main
+  dark/light/wide, Music, TV, and Kids surfaces in both userscript and generated
+  extension modes.
+- Rebuilt `RESEARCH.md` from live 2026-08-13 surface/network recon and reduced
+  `ROADMAP.md` to incomplete, evidence-backed work with an explicit top five.
+- Made userscript + unpacked-extension ZIP the safe default release artifacts.
+  Stable-ID CRX packaging is now explicit and requires the matching private key.
+
 ### Fixed
+- Fixed the release gate silently generating a new CRX identity when the
+  repository's pinned signing key was absent. CRX builds now fail before
+  packaging, verify the generated CRX identity directly, and artifact
+  verification honors the caller's selected userscript/ZIP/CRX/XPI set.
+- Fixed Windows PowerShell writing release provenance with a UTF-8 BOM that
+  caused the Node artifact verifier to reject otherwise valid JSON.
+- Fixed Return YouTube Dislike writing into the first hidden duplicate dislike
+  control instead of the rendered button on current watch pages.
+- Fixed volume boost failing to insert on YouTube Music, whose player bar does
+  not expose the main site's `.ytp-right-controls` container.
+- Fixed YouTube TV gaps by adding `/youtubei/v1/tenx_player` to the canonical
+  request contract and `ytu-ads-title-tray` to cosmetic cleanup.
+- Fixed notice bursts consuming the Control Center viewport; the dialog now
+  retains only the latest message and restores the page-level toast region when
+  it closes.
+- Fixed smooth-scroll frames temporarily highlighting a different rail item
+  after the user selected a settings destination.
 - Fixed migration import always classifying untyped plain text entries as
   channels instead of keywords (ternary fallback was `'channel' : 'channel'`).
 - Fixed rejected-dangerous scriptlet pill rendering with unstyled `'error'`
@@ -32,6 +64,24 @@ All notable changes to YoutubeAdblock are documented here.
 - Cleaned up duplicate gitignore blocks; added explicit `!CHANGELOG.md` allowlist.
 
 ### Added
+- Added a narrow ad-exclusive fetch/XHR guard for DoubleClick, Google pagead,
+  and known YouTube ad paths. Synthetic empty JSON responses preserve normal
+  request lifecycles while mixed telemetry such as `generate_204` and
+  `log_event` remains outside the userscript guard.
+- Added a YouTube-initiator DNR rule for `google.com/pagead/*`, matching the
+  live `www.google.com/pagead/lvz` request observed on search/watch surfaces.
+- Added browser-level leak assertions proving guarded DoubleClick fetch and
+  Google pagead XHR calls never reach Playwright routing.
+- Added a gated isolated live unpacked-extension smoke. It verifies the packaged
+  DNR ruleset, expects a real pagead image probe to fail with
+  `net::ERR_BLOCKED_BY_CLIENT`, checks visible/audible ad state, and emits a
+  privacy-bounded report under ignored `dist/` output.
+- Added rendered-duplicate RYD, Music volume-rail, TV ad-tray, desktop theme,
+  settings-navigation, and notification-placement regression fixtures.
+- Added settled-animation captures for coherent dark/light implementation
+  screenshots while retaining the full navigation interaction assertions.
+- Added tracked before/concept visual references plus a tested implementation
+  screenshot for the desktop Control Center redesign.
 - Added community API cooldown and retry handling for SponsorBlock, DeArrow,
   and RYD. HTTP 429 responses set per-service cooldowns with Retry-After
   parsing, suppress repeated fetches until expiry, and report cooldown status

@@ -13,6 +13,17 @@ const repoRoot = path.resolve(argValue('--repo-root', process.cwd()));
 const outputDir = path.resolve(repoRoot, argValue('--output-dir', 'dist'));
 const sourcePath = path.join(repoRoot, 'YoutubeAdblock.user.js');
 const expectedIdPath = path.join(repoRoot, 'extension', 'extension-id.txt');
+const knownArtifactTypes = new Set(['userscript', 'zip', 'crx', 'xpi']);
+
+function requestedArtifactTypes() {
+    const raw = argValue('--artifacts', 'Userscript,Zip,Crx');
+    const values = raw.split(',').map(value => value.trim().toLowerCase()).filter(Boolean);
+    if (!values.length) fail('At least one artifact type must be requested.');
+    for (const value of values) {
+        if (!knownArtifactTypes.has(value)) fail(`Unknown artifact type: ${value}`);
+    }
+    return new Set(values);
+}
 
 function fail(message) {
     throw new Error(message);
@@ -220,7 +231,10 @@ function verifyXpiNames() {
     return xpiFiles.map(name => path.join(outputDir, name));
 }
 
-function verifyPublication(version) {
+function verifyPublication(version, requested) {
+    if (requested.has('xpi')) {
+        fail('Unsigned development XPI files cannot be publication artifacts.');
+    }
     const tag = `v${version}`;
     try {
         execSync(`git rev-parse --verify refs/tags/${tag}`, { cwd: repoRoot, stdio: 'pipe' });
@@ -241,12 +255,10 @@ function verifyPublication(version) {
     const release = JSON.parse(releaseJson);
     if (release.tagName !== tag) fail(`Release tag mismatch: expected ${tag}, got ${release.tagName}.`);
 
-    const expectedNames = [
-        `YoutubeAdblock-v${version}.user.js`,
-        `YoutubeAdblock-extension-v${version}.zip`,
-        `YoutubeAdblock-extension-v${version}.crx`,
-        `YoutubeAdblock-v${version}.checksums.sha256`
-    ];
+    const expectedNames = [`YoutubeAdblock-v${version}.checksums.sha256`];
+    if (requested.has('userscript')) expectedNames.push(`YoutubeAdblock-v${version}.user.js`);
+    if (requested.has('zip')) expectedNames.push(`YoutubeAdblock-extension-v${version}.zip`);
+    if (requested.has('crx')) expectedNames.push(`YoutubeAdblock-extension-v${version}.crx`);
     const publishedNames = new Set(release.assets.map(a => a.name));
     const missing = expectedNames.filter(name => !publishedNames.has(name));
     if (missing.length) fail(`GitHub release ${tag} is missing assets: ${missing.join(', ')}`);
@@ -276,24 +288,48 @@ function verifyPublication(version) {
 }
 
 function main() {
+    const crxOnlyPath = argValue('--crx-path');
+    if (crxOnlyPath) {
+        const resolvedCrxPath = path.resolve(repoRoot, crxOnlyPath);
+        const extensionId = verifyCrx(resolvedCrxPath);
+        verifyExpectedExtensionId(extensionId);
+        console.log(`Verified CRX identity ${extensionId}: ${resolvedCrxPath}`);
+        return;
+    }
+
     const version = getVersion();
+    const requested = requestedArtifactTypes();
 
     if (process.argv.includes('--verify-publication')) {
-        verifyPublication(version);
+        verifyPublication(version, requested);
         return;
     }
 
     const userscriptArtifact = path.join(outputDir, `YoutubeAdblock-v${version}.user.js`);
     const zipArtifact = path.join(outputDir, `YoutubeAdblock-extension-v${version}.zip`);
     const crxArtifact = path.join(outputDir, `YoutubeAdblock-extension-v${version}.crx`);
-    const artifacts = [userscriptArtifact, zipArtifact, crxArtifact];
+    const artifacts = [];
+    let extensionId = '';
 
-    const userscript = readRequired(userscriptArtifact).toString('utf8');
-    if (!userscript.includes(`// @version      ${version}`)) fail('Userscript artifact version is stale.');
-    verifyZipPayload(readRequired(zipArtifact), path.basename(zipArtifact));
-    const extensionId = verifyCrx(crxArtifact);
-    verifyExpectedExtensionId(extensionId);
-    artifacts.push(...verifyXpiNames());
+    if (requested.has('userscript')) {
+        const userscript = readRequired(userscriptArtifact).toString('utf8');
+        if (!userscript.includes(`// @version      ${version}`)) fail('Userscript artifact version is stale.');
+        artifacts.push(userscriptArtifact);
+    }
+    if (requested.has('zip')) {
+        verifyZipPayload(readRequired(zipArtifact), path.basename(zipArtifact));
+        artifacts.push(zipArtifact);
+    }
+    if (requested.has('crx')) {
+        extensionId = verifyCrx(crxArtifact);
+        verifyExpectedExtensionId(extensionId);
+        artifacts.push(crxArtifact);
+    }
+    if (requested.has('xpi')) {
+        const xpiArtifacts = verifyXpiNames();
+        if (!xpiArtifacts.length) fail('Requested XPI artifact is missing.');
+        artifacts.push(...xpiArtifacts);
+    }
 
     const provenancePath = path.join(outputDir, `YoutubeAdblock-v${version}.provenance.json`);
     if (!fs.existsSync(provenancePath)) {
@@ -314,10 +350,12 @@ function main() {
         .sort()
         .join('\n') + '\n';
     fs.writeFileSync(checksumPath, lines, 'utf8');
-    if (!fs.existsSync(checksumPath) || !fs.readFileSync(checksumPath, 'utf8').includes(path.basename(crxArtifact))) {
+    const checksumText = fs.existsSync(checksumPath) ? fs.readFileSync(checksumPath, 'utf8') : '';
+    if (!checksumText || artifacts.some(filePath => !checksumText.includes(path.basename(filePath)))) {
         fail('Checksum manifest was not written correctly.');
     }
-    console.log(`Verified release artifacts for v${version}; extension ID ${extensionId}; checksums ${checksumPath}`);
+    const identity = extensionId ? `; extension ID ${extensionId}` : '';
+    console.log(`Verified ${[...requested].join(', ')} artifacts for v${version}${identity}; checksums ${checksumPath}`);
 }
 
 main();

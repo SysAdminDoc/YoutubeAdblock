@@ -1,9 +1,11 @@
 # YoutubeAdblock
 
-![Version](https://img.shields.io/badge/version-0.5.20-58A6FF)
+![Version](https://img.shields.io/badge/version-0.5.21-58A6FF)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
 > A document-start YouTube ad blocker with a split-context proxy engine, remote rule support, and a premium Control Center for tuning protection.
+
+Desktop validation snapshot (2026-08-13): deterministic userscript/generated-extension fixtures pass on main YouTube dark/light/wide layouts, Music, TV, and Kids; an isolated live unpacked extension on Playwright Chromium 149 loaded its packaged DNR ruleset and rejected a real `google.com/pagead` probe with `net::ERR_BLOCKED_BY_CLIENT`. See [`RESEARCH.md`](RESEARCH.md) for the evidence boundary and remaining real-ad/account matrix.
 
 ## Quick Start
 
@@ -25,7 +27,7 @@ Optional browser shortcuts can be bound from `chrome://extensions/shortcuts`; no
 
 Because the MV3 manifest intentionally includes both `background.service_worker` and `background.scripts` for Chrome + Firefox compatibility, the unpacked extension target is Chromium 121 or newer.
 
-For a full local release gate, run `npm ci` once, then run `powershell -NoProfile -ExecutionPolicy Bypass -File .\Build-Release.ps1`. It regenerates the extension, runs syntax checks and tests, validates generated DNR output, signs or verifies the filter manifest, runs the browser smoke matrix, verifies ZIP/CRX artifact integrity, writes SHA-256 checksums, cleans stale artifacts, and writes current `.user.js`, `.zip`, and signed `.crx` artifacts into `dist/`. If you only need a packaged Chromium artifact, run `powershell -ExecutionPolicy Bypass -File .\Build-CRX.ps1`. Keep in mind that Chrome generally does **not** allow normal local-file `.crx` installs outside developer-mode, Linux self-hosting, or managed-policy flows, so the unpacked install path remains the best default for most users.
+For the safe local release gate, run `npm ci` once, then run `powershell -NoProfile -ExecutionPolicy Bypass -File .\Build-Release.ps1`. It regenerates the extension, runs syntax/tests and the browser matrix, validates DNR and signed data, verifies the unpacked ZIP, writes SHA-256 checksums, cleans stale artifacts, and produces the current `.user.js` plus `.zip` in `dist/`. CRX packaging is intentionally opt-in because the repository pins an existing Chromium extension ID but does not commit its private key. Only a maintainer holding that matching key should add `-Artifacts Userscript,Zip,Crx -CrxKeyPath <private-key.pem>` or call `Build-CRX.ps1 -KeyPath <private-key.pem>`; the tools refuse to generate a replacement identity. Chrome generally does **not** allow ordinary local-file CRX installs outside managed or supported self-hosted flows, so **Load unpacked** remains the desktop default.
 
 ### Firefox (MV3 extension)
 
@@ -38,7 +40,9 @@ For a full local release gate, run `npm ci` once, then run `powershell -NoProfil
 3. Click **Load Temporary Add-on** and pick [extension/manifest.json](extension/manifest.json)
 4. Click the YoutubeAdblock toolbar button to open the Control Center
 
-### Safari (iOS / macOS, via Userscripts app)
+### Other platforms (not validated in this desktop pass)
+
+#### Safari (iOS / macOS, via Userscripts app)
 
 1. Install [Userscripts](https://github.com/quoid/userscripts) from the App Store (free, open-source)
 2. Enable the Userscripts Safari extension in Settings → Safari → Extensions
@@ -47,14 +51,14 @@ For a full local release gate, run `npm ci` once, then run `powershell -NoProfil
 
 > **Note:** Safari support is community-tested, not officially validated. DeArrow, volume boost, and other features relying on Web Audio or advanced GM_* APIs may behave differently. Report issues with your Safari version.
 
-### Firefox for Android
+#### Firefox for Android
 
 1. Install [Firefox for Android](https://play.google.com/store/apps/details?id=org.mozilla.firefox) (supports extensions since Dec 2023)
 2. Install [Tampermonkey](https://addons.mozilla.org/en-US/android/addon/tampermonkey/) or [Violentmonkey](https://addons.mozilla.org/en-US/android/addon/violentmonkey/) from AMO
 3. Navigate to the [raw userscript](https://github.com/SysAdminDoc/YoutubeAdblock/raw/refs/heads/main/YoutubeAdblock.user.js) and confirm the install
 4. Open YouTube — this is currently the only mainstream mobile path for full YouTube ad blocking in a browser
 
-The extension ships the same blocking engine as the userscript plus **declarativeNetRequest rules** that block ad-serving endpoints (`/pagead/`, `/api/stats/ads`, `/youtubei/v1/player/ad_break`, googlevideo `ctier=SA` segments, doubleclick.net and googlesyndication.com from YouTube origins) at the browser network layer — outside the reach of any page-level anti-adblock countermeasure. When browser DNR is unavailable, the userscript fetch/XHR engine also scrubs text DASH/HLS manifests that reference googlevideo `ctier=SA` or `ctier=SR` ad segments.
+The extension ships the same blocking engine as the userscript plus **declarativeNetRequest rules** that block ad-serving endpoints (`/pagead/`, `/api/stats/ads`, `/youtubei/v1/player/ad_break`, googlevideo `ctier=SA` segments, DoubleClick, Google Syndication, Google Ad Services, and `google.com/pagead/*` from YouTube origins) at the browser network layer — outside the reach of page-level anti-adblock code. When browser DNR is unavailable, the userscript fetch/XHR engine also short-circuits ad-exclusive requests locally and scrubs text DASH/HLS manifests that reference googlevideo `ctier=SA` or `ctier=SR` ad segments.
 If you trigger the extension while you are not already on YouTube, YoutubeAdblock opens a YouTube tab and carries the action forward there automatically.
 
 ## Highlights
@@ -71,6 +75,7 @@ If you trigger the extension while you are not already on YouTube, YoutubeAdbloc
 | JSON.parse Proxy | Strips ad payloads from YouTube API responses at the data level | Enabled |
 | Fetch Proxy | Intercepts `/youtubei/v1/player`, `/browse`, `/search`, `/next` and prunes ad fields | Enabled |
 | XHR Proxy | Catches XMLHttpRequest-based ad delivery channels | Enabled |
+| Ad-Only Request Guard | Answers known DoubleClick, Google pagead, and YouTube ad-exclusive fetch/XHR URLs locally so those requests never leave the page | Enabled |
 | appendChild Proxy | Blocks ad-related script and iframe injection into the DOM | Enabled |
 | setTimeout Proxy | Neutralizes timed ad triggers and delayed ad insertion | Enabled |
 | Promise.then Proxy | Intercepts promise-chained ad delivery pipelines | Enabled |
@@ -87,7 +92,7 @@ If you trigger the extension while you are not already on YouTube, YoutubeAdbloc
 | ServiceWorker Block | Proxies `navigator.serviceWorker.register` / `getRegistration{s}` so YouTube can't install a worker that bypasses the request proxies | Enabled |
 | Webpack Chunk Prune | Rewrites ad-rendering factory modules inside `self.webpackChunk_youtube_player.push` before they execute, using a built-in signature set that refreshes from [`webpack-ad-signatures.json`](webpack-ad-signatures.json) | Enabled |
 | DASH/HLS Manifest Scrub | Removes googlevideo `ctier=SA`/`ctier=SR` ad segment references from text DASH/HLS manifests as a playback-layer fallback when browser DNR is unavailable | Enabled |
-| No-Ad Request Signal | Injects `isInlinePlaybackNoAd` into outbound `/player` request bodies via fetch, XHR, and an `Object.assign` hook that survives YouTube's locker script — defeats SABR fake-buffering on both cold loads and SPA navigation | Enabled |
+| No-Ad Request Signal | Injects `isInlinePlaybackNoAd` into outbound `/player`, `/get_watch`, and YouTube TV `/tenx_player` request bodies via fetch, XHR, and an `Object.assign` hook that survives YouTube's locker script | Enabled |
 | Engine Health Monitor | Tracks per-engine install success and surfaces degraded-protection warnings in the Control Center when YouTube's locker script or a competing blocker locks a native | Enabled |
 | DeArrow Titles & Thumbnails | Replaces clickbait titles and thumbnails with crowd-submitted alternatives via the privacy-preserving DeArrow hash-prefix API *(userscript only — extension build pending API permission)* | Optional |
 | Return YouTube Dislike | Restores the public dislike count under the like button | Optional |
@@ -96,12 +101,12 @@ If you trigger the extension while you are not already on YouTube, YoutubeAdbloc
 | Clutter-Free Mode | Eight Unhook-style toggles: home feed, Shorts shelves, Shorts tab, related videos, comments, end-screen cards, live chat, merch shelves | Optional |
 | Channel + Keyword Blocklist | Strips videos whose channel or title matches local blocklists. Channel entries support names, `UC...` IDs, `@handles`, channel URLs, regex, JSON/plain-text import-export, and BlockTube/FilterTube-style migration import | Optional |
 | Shorts → /watch Redirect | Rewrites `/shorts/VIDEO_ID` to the full watch player | Optional |
-| DNR Network Blocking *(extension only)* | Blocks `/pagead/*`, `/pagead/adview`, `/pagead/interaction`, `/api/stats/ads`, `/api/stats/atr`, `/pcs/activeview`, `/youtubei/v1/player/ad_break`, `/youtubei/v1/log_event` (POST), `/youtubei/v1/att/log` (POST), googlevideo `ctier=SA`, `ctier=SR`, `initplayback?...adformat=`, `generate_204`, doubleclick.net, googlesyndication.com, googleadservices.com. DNR output is generated from the same typed source that validates userscript intercept metadata | Enabled |
+| DNR Network Blocking *(extension only)* | Blocks `/pagead/*`, `/api/stats/ads`, `/api/stats/atr`, `/pcs/activeview`, `/youtubei/v1/player/ad_break`, selected tracking posts, googlevideo ad-tier media, DoubleClick, Google Syndication, Google Ad Services, and `google.com/pagead/*` for YouTube initiators. DNR output is generated from the same typed source that validates userscript intercept metadata | Enabled |
 | Remote Filter List | Fetches and applies uBO-compatible filter lists from a configurable URL | Enabled |
-| Control Center | Protection overview, quick actions, module toggles, rule refresh, blocklist editors, diagnostics, and recovery tools | Enabled |
+| Control Center | Desktop section rail, searchable settings, protection overview, quick actions, module toggles, rule refresh, blocklist editors, diagnostics, recovery tools, and explicit save/sync status | Enabled |
 | Extension Settings Sync | MV3 builds mirror toggles, blocklists, allowlists, and thresholds through `chrome.storage.sync`; oversized blocklists stay local instead of failing saves | Enabled |
 | Live Stats | Real-time counters for blocked, pruned, SSAP skipped, sponsor skipped, DeArrow replaced, and feed filtered | Enabled |
-| TrustedHTML Safe | Full CSP/TrustedTypes compliance — no `innerHTML` violations | Always |
+| TrustedHTML Hardened | User-controlled text uses DOM/text APIs and guarded helpers; a full Trusted Types enforcement audit remains on the roadmap | Always |
 
 ## How It Works
 
@@ -139,15 +144,21 @@ All settings persist via `GM_setValue`. Open the userscript menu and choose `You
 
 ### Control Center
 
+![YoutubeAdblock v0.5.21 desktop Control Center](design/screenshots/control-center-desktop-dark-v0.5.21.png)
+
+The 0.5.21 desktop redesign was derived from an ImageGen concept and then implemented in the existing userscript DOM/CSS system. The screenshot above is the tested implementation, not a standalone mockup.
+
 | Setting | Description | Default |
 |---------|-------------|---------|
-| Protection Overview | Live status, active source, current YouTube surface, quick actions, and jump navigation | Available |
+| Overview | Live status, active source, current desktop surface, metrics, and quick actions | Available |
+| Section Navigation | Persistent rail for Rule Library, blocking, cleanup, SponsorBlock, enhancements, filters, and diagnostics | Available |
 | Master Switch | Enable or pause every blocking engine without uninstalling the script | On |
 | Rule Library | Choose a compatible raw list and refresh it on demand; the recommended source is the safest default for extension installs | [youtube-adblock-filters.txt](https://raw.githubusercontent.com/SysAdminDoc/YoutubeAdblock/refs/heads/main/youtube-adblock-filters.txt) |
 | Core Blocking | Control JSON pruning, fetch/XHR interception, property traps, and request rewriting | On |
-| Anti-Detection | Control abnormality bypass, iframe bypass prevention, SSAP skipping, spoofing, and timer neutralization | On |
-| Interface Cleanup | Control cosmetic cleanup, Premium upsell blocking, and Shorts ad removal | On |
-| Diagnostics & Recovery | Copy diagnostics, reset local counters, or restore recommended defaults safely | Available |
+| Anti-Interference | Control abnormality bypass, iframe defense, SSAP skipping, spoofing, and timer neutralization | On |
+| Ad & Overlay Cleanup | Control video-ad fallbacks, cosmetic cleanup, upsell blocking, and Shorts ad removal | On |
+| Enhancements | Configure DeArrow, RYD, original audio, and the desktop volume boost control | Optional |
+| Diagnostics | Copy privacy-scrubbed diagnostics, reset counters, or restore recommended defaults | Available |
 
 ### Filter List
 
@@ -161,18 +172,18 @@ The proxy engine strips these fields from YouTube API responses before they reac
 
 ### Intercepted Endpoints
 
-`/youtubei/v1/player` · `/youtubei/v1/get_watch` · `/youtubei/v1/browse` · `/youtubei/v1/search` · `/youtubei/v1/next` · `/youtubei/v1/guide` · `/watch?`
+`/youtubei/v1/player` · `/youtubei/v1/get_watch` · `/youtubei/v1/tenx_player` · `/youtubei/v1/browse` · `/youtubei/v1/search` · `/youtubei/v1/next` · `/youtubei/v1/guide` · `/watch?`
 
-## Supported Sites
+## Supported Sites and Current Validation
 
-| Site | URL |
-|------|-----|
-| YouTube | `https://www.youtube.com/*` |
-| YouTube Mobile | `https://m.youtube.com/*` |
-| YouTube Music | `https://music.youtube.com/*` |
-| YouTube TV | `https://tv.youtube.com/*` |
-| YouTube No-Cookie | `https://www.youtube-nocookie.com/*` |
-| YouTube Kids | `https://youtubekids.com/*`, `https://www.youtubekids.com/*` |
+| Site | URL | 2026-08-13 status |
+|------|-----|-----|
+| YouTube | `https://www.youtube.com/*` | Live shell/network recon + fixture matrix + unpacked-extension watch smoke |
+| YouTube Mobile | `https://m.youtube.com/*` | Compatibility retained; outside this desktop pass |
+| YouTube Music | `https://music.youtube.com/*` | Live shell/network recon + fixture matrix |
+| YouTube TV | `https://tv.youtube.com/*` | Live shell/network recon + fixture matrix; `tenx_player` and TV ad tray covered |
+| YouTube No-Cookie | `https://www.youtube-nocookie.com/*` | Fixture coverage; direct no-referrer embed returned Error 153, so live playback still needs a host page |
+| YouTube Kids | `https://youtubekids.com/*`, `https://www.youtubekids.com/*` | Public setup shell + fixture matrix; playback awaits disposable parental setup |
 
 ## FAQ / Troubleshooting
 
@@ -186,7 +197,7 @@ Chrome MV3 userscript managers can miss `document-start` unless user scripts are
 Ensure the Anti-Detect setting is enabled. If YouTube recently changed their detection, check for a script update or open an issue.
 
 **Works on Firefox?**
-Yes, with Violentmonkey or Tampermonkey. All features are cross-browser.
+The source and fixture contracts cover Firefox-compatible paths, but this pass did not run a real Firefox userscript manager. Use Violentmonkey or Tampermonkey and report the manager/browser versions with copied diagnostics if document-start health is degraded.
 
 **How do I use a different filter list?**
 Point the Rule Library field at a compatible raw list that includes the selectors you want, then refresh the rules from the Control Center.
@@ -197,6 +208,7 @@ Open the Control Center and use `Restore Defaults`. That resets the master switc
 ## Contributing
 
 Issues and PRs welcome. When reporting bugs, include:
+
 - Browser and version
 - Userscript manager and version
 - Console errors (F12 → Console, filter by `YoutubeAdblock`)

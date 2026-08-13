@@ -46,11 +46,12 @@ test('www.youtubekids.com is covered across userscript and extension surfaces', 
 
 test('network rules scope external ad domains to all supported YouTube initiators', () => {
     const ruleById = new Map(rules.map(rule => [rule.id, rule]));
-    for (const id of [4, 5, 6]) {
+    for (const id of [4, 5, 6, 19]) {
         const initiators = ruleById.get(id)?.condition?.initiatorDomains || [];
         assert(initiators.includes('youtubekids.com'));
         assert(initiators.includes('www.youtubekids.com'));
     }
+    assert.equal(ruleById.get(19)?.condition?.urlFilter, '||google.com/pagead/');
 });
 
 test('network rule source drives DNR output and userscript intercept patterns', () => {
@@ -59,6 +60,8 @@ test('network rule source drives DNR output and userscript intercept patterns', 
     for (const pattern of networkRuleSource.interceptPatterns) {
         assert(userscript.includes(`'${pattern}'`), `userscript interceptPatterns missing ${pattern}`);
     }
+    assert(networkRuleSource.interceptPatterns.includes('/youtubei/v1/tenx_player'));
+    assert.match(userscript, /PLAYER_ENDPOINT_RE[^\n]+tenx_player/);
 });
 
 test('fetch and XHR fast-reject checks keep URL context for Shorts-specific pruning', () => {
@@ -72,6 +75,8 @@ test('local release contract uses repo scripts instead of deleted GitHub workflo
     assert.match(buildExtension, /Build-Extension\.ps1/);
     assert.match(buildCrx, /Build-Extension\.ps1/);
     assert.match(buildCrx, /YoutubeAdblock-extension-v\$version\.crx/);
+    assert.match(buildCrx, /Refusing to generate a new extension identity/);
+    assert.match(buildCrx, /--crx-path/);
     assert.match(extensionReadme, /Build-Extension\.ps1/);
     assert.match(extensionReadme, /Build-CRX\.ps1/);
     assert.doesNotMatch(extensionReadme, /\.github\/workflows|GitHub Actions|CHROMIUM_EXTENSION_KEY_B64|Actions tab/);
@@ -88,6 +93,9 @@ test('one-command release gate runs local checks and packages fresh artifacts', 
     assert.match(buildRelease, /YoutubeAdblock-extension-v\$version\.zip/);
     assert.match(buildRelease, /YoutubeAdblock-extension-v\$version\.unsigned\.xpi/);
     assert.match(buildRelease, /Build-CRX\.ps1/);
+    assert.match(buildRelease, /Artifacts = @\('Userscript', 'Zip'\)/);
+    assert.match(buildRelease, /CrxKeyPath/);
+    assert.match(buildRelease, /--artifacts/);
     assert.match(readme, /Build-Release\.ps1/);
     assert.match(extensionReadme, /Build-Release\.ps1/);
 });
@@ -129,6 +137,8 @@ test('release gate verifies install artifacts before publishing', () => {
     assert.match(verifyReleaseArtifacts, /readUInt32LE\(4\) !== 3/);
     assert.match(verifyReleaseArtifacts, /Windows-style ZIP entry path/);
     assert.match(verifyReleaseArtifacts, /extension ID changed/i);
+    assert.match(verifyReleaseArtifacts, /requestedArtifactTypes/);
+    assert.match(verifyReleaseArtifacts, /--crx-path/);
     assert.match(verifyReleaseArtifacts, /checksums\.sha256/);
     assert.match(expectedExtensionId, /^[a-p]{32}$/);
     assert.match(readme, /writes SHA-256 checksums/);
@@ -334,6 +344,8 @@ test('release provenance metadata is emitted and verified', () => {
     assert.match(buildRelease, /nodeVersion/);
     assert.match(buildRelease, /playwrightVersion/);
     assert.match(buildRelease, /builtAt/);
+    assert.match(buildRelease, /UTF8Encoding\]::new\(\$false\)/,
+        'Windows PowerShell must emit provenance as UTF-8 without a BOM');
     assert.match(verifyReleaseArtifacts, /provenance/);
     assert.match(verifyReleaseArtifacts, /schemaVersion/);
     assert.match(verifyReleaseArtifacts, /commitSha/);

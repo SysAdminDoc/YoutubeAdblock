@@ -133,6 +133,10 @@ function createTestHarness(options = {}) {
         detectServerStitchedAdSignal,
         injectNoAdFlag,
         rewriteRequestBodyText,
+        isKnownAdRequestUrl,
+        PLAYER_ENDPOINT_RE,
+        isElementVisiblyRendered,
+        findRydDislikeButton,
         handleExtensionBlockChannel,
         normalizeFeatures,
         sanitizeWebpackSignatureDatabase,
@@ -766,6 +770,39 @@ test('rewriteRequestBodyText returns null for non-player bodies', () => {
     assert.equal(harness.rewriteRequestBodyText('not json'), null);
     assert.equal(harness.rewriteRequestBodyText(null), null);
     assert.equal(harness.rewriteRequestBodyText(''), null);
+});
+
+test('request guard blocks ad-exclusive endpoints without swallowing mixed telemetry', () => {
+    assert.equal(harness.isKnownAdRequestUrl('https://googleads.g.doubleclick.net/pagead/id'), true);
+    assert.equal(harness.isKnownAdRequestUrl('https://www.google.com/pagead/lvz?x=1'), true);
+    assert.equal(harness.isKnownAdRequestUrl('/youtubei/v1/player/ad_break'), true);
+    assert.equal(harness.isKnownAdRequestUrl('/api/stats/ads'), true);
+    assert.equal(harness.isKnownAdRequestUrl('/youtubei/v1/log_event'), false);
+    assert.equal(harness.isKnownAdRequestUrl('/generate_204?check=1'), false);
+    assert.equal(harness.isKnownAdRequestUrl('/youtubei/v1/player'), false);
+});
+
+test('YouTube TV tenx_player uses the same no-ad request and response contract', () => {
+    assert.equal(harness.PLAYER_ENDPOINT_RE.test('https://tv.youtube.com/youtubei/v1/tenx_player'), true);
+    assert.equal(harness.matchesInterceptPattern('https://tv.youtube.com/youtubei/v1/tenx_player'), true);
+    assert.ok(harness.DEFAULT_FILTERS.cosmeticSelectors.includes('ytu-ads-title-tray'));
+});
+
+test('RYD resolves the rendered dislike control instead of hidden duplicate buttons', () => {
+    const hiddenBefore = {
+        isConnected: true,
+        getBoundingClientRect: () => ({ width: 0, height: 0 }),
+    };
+    const visible = {
+        isConnected: true,
+        getBoundingClientRect: () => ({ width: 56, height: 40 }),
+    };
+    const hiddenAfter = {
+        isConnected: true,
+        getBoundingClientRect: () => ({ width: 0, height: 0 }),
+    };
+    const root = { querySelectorAll: () => [hiddenBefore, visible, hiddenAfter] };
+    assert.equal(harness.findRydDislikeButton(root), visible);
 });
 
 // ========== Closed-breakage replay fixtures ==========

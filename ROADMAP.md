@@ -1,94 +1,82 @@
 # YoutubeAdblock Roadmap
 
-Actionable work only. Historical and completed roadmap material is archived in CHANGELOG.md; blocked work is kept in Roadmap_Blocked.md.
+Incomplete, actionable work only. Completed work belongs in `CHANGELOG.md`. Every item needs evidence, an acceptance test, and a rollback-safe implementation.
 
-## Actionable Items
+## Now / Next — Top Five
 
-- [ ] `Trusted Types` full coverage audit: eliminate remaining string-HTML code paths in the Control Center.
-
-- [ ] Per-surface toggles (home feed, watch, shorts, YT Music, YT Kids) with independent engine profiles.
-
-- [ ] Exportable diagnostic bundle (counters, last 50 prune events, UA, version) as a single JSON for bug reports.
-
-- [ ] Rules playground: paste a custom uBO-style selector and preview what it would hide on the current page.
-
-- [ ] Dark-mode CSS audit for Control Center contrast ratio ≥ AA.
-
-- [ ] Category-aware skip behavior: auto-skip sponsor, mute-ads-only for self-promo, manual for filler.
-
-- [ ] Offline vote cache: submit SponsorBlock segments from within the Control Center without leaving YouTube.
-
-- [ ] DeArrow submission UI for replacing clickbait titles directly from the player (gated behind opt-in).
-
-- [ ] Firefox MV3 stable release: drop the temporary-add-on path once `background.scripts` stops being a compat hack.
-
-- [ ] Declarative NetRequest dynamic rules: ship a rules update endpoint for fast response when YouTube rotates endpoints.
-
-- [ ] Popup (toolbar) UI mirroring Control Center for users who never use the userscript menu.
-
-- [ ] Enterprise policy schema (`managed_schema`) so IT admins can lock defaults.
-
-- [ ] P2 — Turn `STRINGS` into a real i18n pipeline
-  Why: Visible copy is centralized, but there is no `_locales` output, `default_locale`, or userscript locale resolver yet.
-  Evidence: `YoutubeAdblock.user.js:386`, `tests/repo-contract.test.mjs:131-168`, Chrome `i18n` API docs.
-  Touches: `YoutubeAdblock.user.js`, `Build-Extension.ps1`, `extension/manifest.json`, generated `_locales`, `tests/repo-contract.test.mjs`.
-  Acceptance: Extension build emits default locale messages, manifest uses localized name/description where appropriate, userscript keeps English fallback, and tests fail if new visible copy bypasses the locale table.
+- [ ] **P1 — Capture and replay real ad creative across desktop surfaces**
+  Why: the 2026-08-13 live sessions exposed current ad endpoints and DOM roots, but the available account/browser environment did not receive pre-roll, mid-roll, feed, Shorts, Music, TV, Kids, or embed creative.
+  Next investigation: use disposable signed-out and non-Premium profiles plus at least two regions; wait until each creative type is actually served; record sanitized request paths, response field shapes, media URLs, and rendered containers.
+  Acceptance: one privacy-scrubbed fixture and regression test per observed creative type; unpacked-extension and userscript-manager runs show no visible ads, audible ads, or escaping ad-media requests while normal playback/comments/navigation remain intact.
+  Blocker: needs an account/region/experiment combination that receives real ads.
   Complexity: L
 
-- [ ] P2 — Add live userscript-manager and mobile validation matrix
-  Why: Browser-smoke fixtures pass, but README claims Tampermonkey, Violentmonkey, Safari Userscripts, and Firefox Android paths that are not exercised live.
-  Evidence: `README.md:8-55`, `tests/browser-smoke.test.mjs`, Tampermonkey YouTube/MV3 injection issues.
-  Touches: `tests/browser-smoke.test.mjs`, optional local test tooling, README support notes.
-  Acceptance: A local validation script records pass/fail for Tampermonkey Chrome MV3, Violentmonkey Firefox, Safari Userscripts when available, and Firefox Android or emulator/device when available; unsupported environments are reported explicitly.
+- [ ] **P1 — Validate real desktop userscript managers**
+  Why: direct userscript fixture injection passes, but it does not prove Tampermonkey or Violentmonkey document-start timing and sandbox behavior on current browser releases.
+  Next investigation: test Chrome + Tampermonkey and Firefox + Violentmonkey in isolated desktop profiles; capture injection-health diagnostics on cold watch loads and SPA navigation.
+  Acceptance: a dated pass/fail matrix covers install, update, Control Center, cold load, search-to-watch navigation, video playback, comments, Music, Shorts, and ad-request suppression; README support claims match the results.
+  Blocker: requires those manager extensions and Firefox desktop in disposable profiles.
+  Complexity: M
+
+- [ ] **P1 — Recover or deliberately migrate the stable CRX identity**
+  Why: v0.5.20 pinned Chromium ID `jpeojodihepmkpdhibnnbgamnakclnnj`, but its matching private key is not present in the repository or current local release locations. A newly generated key changes the ID, storage namespace, and update continuity.
+  Next investigation: recover the original PEM from the maintainer's secure backup or prior release machine and verify it with `Build-CRX.ps1 -KeyPath`; if it is permanently lost, design an explicit ID/storage/update migration and document the break before rotating.
+  Acceptance: the generated CRX cryptographically verifies, matches `extension/extension-id.txt`, and the full gate passes with `-Artifacts Userscript,Zip,Crx -CrxKeyPath <key>`; no private key is committed.
+  Blocker: requires the historical private key or an explicit maintainer decision to rotate identity.
+  Complexity: M
+
+- [ ] **P1 — Add extension DNR matched-rule diagnostics**
+  Why: the live smoke proves the static ruleset is enabled and a pagead probe is blocked, but user diagnostics cannot identify which browser-layer rule fired in a real report.
+  Next investigation: prototype `getMatchedRules()` / `onRuleMatchedDebug` only where feedback APIs are available; verify Chrome unpacked and Firefox preference requirements.
+  Acceptance: diagnostics report recent YouTube-only DNR rule IDs and counts, degrade cleanly when feedback is unavailable, and never include unrelated browsing URLs.
+  Complexity: M
+
+- [ ] **P1 — Move extension settings behind a trusted-context broker**
+  Why: page-world events currently request allowlisted settings reads/writes through the isolated bridge; a service-worker broker can reduce the exposed storage boundary.
+  Next investigation: map every bridge setting operation and `chrome.storage.local/sync` consumer before changing access levels.
+  Acceptance: the service worker owns storage reads/writes; bridge mutations use a bounded runtime-message protocol; trusted-context access is restricted where supported; sync chunking, oversize fallback, and context-menu actions retain contract tests.
   Complexity: L
 
-- [ ] P2 — Add community API cache and privacy controls
-  Why: SponsorBlock, DeArrow, and RYD data are cached locally, but users cannot inspect or clear those caches independently from restoring all settings.
-  Evidence: SponsorBlock/DeArrow/RYD API docs, `README.md:85-93`, local cache helpers in `YoutubeAdblock.user.js`.
-  Touches: `YoutubeAdblock.user.js`, `tests/engine-core.test.mjs`, Control Center diagnostics/recovery section.
-  Acceptance: Control Center shows community API cache counts/ages, can clear SponsorBlock/DeArrow/RYD caches independently, and copied diagnostics reports cache state without video history leakage.
-  Complexity: M
+## Backlog
 
-- [ ] P2 — Make SponsorBlock SSAI-aware
-  Why: Server-side insertion can shift content timestamps, so SponsorBlock skip/view behavior should not silently pollute metrics or skip the wrong segment after an SSAI signal.
-  Evidence: `YoutubeAdblock.user.js:2093-2184`, `YoutubeAdblock.user.js:3360-3361`, AdGuard SSAI analysis, SponsorBlock API docs.
-  Touches: SponsorBlock skip/view path in `YoutubeAdblock.user.js`, diagnostics, `tests/engine-core.test.mjs`.
-  Acceptance: When current-video SSAI is detected, SponsorBlock skips either pause with a warning or run in an offset-safe mode, view pings are suppressed for uncertain offsets, and diagnostics reports the chosen behavior.
-  Complexity: M
+- [ ] **P2 — Capture SSAI markers before offset-safe SponsorBlock behavior**
+  Capture a real `serverStitchedAd`/SSAP session and map player fields, manifest markers, timeline discontinuities, and seeking before changing SponsorBlock offsets or view pings. Until then, retain warn-only behavior.
 
-- [ ] P2 — Add a manual uAssets quick-fix ingestion tool
-  Why: YouTube fixes move through uAssets faster than this repo's bundled filter/signature files, but updates are manual and easy to miss.
-  Evidence: uAssets YouTube ongoing issues, `youtube-adblock-filters.txt`, `tools/sign-filter-manifest.mjs`, `webpack-ad-signatures.json`.
-  Touches: new non-md tool under `tools/`, `youtube-adblock-filters.txt`, `webpack-ad-signatures.json`, filter/signature manifests, tests.
-  Acceptance: A local command fetches upstream quick-fixes, maps supported scriptlets to bundled equivalents, leaves dangerous/unsupported rules as rejected coverage, re-signs filter/signature data, and runs the relevant parser/signature tests.
-  Complexity: M
+- [ ] **P2 — Per-surface engine profiles**
+  Add independent desktop profiles for main home/search/watch, Shorts, Music, TV, Kids, and embeds without duplicating setting keys or engine installation.
 
-- [ ] P2 — Add extension DNR matched-rule diagnostics
-  Why: Page diagnostics cannot prove whether the browser network-layer rules actually fired, which makes extension-specific ad reports hard to triage.
-  Evidence: Chrome `declarativeNetRequest.getMatchedRules` docs, `extension/manifest.json:57-64`, `extension/rules/network-rules-source.json`, `buildDiagnosticsReport()` in `YoutubeAdblock.user.js:7626-7687`.
-  Touches: `extension/background.js`, `extension/bridge.js`, `YoutubeAdblock.user.js`, `extension/manifest.json`, `tests/background-contract.test.mjs`, `tests/bridge-security.test.mjs`.
-  Acceptance: Extension diagnostics include recent DNR rule IDs/counts for YouTube ad endpoints when feedback APIs are available, degrade cleanly without the feedback permission/API, and never expose non-YouTube browsing data.
-  Complexity: M
+- [ ] **P2 — Trusted Types completion audit**
+  Remove or wrap every remaining string-to-HTML path, add a Trusted Types-enforced browser fixture, and downgrade README claims until the audit passes.
 
-- [ ] P2 — Harden cosmetic CSS hash to fully deduplicate selector sets
-  Why: Current mid-point sampling hash still has false-positive risk for selector sets that differ only in positions not sampled.
-  Where: `YoutubeAdblock.user.js` `updateCosmeticCSS` function.
+- [ ] **P2 — Exportable privacy-scrubbed diagnostic bundle**
+  Export counters, engine health, rule integrity, bounded recent prune events, and DNR telemetry as JSON without video IDs, playlist IDs, custom-filter queries, or unrelated browsing data.
 
-- [ ] P2 — Add light theme or system-preference CSS for the Control Center
-  Why: The entire panel CSS is dark-only with hardcoded RGBA values; no `prefers-color-scheme: light` path exists.
-  Where: `YoutubeAdblock.user.js` `injectSettingsCSS` function.
+- [ ] **P2 — Community API cache controls**
+  Show SponsorBlock, DeArrow, and RYD cache counts/ages; clear each independently; retain hash-prefix privacy and cooldown reporting.
 
-- [ ] P3 — Replace DeArrow `locked` boolean arithmetic with explicit comparison
-  Why: `b.locked - a.locked` relies on boolean-to-number coercion; explicit `b.locked === a.locked ? 0 : b.locked ? -1 : 1` is clearer.
-  Where: `YoutubeAdblock.user.js` `dearrowResolve` function.
+- [ ] **P2 — Manual uAssets quick-fix ingestion tool**
+  Fetch upstream changes on explicit maintainer command, map only locally supported safe syntax, reject dangerous capabilities, re-sign data, and run parser/signature tests.
 
-- [ ] P3 — Improve DOM bypass prevention script detection beyond simple string matching
-  Why: `window,"fetch"` string matching can be evaded with template literals, concatenation, or Unicode escapes.
-  Where: `YoutubeAdblock.user.js` `installDOMBypassPrevention` function.
+- [ ] **P2 — Real localization pipeline**
+  Generate extension `_locales`, add `default_locale`, preserve the userscript English fallback, and fail tests when visible strings bypass the catalog.
 
-- [ ] P1 — Move extension settings storage behind a trusted-context broker
-  Why: Page-world events can currently request allowlisted settings reads/writes through the bridge; Chrome supports hiding extension storage from untrusted contexts.
-  Evidence: `extension/bridge.js:260-424`, `tests/bridge-security.test.mjs:230-346`, Chrome `chrome.storage.*.setAccessLevel()` docs.
-  Touches: `extension/background.js`, `extension/bridge.js`, `tests/bridge-security.test.mjs`, `tests/background-contract.test.mjs`.
-  Acceptance: The service worker owns `chrome.storage.local/sync` reads and writes; bridge requests use `chrome.runtime.sendMessage`; storage access is restricted to trusted contexts where supported; tests prove page CustomEvents cannot directly reach `chrome.storage.*` and sync chunk/oversize behavior still works.
-  Complexity: L
+- [ ] **P2 — Rules playground**
+  Preview a bounded cosmetic selector against the current page without executing arbitrary scriptlets or persisting it until the user confirms.
+
+- [ ] **P2 — Category-aware SponsorBlock behavior**
+  Keep sponsor auto-skip, allow mute/manual modes for softer categories, and make uncertain/SSAI behavior explicit.
+
+- [ ] **P2 — Dynamic DNR update design**
+  Evaluate signed data-to-DNR compilation for faster endpoint response while keeping all executable logic packaged and store-policy compliant.
+
+- [ ] **P2 — Toolbar popup parity**
+  Provide protection status and the few high-frequency actions without duplicating the full Control Center or introducing stale state.
+
+- [ ] **P3 — Enterprise managed defaults**
+  Add a managed schema only after the settings broker exists, with diagnostics showing which values are policy-controlled.
+
+- [ ] **P3 — Clarify DeArrow locked-item ordering**
+  Replace boolean arithmetic with explicit comparison and add an ordering unit test.
+
+- [ ] **P3 — Strengthen DOM bypass detection**
+  Replace simple source-string matching with narrowly scoped structural detection that recognizes equivalent fetch-lift patterns without blocking legitimate scripts.

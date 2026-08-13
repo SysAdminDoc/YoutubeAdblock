@@ -5,6 +5,18 @@
 ! ==============================================
 
 ! -----------------------------------------------
+! YoutubeAdblock live additions (observed 2026-08-13)
+! -----------------------------------------------
+
+! YouTube TV keeps this first-party ad title/skip tray mounted and reveals it
+! during ad playback. The userscript also intercepts /youtubei/v1/tenx_player.
+tv.youtube.com##ytu-ads-title-tray
+
+! Current desktop YouTube requests this separable pagead measurement pixel.
+! MV3 blocks it at DNR; userscript fetch/XHR guards cover script-initiated use.
+||google.com/pagead/$domain=youtube.com
+
+! -----------------------------------------------
 ! uBlock Filters (filters.txt) - Core Video Ad Blocking
 ! -----------------------------------------------
 

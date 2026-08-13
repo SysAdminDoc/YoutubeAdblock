@@ -125,13 +125,15 @@
      * ===================================================================== */
 
     const SCRIPT_NAME = 'YoutubeAdblock';
-    const SCRIPT_VERSION = '0.5.20';
+    const SCRIPT_VERSION = '0.5.21';
     const PROJECT_URL = 'https://github.com/SysAdminDoc/YoutubeAdblock';
     const ISSUES_URL = `${PROJECT_URL}/issues`;
     const FILTER_URL_DEFAULT = 'https://raw.githubusercontent.com/SysAdminDoc/YoutubeAdblock/refs/heads/main/youtube-adblock-filters.txt';
     const FILTER_MANIFEST_URL_DEFAULT = 'https://raw.githubusercontent.com/SysAdminDoc/YoutubeAdblock/refs/heads/main/youtube-adblock-filters.manifest.json';
     const FILTER_SIGNATURE_URL_DEFAULT = 'https://raw.githubusercontent.com/SysAdminDoc/YoutubeAdblock/refs/heads/main/youtube-adblock-filters.txt.sig';
     const WEBPACK_SIGNATURE_URL_DEFAULT = 'https://raw.githubusercontent.com/SysAdminDoc/YoutubeAdblock/refs/heads/main/webpack-ad-signatures.json';
+    const WEBPACK_SIGNATURE_MANIFEST_URL_DEFAULT = 'https://raw.githubusercontent.com/SysAdminDoc/YoutubeAdblock/refs/heads/main/webpack-ad-signatures.manifest.json';
+    const WEBPACK_SIGNATURE_SIG_URL_DEFAULT = 'https://raw.githubusercontent.com/SysAdminDoc/YoutubeAdblock/refs/heads/main/webpack-ad-signatures.json.sig';
     const FILTER_PUBLIC_KEY_BASE64 = 'MCowBQYDK2VwAyEAdkjPuIDzXFI9UPn5w4t4selqoqbT4WCinGI58a2/a6E=';
     const FILTER_URL_MIRRORS = [
         'https://cdn.jsdelivr.net/gh/SysAdminDoc/YoutubeAdblock@main/youtube-adblock-filters.txt',
@@ -179,6 +181,8 @@
     const RYD_TIMEOUT_MS = 8000;
     const RYD_CACHE_TTL = 30 * 60 * 1000; // 30 minutes
     const RYD_CACHE_MAX = 200;
+    const API_COOLDOWN_DEFAULT_MS = 60 * 1000;
+    const API_COOLDOWN_MAX_MS = 15 * 60 * 1000;
     const VOLUME_BOOST_MAX = 5; // hard cap — beyond this audio clips badly
     const SECTION_IDS = {
         overview: `${CSS_PREFIX}-section-overview`,
@@ -270,6 +274,8 @@
             webpackSignatureTooLarge: maxKb => `Remote webpack signature database exceeds ${maxKb}KB limit.`,
             webpackSignatureInvalid: 'Remote webpack signature database did not contain usable tokens.',
             webpackSignatureFetchFailed: 'Webpack signature refresh failed.',
+            webpackSignatureTampered: 'Remote webpack signature database failed integrity verification. Using cached/built-in signatures.',
+            webpackSignatureVerified: 'Webpack signature database verified.',
             refreshComplete: (count, version, integrity) => {
                 const suffix = integrity === 'unsigned-custom'
                     ? ' Unsigned custom source.'
@@ -325,7 +331,28 @@
             findSetting: 'Find a setting',
             findSettingPlaceholder: 'Find a setting…',
             closeControlCenter: 'Close the YoutubeAdblock Control Center',
-            footerHint: 'Search or scroll. Changes save instantly. Press Esc to close.',
+            notifications: 'Control Center notifications',
+            footerHint: 'Tab moves between controls. Press Esc to close.',
+            settingsNavigation: 'Settings sections',
+            workspace: 'Workspace',
+            productMark: 'YA',
+            localSettings: 'Changes stay on this device unless extension sync is available.',
+            savedStatus: 'Saved · Changes save automatically.',
+            savedWithRefreshProblem: 'Saved locally · Rule refresh needs attention.',
+            syncingStatus: 'Refreshing the Rule Library while your current protection stays active.',
+            footerSync: timestamp => `Last synced: ${formatTimestamp(timestamp)}`,
+            navigation: {
+                overview: 'Overview',
+                rules: 'Rule Library',
+                core: 'Core Blocking',
+                anti: 'Anti-Interference',
+                cleanup: 'Ad & Overlay Cleanup',
+                sponsor: 'SponsorBlock',
+                enhance: 'Enhancements',
+                clutter: 'Interface Cleanup',
+                blocklist: 'Focus & Filters',
+                diagnostics: 'Diagnostics'
+            },
             quickActions: 'Quick actions',
             protectionOn: 'Protection On',
             protectionPaused: 'Protection Paused',
@@ -383,6 +410,7 @@
             prunePathsPill: count => `${formatNumber(count)} Prune Paths`,
             networkOnlyPill: count => `${formatNumber(count)} Network-Only`,
             unsupportedScriptletsPill: count => `${formatNumber(count)} Unsupported Scriptlets`,
+            rejectedDangerousPill: count => `${formatNumber(count)} Rejected Dangerous`,
             refreshProblem: 'Refresh Problem',
             signatureVerified: 'Signature Verified',
             verifiedFilterNote: 'The recommended remote list was verified before it replaced your active rules.',
@@ -425,7 +453,7 @@
                 channelBlocklistImported: 'Channel blocklist imported.',
                 importMigration: 'Import Migration',
                 rejectedEntries: items => `Rejected entries:\n${items.join('\n')}`,
-                migrationImported: (channels, keywords, rejectedCount) => `Migration imported ${channels} channel and ${keywords} keyword entries${rejectedCount ? `; ${rejectedCount} rejected.` : '.'}`,
+                migrationImported: (channels, keywords, rejectedCount) => `Migration imported ${channels} channel and ${keywords} keyword ${channels + keywords === 1 ? 'entry' : 'entries'}${rejectedCount ? `; ${rejectedCount} rejected.` : '.'}`,
                 migrationNoSupportedEntries: 'Migration import did not find supported channel or keyword entries.',
                 importJsonParseError: 'Import JSON could not be parsed.',
                 importJsonNoSupportedSettings: 'Import JSON did not contain supported YoutubeAdblock settings.',
@@ -693,10 +721,14 @@
             droppedUnsafeSelectors: 'Dropped unsafe selectors',
             supportedScriptlets: 'Supported scriptlets',
             unsupportedScriptlets: 'Unsupported scriptlets',
+            rejectedDangerousScriptlets: 'Rejected dangerous scriptlets',
             ssaiSignals: 'SSAI signals',
+            communityApiPermission: 'Community API permission',
+            communityApiCooldown: 'Community API cooldown',
             webpackSignatureSource: 'Webpack signature source',
             webpackSignatureVersion: 'Webpack signature version',
             webpackSignatureTokens: 'Webpack signature tokens',
+            webpackSignatureIntegrity: 'Webpack signature integrity',
             webpackSignatureError: 'Webpack signature error',
             channelBlockEntries: 'Channel block entries',
             keywordBlockEntries: 'Keyword block entries',
@@ -779,6 +811,7 @@
             '/youtubei/v1/reel_watch_sequence',
             '/youtubei/v1/get_survey',
             '/youtubei/v1/player/ad_break',
+            '/youtubei/v1/tenx_player',
             '/watch?', '/playlist?list=', '/reel_watch_sequence'
         ],
         cosmeticSelectors: [
@@ -806,7 +839,11 @@
             'ytd-compact-promoted-video-renderer',
             'ytd-action-companion-ad-renderer',
             'ytd-brand-video-shelf-renderer',
-            'ytd-brand-video-singleton-renderer'
+            'ytd-brand-video-singleton-renderer',
+            // YouTube TV uses the ytu-* component family rather than ytd-*.
+            // The ad title tray is present even before playback and becomes
+            // visible when first-party TV ad media is active.
+            'ytu-ads-title-tray'
         ],
         upsellSelectors: [
             'ytd-popup-container > .ytd-popup-container > #contentWrapper > .ytd-popup-container[position-type="OPEN_POPUP_POSITION_BOTTOMLEFT"]'
@@ -944,6 +981,19 @@
         }
     ];
 
+    const SETTINGS_NAV_ITEMS = [
+        { sectionId: SECTION_IDS.overview, label: STRINGS.ui.navigation.overview },
+        { sectionId: SECTION_IDS.rules, label: STRINGS.ui.navigation.rules },
+        { sectionId: SECTION_IDS.core, label: STRINGS.ui.navigation.core },
+        { sectionId: SECTION_IDS.anti, label: STRINGS.ui.navigation.anti },
+        { sectionId: SECTION_IDS.cleanup, label: STRINGS.ui.navigation.cleanup },
+        { sectionId: SECTION_IDS.sponsor, label: STRINGS.ui.navigation.sponsor },
+        { sectionId: SECTION_IDS.enhance, label: STRINGS.ui.navigation.enhance },
+        { sectionId: SECTION_IDS.clutter, label: STRINGS.ui.navigation.clutter },
+        { sectionId: SECTION_IDS.blocklist, label: STRINGS.ui.navigation.blocklist },
+        { sectionId: SECTION_IDS.diagnostics, label: STRINGS.ui.navigation.diagnostics }
+    ];
+
     /* =========================================================================
      * STATE
      * ===================================================================== */
@@ -969,13 +1019,21 @@
         webpackSignatureVersion: '',
         webpackSignatureUpdated: '',
         webpackSignatureError: '',
+        webpackSignatureIntegrity: 'built-in',
         webpackSignatureSyncing: false,
+        communityApiPermission: IS_EXTENSION_BUILD ? 'pending' : 'granted',
         proxiesInstalled: false,
         overlayEl: null,
         panelEl: null,
         lastFocusedEl: null,
         cosmeticStyleEl: null,
         toastRegionEl: null,
+        toastLaneEl: null,
+        settingsNavEl: null,
+        activeSettingsSection: SECTION_IDS.overview,
+        settingsScrollFrame: 0,
+        settingsNavIntentSection: '',
+        settingsNavIntentUntil: 0,
         originals: {},
         // Roots already guarded by installPropertyTraps — prevents TypeError on re-install
         trappedRoots: new Set(),
@@ -1629,7 +1687,8 @@
             networkOnlyRules: Math.max(0, Number(src.networkOnlyRules ?? base.networkOnlyRules) || 0),
             droppedUnsafeSelectors: Math.max(0, Number(src.droppedUnsafeSelectors ?? base.droppedUnsafeSelectors) || 0),
             supportedScriptlets: summarizeScriptlets(src.supportedScriptlets || base.supportedScriptlets),
-            unsupportedScriptlets: summarizeScriptlets(src.unsupportedScriptlets || base.unsupportedScriptlets)
+            unsupportedScriptlets: summarizeScriptlets(src.unsupportedScriptlets || base.unsupportedScriptlets),
+            rejectedDangerousScriptlets: summarizeScriptlets(src.rejectedDangerousScriptlets || base.rejectedDangerousScriptlets)
         };
     }
 
@@ -1676,6 +1735,12 @@
         };
     }
 
+    const DANGEROUS_SCRIPTLET_RE = /^trusted-(?!replace-(?:fetch|xhr)-response$|prevent-dom-bypass$)|^(?:evaldata-prune|inject-css-in-shadow-dom|replace-node-text|href-sanitizer|trusted-replace-argument|trusted-replace-node-text|override-element-method|trusted-override-element-method|trusted-suppress-native-method|trusted-set-attr|trusted-click-element|trusted-set-constant|trusted-set-local-storage-item|trusted-set-session-storage-item|trusted-set-cookie|trusted-prune-inbound-object|trusted-prune-outbound-object)$/;
+
+    function isDangerousScriptlet(name) {
+        return DANGEROUS_SCRIPTLET_RE.test(name);
+    }
+
     function parseUBOFilterList(text) {
         // Short-circuit pathological line counts before allocating Sets
         // and running full regex per line.
@@ -1689,6 +1754,7 @@
         const replaceKeys = {};
         const supportedScriptlets = new Map();
         const unsupportedScriptlets = new Map();
+        const rejectedDangerousScriptlets = new Map();
         let networkOnlyRules = 0;
         let filterCount = 0;
         let droppedUnsafeSelectors = 0;
@@ -1749,6 +1815,8 @@
                     } else {
                         countScriptlet(unsupportedScriptlets, name);
                     }
+                } else if (isDangerousScriptlet(name)) {
+                    countScriptlet(rejectedDangerousScriptlets, name);
                 } else {
                     countScriptlet(unsupportedScriptlets, name);
                 }
@@ -1838,7 +1906,8 @@
                 networkOnlyRules,
                 droppedUnsafeSelectors,
                 supportedScriptlets: summarizeScriptlets(supportedScriptlets),
-                unsupportedScriptlets: summarizeScriptlets(unsupportedScriptlets)
+                unsupportedScriptlets: summarizeScriptlets(unsupportedScriptlets),
+                rejectedDangerousScriptlets: summarizeScriptlets(rejectedDangerousScriptlets)
             }),
             features: { ...DEFAULT_FILTERS.features }
         };
@@ -1913,11 +1982,16 @@
         return bytesToBase64Url(new Uint8Array(digest));
     }
 
+    const SIGNED_CONTENT_ALLOWLIST = new Set([
+        'youtube-adblock-filters.txt',
+        'webpack-ad-signatures.json',
+    ]);
+
     function sanitizeFilterManifest(value) {
         if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
         if (value.schemaVersion !== 1 || value.algorithm !== 'Ed25519') return null;
-        if (value.signedContent !== 'youtube-adblock-filters.txt') return null;
-        if (value.signatureFile !== 'youtube-adblock-filters.txt.sig') return null;
+        if (!SIGNED_CONTENT_ALLOWLIST.has(value.signedContent)) return null;
+        if (value.signatureFile !== `${value.signedContent}.sig`) return null;
         if (value.publicKey !== FILTER_PUBLIC_KEY_BASE64) return null;
         if (typeof value.sha256 !== 'string' || !value.sha256.trim()) return null;
         if (!Number.isFinite(Number(value.bytes)) || Number(value.bytes) <= 0) return null;
@@ -2597,7 +2671,39 @@
     // shape, and we only annotate a contentPlaybackContext that already
     // exists — parents are never fabricated, so a malformed body can't gain
     // structure it didn't have.
-    const PLAYER_ENDPOINT_RE = /\/youtubei\/v1\/(?:player|get_watch)(?:\?|$)/;
+    const PLAYER_ENDPOINT_RE = /\/youtubei\/v1\/(?:player|get_watch|tenx_player)(?:\?|$)/;
+    const YOUTUBE_AD_REQUEST_PATH_RE = /^(?:\/pagead\/|\/api\/stats\/(?:ads|atr)(?:\/|$)|\/pcs\/activeview(?:\/|$)|\/get_midroll_info(?:\/|$)|\/ptracking(?:\/|$)|\/youtubei\/v1\/player\/ad_break(?:\?|$))/i;
+
+    // Fetch/XHR requests do not need to leave the page just so a later layer
+    // can hide their result. DNR remains the earliest extension layer; this
+    // userscript fallback rejects only endpoints that are ad-exclusive on the
+    // covered YouTube origins. Mixed-purpose telemetry such as log_event and
+    // generate_204 intentionally stays outside this list.
+    function isKnownAdRequestUrl(value) {
+        if (!value) return false;
+        try {
+            const parsed = new URL(String(value), location.href);
+            const host = parsed.hostname.toLowerCase();
+            if (host === 'doubleclick.net' || host.endsWith('.doubleclick.net')) return true;
+            if (host === 'googlesyndication.com' || host.endsWith('.googlesyndication.com')) return true;
+            if (host === 'googleadservices.com' || host.endsWith('.googleadservices.com')) return true;
+            if ((host === 'google.com' || host === 'www.google.com') && parsed.pathname.startsWith('/pagead/')) return true;
+            const youtubeHost = host === 'youtube.com' || host.endsWith('.youtube.com') ||
+                host === 'youtube-nocookie.com' || host.endsWith('.youtube-nocookie.com') ||
+                host === 'youtubekids.com' || host.endsWith('.youtubekids.com');
+            return youtubeHost && YOUTUBE_AD_REQUEST_PATH_RE.test(parsed.pathname);
+        } catch (e) {
+            return false;
+        }
+    }
+
+    function createBlockedAdResponse() {
+        return new Response('{}', {
+            status: 200,
+            statusText: 'OK',
+            headers: { 'content-type': 'application/json' }
+        });
+    }
 
     function injectNoAdFlag(obj) {
         try {
@@ -2639,6 +2745,11 @@
 
                 if (!isEnabled()) {
                     return Reflect.apply(target, thisArg, args);
+                }
+
+                if (state.features.fetchIntercept && isKnownAdRequestUrl(url)) {
+                    incrementStat('blocked');
+                    return Promise.resolve(createBlockedAdResponse());
                 }
 
                 // Outbound no-ad signal on player requests. Historical note:
@@ -2751,13 +2862,25 @@
             // String#includes calls never throw on a non-string.
             const urlStr = (typeof url === 'string') ? url : (url != null ? String(url) : '');
             this._ytab_url = urlStr;
+            this._ytab_blocked_ad_request = isEnabled() && state.features.xhrIntercept && isKnownAdRequestUrl(urlStr);
 
-            return originalOpen.call(this, method, url, ...rest);
+            // A data URL keeps the native XHR lifecycle intact (readystatechange,
+            // load, responseType handling) while ensuring no ad request reaches
+            // the network. Preserve the original URL separately for diagnostics.
+            const effectiveUrl = this._ytab_blocked_ad_request
+                ? 'data:application/json,%7B%7D'
+                : url;
+            return originalOpen.call(this, method, effectiveUrl, ...rest);
         };
 
         const proxiedSend = function(body) {
             if (!isEnabled()) {
                 return originalSend.call(this, body);
+            }
+
+            if (this._ytab_blocked_ad_request) {
+                incrementStat('blocked');
+                return originalSend.call(this, null);
             }
 
             // Outbound no-ad signal — same additive isInlinePlaybackNoAd flag
@@ -3390,12 +3513,41 @@
         return entry;
     }
 
+    const apiCooldowns = { sponsorblock: 0, dearrow: 0, ryd: 0 };
+
+    function isApiCoolingDown(service) {
+        return Date.now() < (apiCooldowns[service] || 0);
+    }
+
+    function setApiCooldown(service, resp) {
+        let ms = API_COOLDOWN_DEFAULT_MS;
+        if (resp && resp.responseHeaders) {
+            const match = resp.responseHeaders.match(/retry-after:\s*(\d+)/i);
+            if (match) {
+                const seconds = Math.min(Number(match[1]), API_COOLDOWN_MAX_MS / 1000);
+                ms = seconds * 1000;
+            }
+        }
+        apiCooldowns[service] = Date.now() + Math.min(ms, API_COOLDOWN_MAX_MS);
+    }
+
+    function getApiCooldownStatus() {
+        const now = Date.now();
+        const status = {};
+        for (const [service, expiry] of Object.entries(apiCooldowns)) {
+            if (expiry > now) {
+                status[service] = Math.ceil((expiry - now) / 1000) + 's';
+            } else {
+                status[service] = 'ok';
+            }
+        }
+        return status;
+    }
+
     function sponsorBlockFetchBucket(hashPrefix) {
         return new Promise((resolve) => {
-            if (typeof GM_xmlhttpRequest !== 'function') {
-                resolve(null);
-                return;
-            }
+            if (typeof GM_xmlhttpRequest !== 'function') { resolve(null); return; }
+            if (isApiCoolingDown('sponsorblock')) { resolve(null); return; }
             const cats = encodeURIComponent(JSON.stringify([...SPONSORBLOCK_CATEGORIES, 'poi_highlight']));
             const actions = encodeURIComponent(JSON.stringify(['skip', 'full', 'poi']));
             const url = `${SPONSORBLOCK_API}/${hashPrefix}?categories=${cats}&actionTypes=${actions}`;
@@ -3405,12 +3557,11 @@
                 timeout: SPONSORBLOCK_TIMEOUT_MS,
                 onload(resp) {
                     if (!resp || resp.status !== 200) {
+                        if (resp && resp.status === 429) setApiCooldown('sponsorblock', resp);
                         resolve(null);
                         return;
                     }
                     try {
-                        // Use raw JSON.parse — this response contains no ad keys
-                        // and would waste cycles re-entering our prune pipeline.
                         resolve(jsonParseRaw(resp.responseText));
                     } catch (e) {
                         resolve(null);
@@ -3723,9 +3874,7 @@
                     if (!isEnabled() || !state.features.serviceWorkerBlock) {
                         return Reflect.apply(target, thisArg, args);
                     }
-                    // Return a resolved sentinel so sites that chain .then
-                    // off the promise don't crash, but no worker installs.
-                    return Promise.reject(new Error('ServiceWorker registration blocked'));
+                    return Promise.resolve(undefined);
                 }
             });
             registerNativeMask(proxiedRegister, originalRegister);
@@ -3884,19 +4033,42 @@
         return !!(src && src.length < maxBytes && matcher && matcher.test(src));
     }
 
+    async function verifyWebpackSignatureIntegrity(text) {
+        try {
+            const manifestRaw = await gmFetchText(addCacheBust(WEBPACK_SIGNATURE_MANIFEST_URL_DEFAULT), FILTER_FETCH_TIMEOUT_MS);
+            const manifest = sanitizeFilterManifest(jsonParseRaw(manifestRaw));
+            if (!manifest) return 'unsigned';
+            const canonical = normalizeFilterTextForSignature(text);
+            const expectedBytes = new TextEncoder().encode(canonical).length;
+            if (manifest.bytes !== expectedBytes) return 'tampered';
+            const digest = await sha256Base64Url(canonical);
+            if (digest !== manifest.sha256) return 'tampered';
+            const sig = await gmFetchText(addCacheBust(WEBPACK_SIGNATURE_SIG_URL_DEFAULT), FILTER_FETCH_TIMEOUT_MS);
+            const verified = await verifyEd25519Signature(canonical, sig);
+            return verified ? 'verified' : 'tampered';
+        } catch {
+            return 'unsigned';
+        }
+    }
+
     function fetchWebpackSignatureDatabase() {
         if (state.webpackSignatureSyncing) return Promise.resolve(state.webpackSignatureDatabase);
         if (typeof GM_xmlhttpRequest !== 'function') return Promise.resolve(state.webpackSignatureDatabase);
         state.webpackSignatureSyncing = true;
         state.webpackSignatureError = '';
         return gmFetchText(addCacheBust(WEBPACK_SIGNATURE_URL_DEFAULT), FILTER_FETCH_TIMEOUT_MS)
-            .then(text => {
+            .then(async text => {
                 if (text.length > WEBPACK_SIGNATURE_MAX_BYTES) {
                     throw new Error(STRINGS.filters.webpackSignatureTooLarge(Math.round(WEBPACK_SIGNATURE_MAX_BYTES / 1024)));
+                }
+                const integrity = await verifyWebpackSignatureIntegrity(text);
+                if (integrity === 'tampered') {
+                    throw new Error(STRINGS.filters.webpackSignatureTampered);
                 }
                 const parsed = sanitizeWebpackSignatureDatabase(jsonParseRaw(text));
                 if (!parsed) throw new Error(STRINGS.filters.webpackSignatureInvalid);
                 applyWebpackSignatureDatabase(parsed, 'remote');
+                state.webpackSignatureIntegrity = integrity;
                 setSetting('webpack_signature_cache', parsed);
                 setSetting('webpack_signature_cache_time', Date.now());
                 return parsed;
@@ -4057,7 +4229,8 @@
         // selector set actually changed. On SPA navigations + the 1.5s
         // DeArrow sweep this short-circuits the common case (same filter
         // set, same feature flags) with zero DOM writes.
-        const hash = safe.length + ':' + safe[0] + ':' + safe[safe.length - 1];
+        const mid = safe[safe.length >> 1] || '';
+        const hash = safe.length + ':' + safe[0] + ':' + mid + ':' + safe[safe.length - 1];
         if (hash === cosmeticCSSLastHash) return;
         cosmeticCSSLastHash = hash;
         // One rule per selector — per the CSS spec, a malformed selector in
@@ -4091,13 +4264,18 @@
     function dearrowFetchBucket(hashPrefix) {
         return new Promise((resolve) => {
             if (typeof GM_xmlhttpRequest !== 'function') { resolve(null); return; }
+            if (isApiCoolingDown('dearrow')) { resolve(null); return; }
             const url = `${DEARROW_API}/${hashPrefix}`;
             GM_xmlhttpRequest({
                 method: 'GET',
                 url,
                 timeout: DEARROW_TIMEOUT_MS,
                 onload(resp) {
-                    if (!resp || resp.status !== 200) { resolve(null); return; }
+                    if (!resp || resp.status !== 200) {
+                        if (resp && resp.status === 429) setApiCooldown('dearrow', resp);
+                        resolve(null);
+                        return;
+                    }
                     try { resolve(jsonParseRaw(resp.responseText)); }
                     catch (e) { resolve(null); }
                 },
@@ -4254,12 +4432,17 @@
     function rydFetch(videoId) {
         return new Promise((resolve) => {
             if (typeof GM_xmlhttpRequest !== 'function') { resolve(null); return; }
+            if (isApiCoolingDown('ryd')) { resolve(null); return; }
             GM_xmlhttpRequest({
                 method: 'GET',
                 url: `${RYD_API}?videoId=${encodeURIComponent(videoId)}`,
                 timeout: RYD_TIMEOUT_MS,
                 onload(resp) {
-                    if (!resp || resp.status !== 200) { resolve(null); return; }
+                    if (!resp || resp.status !== 200) {
+                        if (resp && resp.status === 429) setApiCooldown('ryd', resp);
+                        resolve(null);
+                        return;
+                    }
                     try {
                         const data = jsonParseRaw(resp.responseText);
                         if (data && typeof data.dislikes === 'number') {
@@ -4282,6 +4465,29 @@
         return Math.floor(n / 1_000_000) + 'M';
     }
 
+    function isElementVisiblyRendered(element) {
+        if (!element || !element.isConnected || typeof element.getBoundingClientRect !== 'function') return false;
+        try {
+            const rect = element.getBoundingClientRect();
+            if (rect.width <= 0 || rect.height <= 0) return false;
+            const style = getComputedStyle(element);
+            return style.display !== 'none' && style.visibility !== 'hidden';
+        } catch (e) {
+            return false;
+        }
+    }
+
+    function findRydDislikeButton(root = document) {
+        if (!root || typeof root.querySelectorAll !== 'function') return null;
+        const candidates = root.querySelectorAll(
+            'dislike-button-view-model button, ' +
+            'segmented-like-dislike-button-view-model dislike-button-view-model button, ' +
+            'ytd-toggle-button-renderer[is-disabled] #text, ' +
+            'button[aria-label*="Dislike" i]'
+        );
+        return [...candidates].find(isElementVisiblyRendered) || null;
+    }
+
     async function applyRyd(videoId) {
         let entry = rydCacheGet(videoId);
         if (!entry) {
@@ -4289,14 +4495,10 @@
             if (!entry) return;
             rydCacheSet(videoId, entry);
         }
-        // Find the dislike button — YT buries it in segmented-like-dislike-button-view-model
-        // or in the legacy like-button-view-model. Fall back to segmented button text span.
-        const dislikeBtn = document.querySelector(
-            'dislike-button-view-model button, ' +
-            'segmented-like-dislike-button-view-model dislike-button-view-model button, ' +
-            'ytd-toggle-button-renderer[is-disabled] #text, ' +
-            'button[aria-label*="Dislike" i]'
-        );
+        // YouTube currently keeps hidden duplicate dislike controls mounted
+        // around the visible segmented button. querySelector() returns the
+        // first hidden copy, so resolve the rendered control explicitly.
+        const dislikeBtn = findRydDislikeButton();
         if (!dislikeBtn) return;
         const label = formatCompact(entry.dislikes);
         // Try to write into an existing count span first.
@@ -4417,7 +4619,6 @@
     function getYoutubePlayerApi() {
         const candidates = [
             document.getElementById('movie_player'),
-            document.querySelector('#movie_player'),
             document.querySelector('ytd-player #movie_player'),
             document.querySelector('#shorts-player')
         ];
@@ -4578,12 +4779,14 @@
             return;
         }
         if (document.getElementById(`${CSS_PREFIX}-vol-boost`)) return;
+        const musicVolume = document.querySelector('ytmusic-player-bar #volume-slider');
         const anchor = document.querySelector('.ytp-chrome-controls .ytp-right-controls') ||
-                       document.querySelector('.ytp-chrome-bottom .ytp-chrome-controls');
+                       document.querySelector('.ytp-chrome-bottom .ytp-chrome-controls') ||
+                       musicVolume?.parentElement;
         if (!anchor) return;
         const host = document.createElement('div');
         host.id = `${CSS_PREFIX}-vol-boost`;
-        host.style.cssText = 'display:inline-flex;align-items:center;gap:6px;padding:0 8px;color:#fff;font:12px Aptos,system-ui,sans-serif;';
+        host.style.cssText = 'display:inline-flex;align-items:center;gap:6px;flex:0 0 auto;padding:0 8px;color:#fff;font:12px Aptos,system-ui,sans-serif;';
         const tag = document.createElement('span');
         tag.textContent = STRINGS.volumeBoost.tag;
         tag.style.opacity = '0.75';
@@ -4595,13 +4798,19 @@
         slider.value = String(getStoredVolumeBoost());
         slider.style.width = '80px';
         slider.title = STRINGS.volumeBoost.title;
+        slider.setAttribute('aria-label', STRINGS.volumeBoost.title);
         const label = document.createElement('span');
         label.textContent = `${Math.round(getStoredVolumeBoost() * 100)}%`;
         slider.addEventListener('input', () => setVolumeBoost(Number(slider.value)));
         volumeBoostState.sliderEl = slider;
         volumeBoostState.labelEl = label;
         host.append(tag, slider, label);
-        anchor.prepend(host);
+        if (musicVolume && musicVolume.parentElement === anchor) {
+            host.classList.add(`${CSS_PREFIX}-vol-boost-music`);
+            anchor.insertBefore(host, musicVolume);
+        } else {
+            anchor.prepend(host);
+        }
     }
 
     function installVolumeBoost() {
@@ -5003,6 +5212,16 @@
         return matchesChannelList(identity, list);
     }
 
+    var _cachedDurationMin = NaN;
+    var _cachedDurationMax = NaN;
+    var _durationCacheStale = true;
+
+    function refreshDurationCache() {
+        _cachedDurationMin = parseInt(getSetting('duration_min', ''), 10);
+        _cachedDurationMax = parseInt(getSetting('duration_max', ''), 10);
+        _durationCacheStale = false;
+    }
+
     function videoRendererMatches(renderer, channels, keywords) {
         if (!renderer || typeof renderer !== 'object') return false;
         var title = '';
@@ -5022,17 +5241,19 @@
         if (state.features.durationFilter) {
             var dur = extractRendererDuration(renderer);
             if (dur >= 0) {
-                var minDur = parseInt(getSetting('duration_min', ''), 10);
-                var maxDur = parseInt(getSetting('duration_max', ''), 10);
-                if (!isNaN(minDur) && minDur > 0 && dur < minDur) return true;
-                if (!isNaN(maxDur) && maxDur > 0 && dur > maxDur) return true;
+                if (_durationCacheStale) refreshDurationCache();
+                if (!isNaN(_cachedDurationMin) && _cachedDurationMin > 0 && dur < _cachedDurationMin) return true;
+                if (!isNaN(_cachedDurationMax) && _cachedDurationMax > 0 && dur > _cachedDurationMax) return true;
             }
         }
         return false;
     }
 
     function feedFilterWalk(value, channels, keywords, depth) {
-        if (depth === undefined) depth = 0;
+        if (depth === undefined) {
+            depth = 0;
+            _durationCacheStale = true;
+        }
         if (!value || depth > 16) return 0;
         var dropped = 0;
         if (Array.isArray(value)) {
@@ -5166,7 +5387,10 @@
 
         // Drop the oldest toasts once we exceed the visible cap so a burst of
         // errors can't fill the viewport or overlap with the settings panel.
-        while (region.childElementCount >= TOAST_MAX_VISIBLE) {
+        const visibleCap = region.parentElement?.classList.contains(`${CSS_PREFIX}-toast-lane`)
+            ? 1
+            : TOAST_MAX_VISIBLE;
+        while (region.childElementCount >= visibleCap) {
             const oldest = region.firstElementChild;
             if (!oldest) break;
             oldest.remove();
@@ -5212,6 +5436,18 @@
         document.body.appendChild(region);
         state.toastRegionEl = region;
         return region;
+    }
+
+    function placeToastRegion(inSettingsPanel) {
+        const region = ensureToastRegion();
+        if (!region || !document.body) return;
+        const target = inSettingsPanel && state.toastLaneEl?.isConnected
+            ? state.toastLaneEl
+            : document.body;
+        if (region.parentElement !== target) target.appendChild(region);
+        if (inSettingsPanel) {
+            while (region.childElementCount > 1) region.firstElementChild?.remove();
+        }
     }
 
     /* =========================================================================
@@ -5976,8 +6212,6 @@
             .${CSS_PREFIX}-footer-hint {
                 font-size: 11px;
                 color: var(--text-3);
-            }
-            .${CSS_PREFIX}-footer-hint {
                 text-wrap: balance;
             }
             .${CSS_PREFIX}-toast-region {
@@ -6150,14 +6384,483 @@
             .${CSS_PREFIX}-attribution {
                 margin-top: 8px;
                 font-size: 11px;
-                opacity: 0.7;
+                color: var(--text-3);
             }
             .${CSS_PREFIX}-attribution a {
                 color: var(--accent);
                 text-decoration: underline;
             }
+
+            /* v0.5.21 desktop Control Center redesign. The existing component
+               rules remain as conservative fallbacks; these tokens and shell
+               rules provide the ImageGen-led 1440x900 direction without
+               changing any setting keys or behavior. */
+            .${CSS_PREFIX}-panel {
+                --accent: #49c7ab;
+                --accent-strong: #65d8bf;
+                --accent-focus: rgba(73, 199, 171, 0.2);
+                --accent-focus-border: rgba(73, 199, 171, 0.62);
+                --accent-tap: rgba(73, 199, 171, 0.16);
+                --accent-glow: rgba(73, 199, 171, 0.2);
+                --panel-border: rgba(186, 204, 225, 0.13);
+                --panel-border-strong: rgba(197, 215, 235, 0.24);
+                --surface-0: #0c121a;
+                --surface-1: #111923;
+                --surface-2: #16212d;
+                --surface-3: #1b2734;
+                --surface-hover: #202d3b;
+                --nav-surface: #0a1119;
+                --success: #5dd6b2;
+                --info: #82bfff;
+                --warning: #f3bd68;
+                --danger: #ff8f9b;
+                --text: #f4f7fb;
+                --text-2: #c0cbda;
+                --text-3: #8f9daf;
+                width: min(1180px, calc(100vw - 48px));
+                height: min(852px, calc(100vh - 48px));
+                max-height: min(852px, calc(100vh - 48px));
+                display: block;
+                position: relative;
+                border-radius: 18px;
+                background: var(--surface-0);
+                box-shadow: 0 30px 80px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(0, 0, 0, 0.3);
+            }
+            .${CSS_PREFIX}-settings-shell {
+                display: grid;
+                grid-template-columns: 230px minmax(0, 1fr);
+                height: 100%;
+                min-height: 0;
+            }
+            .${CSS_PREFIX}-settings-nav {
+                min-width: 0;
+                min-height: 0;
+                display: grid;
+                grid-template-rows: auto minmax(0, 1fr) auto;
+                gap: 22px;
+                padding: 22px 14px 18px;
+                border-right: 1px solid var(--panel-border);
+                background: var(--nav-surface);
+            }
+            .${CSS_PREFIX}-nav-brand {
+                display: flex;
+                align-items: center;
+                gap: 11px;
+                padding: 0 8px;
+            }
+            .${CSS_PREFIX}-nav-mark {
+                width: 38px;
+                height: 38px;
+                display: grid;
+                place-items: center;
+                flex: 0 0 auto;
+                border: 1px solid rgba(73, 199, 171, 0.38);
+                border-radius: 12px;
+                background: rgba(73, 199, 171, 0.12);
+                color: var(--success);
+                font-size: 12px;
+                font-weight: 800;
+                letter-spacing: 0.04em;
+            }
+            .${CSS_PREFIX}-nav-eyebrow {
+                margin-bottom: 3px;
+                color: var(--text-3);
+                font-size: 9px;
+                font-weight: 760;
+                letter-spacing: 0.12em;
+                text-transform: uppercase;
+            }
+            .${CSS_PREFIX}-nav-product {
+                color: var(--text);
+                font-size: 13px;
+                font-weight: 740;
+                letter-spacing: -0.01em;
+            }
+            .${CSS_PREFIX}-nav-list {
+                display: grid;
+                align-content: start;
+                gap: 4px;
+                min-height: 0;
+                overflow: auto;
+                scrollbar-width: thin;
+            }
+            .${CSS_PREFIX}-nav-button {
+                min-height: 42px;
+                width: 100%;
+                display: grid;
+                grid-template-columns: 8px minmax(0, 1fr);
+                gap: 10px;
+                align-items: center;
+                padding: 9px 11px;
+                border: 1px solid transparent;
+                border-radius: 11px;
+                background: transparent;
+                color: var(--text-2);
+                font: 650 12px/1.3 inherit;
+                text-align: left;
+                cursor: pointer;
+                transition: color 0.16s ease, background 0.16s ease, border-color 0.16s ease;
+            }
+            .${CSS_PREFIX}-nav-button::before {
+                content: '';
+                width: 7px;
+                height: 7px;
+                border-radius: 999px;
+                border: 1px solid var(--text-3);
+            }
+            .${CSS_PREFIX}-nav-button:hover:not(:disabled) {
+                color: var(--text);
+                background: var(--surface-2);
+            }
+            .${CSS_PREFIX}-nav-button-active,
+            .${CSS_PREFIX}-nav-button[aria-current="page"] {
+                color: var(--success);
+                border-color: rgba(73, 199, 171, 0.2);
+                background: rgba(73, 199, 171, 0.13);
+            }
+            .${CSS_PREFIX}-nav-button-active::before,
+            .${CSS_PREFIX}-nav-button[aria-current="page"]::before {
+                border-color: var(--success);
+                background: var(--success);
+                box-shadow: 0 0 0 3px rgba(73, 199, 171, 0.12);
+            }
+            .${CSS_PREFIX}-nav-button:disabled {
+                opacity: 0.36;
+                cursor: default;
+            }
+            .${CSS_PREFIX}-nav-button:focus-visible {
+                outline: none;
+                box-shadow: 0 0 0 3px var(--accent-focus);
+                border-color: var(--accent-focus-border);
+            }
+            .${CSS_PREFIX}-nav-meta {
+                display: grid;
+                gap: 6px;
+                padding: 14px 9px 0;
+                border-top: 1px solid var(--panel-border);
+                color: var(--text-3);
+                font-size: 10px;
+                line-height: 1.5;
+            }
+            .${CSS_PREFIX}-nav-meta strong {
+                color: var(--text-2);
+                font-size: 11px;
+            }
+            .${CSS_PREFIX}-main-column {
+                min-width: 0;
+                min-height: 0;
+                display: grid;
+                grid-template-rows: auto auto minmax(0, 1fr) auto;
+                background: var(--surface-0);
+            }
+            .${CSS_PREFIX}-header {
+                align-items: flex-start;
+                padding: 22px 24px 18px;
+                background: var(--surface-1);
+            }
+            .${CSS_PREFIX}-header-left {
+                flex: 1 1 auto;
+            }
+            .${CSS_PREFIX}-header-search {
+                max-width: 440px;
+                margin-top: 12px;
+            }
+            .${CSS_PREFIX}-search-input {
+                min-height: 44px;
+                font-family: "Cascadia Code", "SF Mono", Consolas, monospace;
+            }
+            .${CSS_PREFIX}-content {
+                background: var(--surface-0);
+                scrollbar-gutter: stable;
+            }
+            .${CSS_PREFIX}-layout {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+                gap: 18px;
+                padding: 20px 22px 28px;
+            }
+            #${SECTION_IDS.overview},
+            #${SECTION_IDS.rules},
+            #${SECTION_IDS.blocklist},
+            #${SECTION_IDS.diagnostics} {
+                grid-column: 1 / -1;
+            }
+            .${CSS_PREFIX}-surface,
+            .${CSS_PREFIX}-summary-control,
+            .${CSS_PREFIX}-glance,
+            .${CSS_PREFIX}-detail-card,
+            .${CSS_PREFIX}-metric,
+            .${CSS_PREFIX}-row,
+            .${CSS_PREFIX}-note,
+            .${CSS_PREFIX}-input,
+            .${CSS_PREFIX}-blocklist-textarea {
+                border-color: var(--panel-border);
+                background: var(--surface-1);
+            }
+            .${CSS_PREFIX}-surface {
+                gap: 16px;
+                padding: 20px;
+            }
+            .${CSS_PREFIX}-summary {
+                background: linear-gradient(135deg, var(--surface-1), var(--surface-2));
+            }
+            .${CSS_PREFIX}-summary-hero {
+                grid-template-columns: minmax(0, 1fr) minmax(300px, 0.8fr);
+                gap: 24px;
+                align-items: center;
+            }
+            .${CSS_PREFIX}-summary-control {
+                min-height: 92px;
+                background: var(--surface-2);
+            }
+            .${CSS_PREFIX}-summary-facts {
+                gap: 12px;
+            }
+            .${CSS_PREFIX}-glance,
+            .${CSS_PREFIX}-metric {
+                background: var(--surface-2);
+            }
+            .${CSS_PREFIX}-metric-grid {
+                grid-template-columns: repeat(4, minmax(0, 1fr));
+                gap: 12px;
+            }
+            .${CSS_PREFIX}-row:hover,
+            .${CSS_PREFIX}-input:hover {
+                background: var(--surface-hover);
+                border-color: var(--panel-border-strong);
+            }
+            .${CSS_PREFIX}-input:focus-visible {
+                background: var(--surface-2);
+            }
+            .${CSS_PREFIX}-btn-primary {
+                color: #071713;
+                background: var(--accent);
+                box-shadow: 0 8px 22px rgba(73, 199, 171, 0.15);
+            }
+            .${CSS_PREFIX}-btn-primary:hover {
+                background: var(--accent-strong);
+            }
+            .${CSS_PREFIX}-btn-secondary,
+            .${CSS_PREFIX}-btn-ghost,
+            .${CSS_PREFIX}-close {
+                color: var(--text-2);
+                border-color: var(--panel-border);
+                background: var(--surface-1);
+            }
+            .${CSS_PREFIX}-btn-secondary:hover,
+            .${CSS_PREFIX}-btn-ghost:hover,
+            .${CSS_PREFIX}-close:hover {
+                color: var(--text);
+                border-color: var(--panel-border-strong);
+                background: var(--surface-hover);
+            }
+            .${CSS_PREFIX}-btn-danger,
+            .${CSS_PREFIX}-btn[data-armed="true"] {
+                color: var(--danger);
+            }
+            .${CSS_PREFIX}-toggle-track {
+                border-color: var(--panel-border);
+                background: var(--surface-3);
+            }
+            .${CSS_PREFIX}-footer {
+                min-height: 64px;
+                flex-wrap: nowrap;
+                padding: 12px 24px 14px;
+                background: var(--surface-1);
+            }
+            .${CSS_PREFIX}-footer-status {
+                display: inline-flex;
+                align-items: center;
+                gap: 8px;
+                color: var(--text-2);
+                font-weight: 650;
+            }
+            .${CSS_PREFIX}-footer-status::before {
+                content: '';
+                width: 8px;
+                height: 8px;
+                flex: 0 0 auto;
+                border-radius: 999px;
+                background: var(--success);
+                box-shadow: 0 0 0 3px rgba(93, 214, 178, 0.12);
+            }
+            .${CSS_PREFIX}-footer-status[data-tone="info"]::before {
+                background: var(--info);
+                box-shadow: 0 0 0 3px rgba(130, 191, 255, 0.12);
+            }
+            .${CSS_PREFIX}-footer-status[data-tone="warn"]::before {
+                background: var(--warning);
+                box-shadow: 0 0 0 3px rgba(243, 189, 104, 0.12);
+            }
+            .${CSS_PREFIX}-footer-sync {
+                flex: 0 0 auto;
+                padding: 6px 10px;
+                border: 1px solid rgba(73, 199, 171, 0.2);
+                border-radius: 999px;
+                background: rgba(73, 199, 171, 0.08);
+                color: var(--success);
+                font-size: 10px;
+                font-weight: 650;
+            }
+            .${CSS_PREFIX}-toast-lane {
+                min-height: 0;
+                background: var(--surface-1);
+            }
+            .${CSS_PREFIX}-toast-lane .${CSS_PREFIX}-toast-region:empty {
+                display: none;
+            }
+            .${CSS_PREFIX}-panel .${CSS_PREFIX}-toast-region {
+                position: static;
+                width: auto;
+                grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+                padding: 0 24px 12px;
+            }
+            .${CSS_PREFIX}-panel .${CSS_PREFIX}-toast {
+                border-color: var(--panel-border);
+                background: var(--surface-2);
+                box-shadow: none;
+                backdrop-filter: none;
+                -webkit-backdrop-filter: none;
+            }
+            html:not([dark]) .${CSS_PREFIX}-overlay {
+                background: rgba(21, 30, 41, 0.44);
+            }
+            html:not([dark]) .${CSS_PREFIX}-panel {
+                --panel-border: rgba(24, 43, 63, 0.13);
+                --panel-border-strong: rgba(24, 43, 63, 0.24);
+                --surface-0: #f2f5f8;
+                --surface-1: #ffffff;
+                --surface-2: #f7f9fb;
+                --surface-3: #e3e9ef;
+                --surface-hover: #edf3f6;
+                --nav-surface: #f7f9fb;
+                --text: #17212b;
+                --text-2: #435365;
+                --text-3: #68798c;
+                --success: #087b65;
+                --info: #1768aa;
+                --warning: #8a5a08;
+                --danger: #b62f43;
+                color-scheme: light;
+                box-shadow: 0 28px 70px rgba(18, 32, 48, 0.28), 0 0 0 1px rgba(255, 255, 255, 0.8);
+            }
+            html:not([dark]) .${CSS_PREFIX}-summary {
+                background: linear-gradient(135deg, #ffffff, #f5faf8);
+            }
+            html:not([dark]) .${CSS_PREFIX}-toggle-track::after {
+                box-shadow: 0 3px 10px rgba(31, 48, 65, 0.2);
+            }
         `;
         ensureStyleElement(`${CSS_PREFIX}-ui`).textContent = css;
+    }
+
+    function setActiveSettingsSection(sectionId) {
+        if (!sectionId) return;
+        state.activeSettingsSection = sectionId;
+        const nav = state.settingsNavEl;
+        if (!nav) return;
+        for (const button of nav.querySelectorAll(`.${CSS_PREFIX}-nav-button`)) {
+            const active = button.dataset.sectionId === sectionId;
+            button.classList.toggle(`${CSS_PREFIX}-nav-button-active`, active);
+            if (active) button.setAttribute('aria-current', 'page');
+            else button.removeAttribute('aria-current');
+        }
+    }
+
+    function updateSettingsNavigationAvailability() {
+        const nav = state.settingsNavEl;
+        if (!nav) return;
+        let firstAvailable = '';
+        for (const button of nav.querySelectorAll(`.${CSS_PREFIX}-nav-button`)) {
+            const available = !!document.getElementById(button.dataset.sectionId);
+            button.disabled = !available;
+            button.setAttribute('aria-disabled', String(!available));
+            if (available && !firstAvailable) firstAvailable = button.dataset.sectionId;
+        }
+        if (!document.getElementById(state.activeSettingsSection) && firstAvailable) {
+            setActiveSettingsSection(firstAvailable);
+        } else {
+            setActiveSettingsSection(state.activeSettingsSection);
+        }
+    }
+
+    function updateSettingsNavigationFromScroll() {
+        state.settingsScrollFrame = 0;
+        const content = document.getElementById(`${CSS_PREFIX}-content`);
+        if (!content) return;
+        if (state.settingsNavIntentSection && Date.now() < state.settingsNavIntentUntil) {
+            setActiveSettingsSection(state.settingsNavIntentSection);
+            return;
+        }
+        state.settingsNavIntentSection = '';
+        state.settingsNavIntentUntil = 0;
+        const contentTop = content.getBoundingClientRect().top;
+        let nearestIds = [];
+        let bestDistance = Number.POSITIVE_INFINITY;
+        for (const item of SETTINGS_NAV_ITEMS) {
+            const section = document.getElementById(item.sectionId);
+            if (!section) continue;
+            const distance = Math.abs(section.getBoundingClientRect().top - contentTop - 18);
+            if (distance < bestDistance - 1) {
+                bestDistance = distance;
+                nearestIds = [item.sectionId];
+            } else if (Math.abs(distance - bestDistance) <= 1) {
+                nearestIds.push(item.sectionId);
+            }
+        }
+        const activeId = nearestIds.includes(state.activeSettingsSection)
+            ? state.activeSettingsSection
+            : nearestIds[0];
+        if (activeId) setActiveSettingsSection(activeId);
+    }
+
+    function createSettingsNavigation() {
+        const nav = document.createElement('nav');
+        nav.className = `${CSS_PREFIX}-settings-nav`;
+        nav.setAttribute('aria-label', STRINGS.ui.settingsNavigation);
+
+        const brand = document.createElement('div');
+        brand.className = `${CSS_PREFIX}-nav-brand`;
+        const mark = document.createElement('span');
+        mark.className = `${CSS_PREFIX}-nav-mark`;
+        mark.setAttribute('aria-hidden', 'true');
+        mark.textContent = STRINGS.ui.productMark;
+        const brandCopy = document.createElement('div');
+        const workspace = document.createElement('div');
+        workspace.className = `${CSS_PREFIX}-nav-eyebrow`;
+        workspace.textContent = STRINGS.ui.workspace;
+        const product = document.createElement('div');
+        product.className = `${CSS_PREFIX}-nav-product`;
+        product.textContent = SCRIPT_NAME;
+        brandCopy.append(workspace, product);
+        brand.append(mark, brandCopy);
+
+        const list = document.createElement('div');
+        list.className = `${CSS_PREFIX}-nav-list`;
+        for (const item of SETTINGS_NAV_ITEMS) {
+            const button = document.createElement('button');
+            button.className = `${CSS_PREFIX}-nav-button`;
+            button.type = 'button';
+            button.dataset.sectionId = item.sectionId;
+            button.textContent = item.label;
+            button.addEventListener('click', () => {
+                setActiveSettingsSection(item.sectionId);
+                scrollSectionIntoView(item.sectionId);
+            });
+            list.appendChild(button);
+        }
+
+        const meta = document.createElement('div');
+        meta.className = `${CSS_PREFIX}-nav-meta`;
+        const version = document.createElement('strong');
+        version.textContent = `${SCRIPT_NAME} v${SCRIPT_VERSION}`;
+        const detail = document.createElement('span');
+        detail.textContent = STRINGS.ui.localSettings;
+        meta.append(version, detail);
+
+        nav.append(brand, list, meta);
+        state.settingsNavEl = nav;
+        setActiveSettingsSection(state.activeSettingsSection);
+        return nav;
     }
 
     function buildSettingsPanel() {
@@ -6287,6 +6990,14 @@
         const contentEl = document.createElement('div');
         contentEl.className = `${CSS_PREFIX}-content`;
         contentEl.id = `${CSS_PREFIX}-content`;
+        contentEl.addEventListener('scroll', () => {
+            if (state.settingsScrollFrame) return;
+            state.settingsScrollFrame = requestAnimationFrame(updateSettingsNavigationFromScroll);
+        }, { passive: true });
+
+        const toastLane = document.createElement('div');
+        toastLane.className = `${CSS_PREFIX}-toast-lane`;
+        toastLane.setAttribute('aria-label', STRINGS.ui.notifications);
 
         const footer = document.createElement('div');
         footer.className = `${CSS_PREFIX}-footer`;
@@ -6303,10 +7014,22 @@
         footerHint.className = `${CSS_PREFIX}-footer-hint`;
         footerHint.textContent = STRINGS.ui.footerHint;
 
-        footerMeta.append(footerStatus, footerHint);
-        footer.append(footerMeta);
+        const footerSync = document.createElement('div');
+        footerSync.className = `${CSS_PREFIX}-footer-sync`;
+        footerSync.id = `${CSS_PREFIX}-footer-sync`;
 
-        panel.append(header, contentEl, footer);
+        footerMeta.append(footerStatus, footerHint);
+        footer.append(footerMeta, footerSync);
+
+        const mainColumn = document.createElement('div');
+        mainColumn.className = `${CSS_PREFIX}-main-column`;
+        mainColumn.append(header, toastLane, contentEl, footer);
+
+        const shell = document.createElement('div');
+        shell.className = `${CSS_PREFIX}-settings-shell`;
+        shell.append(createSettingsNavigation(), mainColumn);
+
+        panel.append(shell);
 
         overlay.appendChild(panel);
         document.body.appendChild(overlay);
@@ -6317,6 +7040,7 @@
         buildContent();
         state.overlayEl = overlay;
         state.panelEl = panel;
+        state.toastLaneEl = toastLane;
         refreshSettingsUI();
     }
 
@@ -6338,6 +7062,7 @@
         }
         layout.append(...sections);
         content.appendChild(layout);
+        updateSettingsNavigationAvailability();
     }
 
     function createOverviewSection(query = '') {
@@ -6593,6 +7318,7 @@
         details.className = `${CSS_PREFIX}-chip-row`;
         const coverage = sanitizeFilterCoverage(state.filters?.coverage);
         const unsupportedCount = coverage.unsupportedScriptlets.reduce((sum, item) => sum + item.count, 0);
+        const rejectedDangerousCount = (coverage.rejectedDangerousScriptlets || []).reduce((sum, item) => sum + item.count, 0);
         details.append(
             createPill(STRINGS.ui.ruleVersionPill(state.filters?.version), 'neutral'),
             createPill(STRINGS.ui.syncedPill(state.lastFilterUpdate), 'neutral'),
@@ -6601,7 +7327,8 @@
             createPill(STRINGS.ui.selectorsPill(coverage.appliedSelectors), 'neutral'),
             createPill(STRINGS.ui.prunePathsPill(coverage.appliedPrunePaths), 'neutral'),
             createPill(STRINGS.ui.networkOnlyPill(coverage.networkOnlyRules), coverage.networkOnlyRules ? 'info' : 'neutral'),
-            createPill(STRINGS.ui.unsupportedScriptletsPill(unsupportedCount), unsupportedCount ? 'warn' : 'neutral')
+            createPill(STRINGS.ui.unsupportedScriptletsPill(unsupportedCount), unsupportedCount ? 'warn' : 'neutral'),
+            createPill(STRINGS.ui.rejectedDangerousPill(rejectedDangerousCount), rejectedDangerousCount ? 'danger' : 'neutral')
         );
         actions.appendChild(reset);
         field.append(label, help, row, actions);
@@ -6784,7 +7511,7 @@
             target = normalizeMigrationType(explicit[1]) || target;
         }
         if (!value) return;
-        if (!target) target = looksLikeChannelEntry(value) ? 'channel' : 'channel';
+        if (!target) target = looksLikeChannelEntry(value) ? 'channel' : 'keyword';
         if (target === 'channel') {
             result.channels.push(value);
             result.seen++;
@@ -7478,7 +8205,16 @@
             pill.dataset.tone = summary.tone;
         }
         const footerStatus = document.getElementById(`${CSS_PREFIX}-footer-status`);
-        if (footerStatus) footerStatus.textContent = summary.description;
+        if (footerStatus) {
+            footerStatus.textContent = state.filterSyncing
+                ? STRINGS.ui.syncingStatus
+                : state.filterError
+                    ? STRINGS.ui.savedWithRefreshProblem
+                    : STRINGS.ui.savedStatus;
+            footerStatus.dataset.tone = state.filterError ? 'warn' : state.filterSyncing ? 'info' : 'success';
+        }
+        const footerSync = document.getElementById(`${CSS_PREFIX}-footer-sync`);
+        if (footerSync) footerSync.textContent = STRINGS.ui.footerSync(state.lastFilterUpdate);
     }
 
     function refreshSettingsUI(rebuild = false) {
@@ -7687,6 +8423,10 @@
     function scrollSectionIntoView(sectionId) {
         const section = document.getElementById(sectionId);
         if (!section) return;
+        const reducedMotion = prefersReducedMotion();
+        state.settingsNavIntentSection = sectionId;
+        state.settingsNavIntentUntil = Date.now() + (reducedMotion ? 120 : 900);
+        setActiveSettingsSection(sectionId);
         const disclosure = section.querySelector(`.${CSS_PREFIX}-section-disclosure`);
         if (disclosure && !disclosure.open) {
             disclosure.open = true;
@@ -7694,7 +8434,7 @@
         }
         try {
             section.scrollIntoView({
-                behavior: prefersReducedMotion() ? 'auto' : 'smooth',
+                behavior: reducedMotion ? 'auto' : 'smooth',
                 block: 'start'
             });
         } catch (e) {
@@ -7705,6 +8445,18 @@
     function formatScriptletCoverage(list) {
         if (!Array.isArray(list) || !list.length) return STRINGS.common.none;
         return list.map(item => `${item.name}=${item.count}`).join(', ');
+    }
+
+    function redactUrl(url) {
+        if (!url || typeof url !== 'string') return url;
+        return url
+            .replace(/([?&])v=[^&#]+/g, '$1v=[video-id]')
+            .replace(/\/shorts\/[^/?#]+/g, '/shorts/[video-id]')
+            .replace(/[?][^#]*/g, (match) => {
+                if (/^\?v=\[video-id\]$/.test(match)) return match;
+                if (/^\?v=\[video-id\]&/.test(match)) return '?v=[video-id]';
+                return '?[redacted]';
+            });
     }
 
     function buildDiagnosticsReport() {
@@ -7727,7 +8479,7 @@
         return [
             `${SCRIPT_NAME} v${SCRIPT_VERSION}`,
             `${report.captured}: ${new Date().toISOString()}`,
-            `${report.site}: ${location.hostname}${location.pathname}`,
+            `${report.site}: ${location.hostname}${redactUrl(location.pathname + location.search)}`,
             `${report.surface}: ${getSiteLabel()} / ${getSurfaceLabel()}`,
             `${report.build}: ${IS_EXTENSION_BUILD ? report.extension : report.userscript}`,
             `${report.ua}: ${uaHint}`,
@@ -7739,7 +8491,7 @@
             `${report.filterSource}: ${getFilterSourceLabel()}`,
             `${report.filterIntegrity}: ${getFilterIntegrityLabel()}`,
             `${report.filterIntegrityDetail}: ${state.filterIntegrityMessage || STRINGS.common.none}`,
-            `${report.filterUrl}: ${resolveFilterUrl()}`,
+            `${report.filterUrl}: ${redactUrl(resolveFilterUrl())}`,
             `${report.filterVersion}: ${state.filters?.version || STRINGS.common.unknown}`,
             `${report.lastSync}: ${state.lastFilterUpdate ? new Date(state.lastFilterUpdate).toISOString() : STRINGS.common.never}`,
             `${report.lastError}: ${state.filterError || STRINGS.common.none}`,
@@ -7753,10 +8505,14 @@
             `${report.droppedUnsafeSelectors}: ${coverage.droppedUnsafeSelectors}`,
             `${report.supportedScriptlets}: ${formatScriptletCoverage(coverage.supportedScriptlets)}`,
             `${report.unsupportedScriptlets}: ${formatScriptletCoverage(coverage.unsupportedScriptlets)}`,
-            `${report.ssaiSignals}: detected=${state.stats.ssaiDetected || 0}, lastSeen=${state.ssaiLastSeen ? new Date(state.ssaiLastSeen).toISOString() : STRINGS.common.never}, lastUrl=${state.ssaiLastUrl || STRINGS.common.none}`,
+            `${report.rejectedDangerousScriptlets}: ${formatScriptletCoverage(coverage.rejectedDangerousScriptlets)}`,
+            `${report.ssaiSignals}: detected=${state.stats.ssaiDetected || 0}, lastSeen=${state.ssaiLastSeen ? new Date(state.ssaiLastSeen).toISOString() : STRINGS.common.never}, lastUrl=${redactUrl(state.ssaiLastUrl) || STRINGS.common.none}`,
+            `${report.communityApiPermission}: ${state.communityApiPermission || STRINGS.common.unknown}`,
+            `${report.communityApiCooldown}: ${Object.entries(getApiCooldownStatus()).map(([k, v]) => `${k}=${v}`).join(', ')}`,
             `${report.webpackSignatureSource}: ${state.webpackSignatureSource || STRINGS.common.unknown}`,
             `${report.webpackSignatureVersion}: ${state.webpackSignatureVersion || STRINGS.common.unknown}`,
             `${report.webpackSignatureTokens}: ${(state.webpackSignatureDatabase?.tokens || []).length}`,
+            `${report.webpackSignatureIntegrity}: ${state.webpackSignatureIntegrity || STRINGS.common.unknown}`,
             `${report.webpackSignatureError}: ${state.webpackSignatureError || STRINGS.common.none}`,
             `${report.channelBlockEntries}: ${parseBlocklist(getSetting('channel_blocklist', ''), { channel: true }).length}`,
             `${report.keywordBlockEntries}: ${parseBlocklist(getSetting('keyword_blocklist', '')).length}`,
@@ -7845,6 +8601,8 @@
         if (state.overlayEl && !state.overlayEl.isConnected) {
             state.overlayEl = null;
             state.panelEl = null;
+            state.toastLaneEl = null;
+            state.settingsNavEl = null;
         }
         if (show) injectSettingsCSS();
         // Build lazily: menu-triggered opens that happen before DOMContentLoaded
@@ -7862,10 +8620,12 @@
         if (show) {
             state.lastFocusedEl = document.activeElement instanceof HTMLElement ? document.activeElement : null;
             state.overlayEl.classList.add(`${CSS_PREFIX}-active`);
+            document.body.classList.add(`${CSS_PREFIX}-settings-open`);
             // Remove rather than set to "false" — explicit aria-hidden="false"
             // can conflict with ancestor inheritance semantics in some AT.
             state.overlayEl.removeAttribute('aria-hidden');
             setBackgroundInert(true);
+            placeToastRegion(true);
             buildContent();
             refreshSettingsUI();
             requestAnimationFrame(() => {
@@ -7873,8 +8633,10 @@
                 target?.focus();
             });
         } else {
+            placeToastRegion(false);
             state.overlayEl.classList.remove(`${CSS_PREFIX}-active`);
             state.overlayEl.setAttribute('aria-hidden', 'true');
+            document.body.classList.remove(`${CSS_PREFIX}-settings-open`);
             setBackgroundInert(false);
             // Drop uncommitted URL edits when the panel closes so the next
             // open shows the committed value rather than stale scratch text.
@@ -7882,6 +8644,10 @@
             state.settingsQuery = '';
             const searchInput = document.getElementById(`${CSS_PREFIX}-settings-search`);
             if (searchInput) searchInput.value = '';
+            state.activeSettingsSection = SECTION_IDS.overview;
+            state.settingsNavIntentSection = '';
+            state.settingsNavIntentUntil = 0;
+            state.settingsScrollFrame = 0;
             state.lastFocusedEl?.focus?.();
         }
     }
@@ -7892,6 +8658,11 @@
 
     if (IS_EXTENSION_BUILD && typeof document !== 'undefined') {
         document.addEventListener('ytab:settings-changed', handleExtensionSettingsSync);
+        document.addEventListener('ytab:api-permissions-status', (event) => {
+            const detail = event && event.detail;
+            if (!detail || typeof detail !== 'object') return;
+            state.communityApiPermission = detail.granted ? 'granted' : 'denied';
+        });
     }
 
     // Phase 1: Load config and install proxies ASAP (document-start).

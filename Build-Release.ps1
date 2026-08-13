@@ -2,16 +2,17 @@
 #
 # Local release gate for YoutubeAdblock. Regenerates generated files, runs
 # syntax checks and tests, validates versions and generated outputs, then
-# writes fresh install artifacts to dist/. Optional XPI output is unsigned and
-# intended for development only; persistent Firefox installs require AMO/web-ext
-# signing outside this local gate.
+# writes fresh install artifacts to dist/. Userscript + ZIP are the safe default.
+# CRX output requires the existing private key for the pinned extension ID.
+# Optional XPI output is unsigned and intended for development only.
 
 [CmdletBinding()]
 param(
     [string]$RepoRoot,
     [string]$OutputDir = 'dist',
     [ValidateSet('Userscript', 'Zip', 'Xpi', 'Crx')]
-    [string[]]$Artifacts = @('Userscript', 'Zip', 'Crx'),
+    [string[]]$Artifacts = @('Userscript', 'Zip'),
+    [string]$CrxKeyPath,
     [string]$BrowserPath,
     [switch]$VerifyPublication
 )
@@ -183,6 +184,7 @@ if ($artifactSet.Contains('Crx')) {
         OutputDir = $outputDirAbs
         SkipExtensionBuild = $true
     }
+    if ($CrxKeyPath) { $crxArgs.KeyPath = $CrxKeyPath }
     if ($BrowserPath) { $crxArgs.BrowserPath = $BrowserPath }
     & (Join-Path $repoRootAbs 'Build-CRX.ps1') @crxArgs
     if ($LASTEXITCODE -ne 0) { throw 'Build-CRX.ps1 failed.' }
@@ -202,10 +204,13 @@ $provenance = [ordered]@{
     nodeVersion = if ($nodeVersion) { $nodeVersion.Trim() } else { 'unknown' }
     npmVersion = if ($npmVersion) { $npmVersion.Trim() } else { 'unknown' }
     playwrightVersion = if ($playwrightVersion) { $playwrightVersion } else { 'unknown' }
+    artifacts = @($Artifacts)
     builtAt = (Get-Date -Format 'o')
     testCommand = 'node --test tests/*.mjs'
 }
-$provenance | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $provenancePath -Encoding UTF8
+$provenanceJson = $provenance | ConvertTo-Json -Depth 5
+$utf8NoBom = [System.Text.UTF8Encoding]::new($false)
+[System.IO.File]::WriteAllText($provenancePath, $provenanceJson + [Environment]::NewLine, $utf8NoBom)
 
 $staleArtifacts = Get-ChildItem -LiteralPath $outputDirAbs -File | Where-Object {
     $_.Name -ne 'YoutubeAdblock-extension.pem' -and $_.Name -notmatch [regex]::Escape("v$version")
@@ -214,10 +219,11 @@ if ($staleArtifacts) {
     throw "Stale artifact(s) remain in ${outputDirAbs}: $($staleArtifacts.Name -join ', ')"
 }
 
-Invoke-Checked { & node $artifactVerifyScriptPath --repo-root $repoRootAbs --output-dir $outputDirAbs } 'Release artifact verification failed.'
+$artifactNames = $Artifacts -join ','
+Invoke-Checked { & node $artifactVerifyScriptPath --repo-root $repoRootAbs --output-dir $outputDirAbs --artifacts $artifactNames } 'Release artifact verification failed.'
 
 if ($VerifyPublication) {
-    Invoke-Checked { & node $artifactVerifyScriptPath --repo-root $repoRootAbs --output-dir $outputDirAbs --verify-publication } 'Release publication verification failed.'
+    Invoke-Checked { & node $artifactVerifyScriptPath --repo-root $repoRootAbs --output-dir $outputDirAbs --artifacts $artifactNames --verify-publication } 'Release publication verification failed.'
 }
 
 Write-Host "Release gate passed for v$version"
