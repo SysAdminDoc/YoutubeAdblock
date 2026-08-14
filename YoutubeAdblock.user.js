@@ -419,6 +419,24 @@
                 migrationNoSupportedEntries: 'Migration import did not find supported channel or keyword entries.',
                 importJsonParseError: 'Import JSON could not be parsed.',
                 importJsonNoSupportedSettings: 'Import JSON did not contain supported YoutubeAdblock settings.',
+                importWrongApp: 'That export came from a different application.',
+                importFutureSchema: (found, supported) => `That export uses settings schema v${found}; this version supports up to v${supported}. Update YoutubeAdblock first.`,
+                importInvalidField: (key, reason) => `${key}: ${reason}`,
+                importInvalidUrl: 'must be a valid http(s) URL',
+                importInvalidType: 'has an unsupported value type',
+                importTooLarge: 'is larger than the supported limit',
+                importUnknownKeys: (keys) => `Ignored unknown keys: ${keys.join(', ')}`,
+                importPreview: 'Preview',
+                importPreviewHeading: 'This import will:',
+                importPreviewAdd: (key) => `add ${key}`,
+                importPreviewChange: (key) => `change ${key}`,
+                importPreviewRemove: (key) => `clear ${key}`,
+                importPreviewNoChanges: 'Nothing would change — the import matches your current settings.',
+                importConfirm: 'Apply import',
+                importCancel: 'Cancel',
+                importRolledBack: 'Import failed part-way and every change was rolled back.',
+                importUndo: 'Undo import',
+                importUndone: 'Import undone — previous settings restored.',
                 durationTitle: 'Duration Filter (seconds)',
                 durationHelp: 'Hide videos shorter than min or longer than max. Leave blank to skip.',
                 minPlaceholder: 'Min (sec)',
@@ -7900,31 +7918,198 @@
         return clean;
     }
 
-    function applyImportedSettings(settings) {
-        if (!settings || typeof settings !== 'object') return 0;
-        var changed = 0;
+    // Settings-import contract. The export declares a schema version, so
+    // the importer must honor it: reject foreign apps and future schemas
+    // outright, validate every field before writing anything, and apply
+    // the whole payload or none of it.
+    const SETTINGS_SCHEMA_VERSION = 1;
+    const IMPORT_MAX_TEXT_BYTES = 64 * 1024;
+
+    /**
+     * Validate an import payload without touching storage. Returns either
+     * a rejection with a user-facing reason, or the normalized values plus
+     * a preflight diff describing exactly what would change.
+     */
+    function validateImportPayload(parsed) {
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+            return { ok: false, error: STRINGS.ui.blocklist.importJsonNoSupportedSettings };
+        }
+        const envelope = (parsed.settings && typeof parsed.settings === 'object' && !Array.isArray(parsed.settings))
+            ? parsed : null;
+        const settings = envelope ? parsed.settings : parsed;
+        if (envelope && typeof parsed.app === 'string' && parsed.app !== SCRIPT_NAME) {
+            return { ok: false, error: STRINGS.ui.blocklist.importWrongApp };
+        }
+        if (envelope && parsed.version != null) {
+            const version = Number(parsed.version);
+            if (!Number.isFinite(version) || version < 1) {
+                return { ok: false, error: STRINGS.ui.blocklist.importJsonNoSupportedSettings };
+            }
+            if (version > SETTINGS_SCHEMA_VERSION) {
+                return {
+                    ok: false,
+                    error: STRINGS.ui.blocklist.importFutureSchema(version, SETTINGS_SCHEMA_VERSION)
+                };
+            }
+        }
+        if (!settings || typeof settings !== 'object' || Array.isArray(settings)) {
+            return { ok: false, error: STRINGS.ui.blocklist.importJsonNoSupportedSettings };
+        }
+
+        const values = {};
+        const diff = [];
+        const invalid = [];
+        const unknown = [];
+        const knownKeys = new Set([...PORTABLE_TEXT_SETTINGS, 'enabled', 'feature_overrides']);
+
+        for (const key of Object.keys(settings)) {
+            if (!knownKeys.has(key)) unknown.push(key);
+        }
+
         for (const key of PORTABLE_TEXT_SETTINGS) {
             if (!(key in settings)) continue;
-            var value = String(settings[key] == null ? '' : settings[key]);
-            if (key === 'filter_url' && value && !isValidHttpUrl(value)) continue;
+            const rawValue = settings[key];
+            if (rawValue != null && typeof rawValue !== 'string' && typeof rawValue !== 'number') {
+                invalid.push([key, STRINGS.ui.blocklist.importInvalidType]);
+                continue;
+            }
+            let value = String(rawValue == null ? '' : rawValue);
+            if (value.length > IMPORT_MAX_TEXT_BYTES) {
+                invalid.push([key, STRINGS.ui.blocklist.importTooLarge]);
+                continue;
+            }
+            if (key === 'filter_url' && value && !isValidHttpUrl(value)) {
+                invalid.push([key, STRINGS.ui.blocklist.importInvalidUrl]);
+                continue;
+            }
             if (key === 'channel_blocklist' || key === 'keyword_blocklist' || key === 'ad_allowlist') {
                 value = normalizeBlocklistText(value);
             }
-            setSetting(key, value);
-            changed++;
+            const current = String(getSetting(key, ''));
+            if (current !== value) {
+                diff.push({ key, kind: value ? (current ? 'change' : 'add') : 'remove' });
+            }
+            values[key] = value;
         }
-        if (typeof settings.enabled === 'boolean') {
-            setSetting('enabled', settings.enabled);
-            state.enabled = settings.enabled;
-            changed++;
+
+        if ('enabled' in settings) {
+            if (typeof settings.enabled !== 'boolean') {
+                invalid.push(['enabled', STRINGS.ui.blocklist.importInvalidType]);
+            } else {
+                values.enabled = settings.enabled;
+                if (isEnabled() !== settings.enabled) diff.push({ key: 'enabled', kind: 'change' });
+            }
         }
-        var overrides = sanitizeImportedFeatureOverrides(settings.feature_overrides);
-        if (overrides) {
-            setSetting('feature_overrides', overrides);
-            state.features = normalizeFeatures({ ...(state.filters?.features || {}), ...overrides });
-            changed++;
+
+        if ('feature_overrides' in settings) {
+            const overrides = sanitizeImportedFeatureOverrides(settings.feature_overrides);
+            if (!overrides) {
+                invalid.push(['feature_overrides', STRINGS.ui.blocklist.importInvalidType]);
+            } else {
+                values.feature_overrides = overrides;
+                const current = getFeatureOverrides();
+                if (JSON.stringify(current) !== JSON.stringify(overrides)) {
+                    diff.push({ key: 'feature_overrides', kind: 'change' });
+                }
+            }
         }
-        return changed;
+
+        if (invalid.length) {
+            return {
+                ok: false,
+                error: invalid
+                    .map(([key, reason]) => STRINGS.ui.blocklist.importInvalidField(key, reason))
+                    .join(' ')
+            };
+        }
+        if (!Object.keys(values).length) {
+            return { ok: false, error: STRINGS.ui.blocklist.importJsonNoSupportedSettings };
+        }
+        return { ok: true, values, diff, unknown };
+    }
+
+    // Snapshot of every settings key the importer can write, so a failed
+    // or undone import restores exactly the prior configuration.
+    function snapshotPortableSettings() {
+        const snapshot = { feature_overrides: getFeatureOverrides(), enabled: isEnabled() };
+        for (const key of PORTABLE_TEXT_SETTINGS) snapshot[key] = String(getSetting(key, ''));
+        return snapshot;
+    }
+
+    function restorePortableSettings(snapshot) {
+        if (!snapshot) return false;
+        for (const key of PORTABLE_TEXT_SETTINGS) {
+            if (key in snapshot) setSetting(key, snapshot[key]);
+        }
+        if ('enabled' in snapshot) {
+            setSetting('enabled', snapshot.enabled);
+            state.enabled = snapshot.enabled;
+        }
+        if (snapshot.feature_overrides) {
+            setSetting('feature_overrides', snapshot.feature_overrides);
+            state.features = normalizeFeatures({ ...(state.filters?.features || {}), ...snapshot.feature_overrides });
+        }
+        return true;
+    }
+
+    // Last import's pre-change snapshot, kept in memory only so undo is
+    // available for the session without persisting a shadow copy of the
+    // user's settings.
+    let lastImportSnapshot = null;
+
+    function undoLastImport() {
+        if (!lastImportSnapshot) return false;
+        const restored = restorePortableSettings(lastImportSnapshot);
+        lastImportSnapshot = null;
+        return restored;
+    }
+
+    function hasUndoableImport() {
+        return !!lastImportSnapshot;
+    }
+
+    /**
+     * Apply validated values atomically: snapshot first, write everything,
+     * and roll the whole set back if any single write fails.
+     */
+    function applyValidatedSettings(values) {
+        const snapshot = snapshotPortableSettings();
+        try {
+            let changed = 0;
+            for (const key of PORTABLE_TEXT_SETTINGS) {
+                if (!(key in values)) continue;
+                if (!setSetting(key, values[key])) throw new Error(`failed to persist ${key}`);
+                changed++;
+            }
+            if ('enabled' in values) {
+                if (!setSetting('enabled', values.enabled)) throw new Error('failed to persist enabled');
+                state.enabled = values.enabled;
+                changed++;
+            }
+            if (values.feature_overrides) {
+                if (!setSetting('feature_overrides', values.feature_overrides)) {
+                    throw new Error('failed to persist feature_overrides');
+                }
+                state.features = normalizeFeatures({
+                    ...(state.filters?.features || {}),
+                    ...values.feature_overrides
+                });
+                changed++;
+            }
+            lastImportSnapshot = snapshot;
+            return { ok: true, count: changed };
+        } catch (e) {
+            restorePortableSettings(snapshot);
+            lastImportSnapshot = null;
+            return { ok: false, error: STRINGS.ui.blocklist.importRolledBack };
+        }
+    }
+
+    function applyImportedSettings(settings) {
+        const validation = validateImportPayload(settings);
+        if (!validation.ok) return 0;
+        const applied = applyValidatedSettings(validation.values);
+        return applied.ok ? applied.count : 0;
     }
 
     function importSettingsPayload(raw, mode) {
@@ -7978,12 +8163,28 @@
         } catch (e) {
             return { ok: false, error: STRINGS.ui.blocklist.importJsonParseError };
         }
-        var settings = parsed && typeof parsed === 'object'
-            ? (parsed.settings && typeof parsed.settings === 'object' ? parsed.settings : parsed)
-            : null;
-        var count = applyImportedSettings(settings);
-        if (!count) return { ok: false, error: STRINGS.ui.blocklist.importJsonNoSupportedSettings };
-        return { ok: true, count, mode: 'json' };
+        const validation = validateImportPayload(parsed);
+        if (!validation.ok) return { ok: false, error: validation.error };
+        // Preflight mode: the caller wants the diff to show the user
+        // before anything is written.
+        if (mode === 'json-preview') {
+            return {
+                ok: true,
+                mode: 'json-preview',
+                diff: validation.diff,
+                unknown: validation.unknown,
+                values: validation.values
+            };
+        }
+        const applied = applyValidatedSettings(validation.values);
+        if (!applied.ok) return { ok: false, error: applied.error };
+        return {
+            ok: true,
+            count: applied.count,
+            mode: 'json',
+            diff: validation.diff,
+            unknown: validation.unknown
+        };
     }
 
     function createBlocklistEditor(title, storageKey, help) {
@@ -8077,12 +8278,62 @@
             showToast(copied ? STRINGS.ui.blocklist.channelBlocklistCopied : STRINGS.ui.blocklist.channelClipboardFallback, copied ? 'success' : 'warn');
         });
 
+        // JSON import is two-step: the first click previews an exact
+        // add/change/clear diff, the second applies it atomically. An
+        // in-session undo restores the pre-import snapshot.
+        const importPreview = document.createElement('p');
+        importPreview.className = `${CSS_PREFIX}-field-help ${CSS_PREFIX}-import-preview`;
+        importPreview.setAttribute('role', 'status');
+        importPreview.hidden = true;
+
+        const undoImport = document.createElement('button');
+        undoImport.className = `${CSS_PREFIX}-btn ${CSS_PREFIX}-btn-secondary`;
+        undoImport.type = 'button';
+        undoImport.textContent = STRINGS.ui.blocklist.importUndo;
+        undoImport.hidden = true;
+
         const importJson = document.createElement('button');
         importJson.className = `${CSS_PREFIX}-btn ${CSS_PREFIX}-btn-primary`;
         importJson.type = 'button';
         importJson.textContent = STRINGS.ui.blocklist.importJson;
+        let pendingImport = null;
+
+        function resetImportPreview() {
+            pendingImport = null;
+            importPreview.hidden = true;
+            importPreview.textContent = '';
+            importJson.textContent = STRINGS.ui.blocklist.importJson;
+        }
+
+        function describeDiff(diff, unknown) {
+            const parts = diff.map(entry => {
+                if (entry.kind === 'add') return STRINGS.ui.blocklist.importPreviewAdd(entry.key);
+                if (entry.kind === 'remove') return STRINGS.ui.blocklist.importPreviewRemove(entry.key);
+                return STRINGS.ui.blocklist.importPreviewChange(entry.key);
+            });
+            const lines = parts.length
+                ? [STRINGS.ui.blocklist.importPreviewHeading, parts.join(', ')]
+                : [STRINGS.ui.blocklist.importPreviewNoChanges];
+            if (unknown && unknown.length) lines.push(STRINGS.ui.blocklist.importUnknownKeys(unknown));
+            return lines.join(' ');
+        }
+
         importJson.addEventListener('click', () => {
+            if (!pendingImport || pendingImport.raw !== payload.value) {
+                const preview = importSettingsPayload(payload.value, 'json-preview');
+                if (!preview.ok) {
+                    resetImportPreview();
+                    showToast(preview.error, 'error');
+                    return;
+                }
+                pendingImport = { raw: payload.value };
+                importPreview.textContent = describeDiff(preview.diff, preview.unknown);
+                importPreview.hidden = false;
+                importJson.textContent = STRINGS.ui.blocklist.importConfirm;
+                return;
+            }
             const result = importSettingsPayload(payload.value, 'json');
+            resetImportPreview();
             if (!result.ok) {
                 showToast(result.error, 'error');
                 return;
@@ -8091,7 +8342,24 @@
             updateCosmeticCSS();
             updateClutterCSS();
             refreshSettingsUI(true);
+            undoImport.hidden = !hasUndoableImport();
             showToast(STRINGS.ui.blocklist.importedSettings(result.count), 'success');
+        });
+
+        undoImport.addEventListener('click', () => {
+            if (!undoLastImport()) return;
+            undoImport.hidden = true;
+            loadState();
+            updateCosmeticCSS();
+            updateClutterCSS();
+            refreshSettingsUI(true);
+            showToast(STRINGS.ui.blocklist.importUndone, 'success');
+        });
+
+        // Editing the payload invalidates a pending preview so the
+        // confirm click can never apply different content than reviewed.
+        payload.addEventListener('input', () => {
+            if (pendingImport && pendingImport.raw !== payload.value) resetImportPreview();
         });
 
         const importText = document.createElement('button');
@@ -8122,8 +8390,8 @@
             showToast(STRINGS.ui.blocklist.migrationImported(result.channels, result.keywords, result.rejected && result.rejected.length), 'success');
         });
 
-        actions.append(copyJson, copyText, importJson, importText, importMigration);
-        wrap.append(payload, actions);
+        actions.append(copyJson, copyText, importJson, importText, importMigration, undoImport);
+        wrap.append(payload, importPreview, actions);
         return wrap;
     }
 

@@ -165,6 +165,7 @@ The v0.5.23 Control Center keeps the selected ImageGen-led desktop shell and add
 | Interface Cleanup | Hide selected feeds, shelves, comments, chat, merchandise, and other desktop clutter | Optional |
 | Focus & Filters | Configure Shorts redirect, channel/keyword filtering, whitelist mode, duration limits, creator ad exceptions, and import/export | Off |
 | Diagnostics | Inspect extension packaged-rule matches, copy a privacy-scrubbed snapshot, reset counters, or restore recommended defaults | Available |
+| Settings Import | Import a settings JSON export with schema-version checks, full field validation, a confirmable add/change/clear preview, all-or-nothing apply, and one-click undo | Available |
 
 ### Filter List
 

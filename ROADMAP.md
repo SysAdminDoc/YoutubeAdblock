@@ -99,13 +99,6 @@ Incomplete, actionable work only. Completed work belongs in `CHANGELOG.md`. Ever
   Acceptance: the signed envelope includes schema, artifact role, content name, hash, byte count, monotonic revision, expiry, and key ID; filter and webpack roles use domain-separated authorization; the client persists the highest accepted revision per role, rejects replayed, expired, cross-role, or partially mixed candidates, and supports a tested key-rotation path; rejection retains the last-known-good generation offline with an explicit stale reason.
   Complexity: M
 
-- [ ] P1 — Make settings import versioned, preflighted, atomic, and undoable
-  Why: Export declares app/schema versions, but import ignores them, silently skips invalid fields, and performs sequential writes that can leave a partial configuration.
-  Evidence: YoutubeAdblock.user.js:7448-7470,7586-7692; current portability UI; migration and upgrade category audit.
-  Touches: YoutubeAdblock.user.js; tests/engine-core.test.mjs; tests/browser-smoke.test.mjs; README.md.
-  Acceptance: import validates app, schema version, every supported field, limits, and URLs before writing; future schemas are rejected with a clear message; the user sees an exact add/change/remove diff; one confirmed operation either commits every change or restores the pre-import snapshot; one-click undo remains available for the session; version-1, malformed, oversized, unknown-key, future-version, and injected write-failure fixtures prove deterministic behavior in userscript and extension builds.
-  Complexity: M
-
 - [ ] P1 — Split development diagnostics from least-privilege production manifests
   Why: tabs grants sensitive tab metadata the background does not need, while declarativeNetRequestFeedback is documented for unpacked-extension debugging and cannot support the current production evidence claim.
   Evidence: extension/manifest.json:20-26; extension/background.js:117-191,309-329; extension/README.md:49-57; Chrome Tabs API; Chrome Declarative Net Request API; Chrome Web Store Use of Permissions policy.

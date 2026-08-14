@@ -5,6 +5,12 @@ All notable changes to YoutubeAdblock are documented here.
 ## [Unreleased]
 
 ### Added
+- **Safe settings import**: JSON import now validates the declared app and
+  schema version (future schemas are rejected with a clear message),
+  checks every field, URL, and size limit before writing, and shows an
+  exact add/change/clear preview that must be confirmed. The apply step is
+  atomic — a failed write rolls back every change — and a one-click undo
+  restores the pre-import settings for the rest of the session.
 - **Bounded user regex grammar**: channel/keyword/allowlist `/regex/`
   entries are validated against a conservative safe subset (length and
   entry-count caps, no backreferences or lookarounds, no quantified group

@@ -44,6 +44,8 @@ function createTestHarness(options = {}) {
     const createElement = () => noopEl();
 
     const storage = { ...(options.storage || {}) };
+    let writeFailureAfter = null;
+    let writesPerformed = 0;
     const querySelector = options.querySelector || (() => noopEl());
     const documentReadyState = options.documentReadyState || 'complete';
     const performanceNow = options.performanceNow ?? 0;
@@ -96,7 +98,18 @@ function createTestHarness(options = {}) {
         __YTAB_STORAGE_KEY: options.extensionBuild ? '__ytab_ext_settings__' : undefined,
         // GM_* stubs for the userscript init path
         GM_getValue: (key, def) => Object.prototype.hasOwnProperty.call(storage, key) ? storage[key] : def,
-        GM_setValue: (key, val) => { storage[key] = val; },
+        GM_setValue: (key, val) => {
+            // Injected-failure hook: tests can make the Nth+ write throw
+            // to prove the importer's rollback path.
+            if (writeFailureAfter !== null && writesPerformed >= writeFailureAfter) {
+                // Fail exactly once so the importer's rollback writes,
+                // which follow immediately, can still succeed.
+                writeFailureAfter = null;
+                throw new Error('injected storage write failure');
+            }
+            writesPerformed++;
+            storage[key] = val;
+        },
         GM_registerMenuCommand: noop,
         GM_unregisterMenuCommand: noop,
         GM_xmlhttpRequest: options.gmXhr || noop,
@@ -152,6 +165,12 @@ function createTestHarness(options = {}) {
         getApiCooldownStatus,
         apiCooldowns,
         validateSafeRegexSource,
+        validateImportPayload,
+        applyValidatedSettings,
+        undoLastImport,
+        hasUndoableImport,
+        snapshotPortableSettings,
+        SETTINGS_SCHEMA_VERSION,
         matchesList,
         getParsedBlocklist,
         sanitizeCommunityConsent,
@@ -184,6 +203,7 @@ function createTestHarness(options = {}) {
         if (!exported) throw new Error('Failed to extract test functions: ' + e.message + '\n' + e.stack);
     }
     exported.__storage = storage;
+    exported.__failWriteAfter = (n) => { writeFailureAfter = n; writesPerformed = 0; };
     return exported;
 }
 
@@ -1406,4 +1426,125 @@ test('safe user regex corpus matches long renderer titles within budget', () => 
     const elapsed = performance.now() - startTime;
     assert.equal(matches, 0);
     assert.ok(elapsed < 1000, `matching took ${elapsed.toFixed(0)}ms, budget is 1000ms`);
+});
+
+
+// ========== settings import: versioned, preflighted, atomic, undoable ==========
+
+function exportEnvelope(settings, overrides = {}) {
+    return JSON.stringify({
+        app: 'YoutubeAdblock',
+        version: 1,
+        appVersion: '0.5.23',
+        exportedAt: '2026-08-14T00:00:00.000Z',
+        settings,
+        ...overrides
+    });
+}
+
+test('import rejects a future settings schema version', () => {
+    const h = createTestHarness({ storage: {} });
+    const raw = exportEnvelope({ keyword_blocklist: 'spam' }, { version: 99 });
+    const result = h.importSettingsPayload(raw, 'json');
+    assert.equal(result.ok, false);
+    assert.match(result.error, /schema v99/);
+    assert.equal(h.__storage.ytab_keyword_blocklist, undefined, 'nothing may be written');
+});
+
+test('import rejects an export from a different application', () => {
+    const h = createTestHarness({ storage: {} });
+    const raw = exportEnvelope({ keyword_blocklist: 'spam' }, { app: 'SomeOtherBlocker' });
+    const result = h.importSettingsPayload(raw, 'json');
+    assert.equal(result.ok, false);
+    assert.match(result.error, /different application/);
+    assert.equal(h.__storage.ytab_keyword_blocklist, undefined);
+});
+
+test('import rejects invalid fields with a per-field reason and writes nothing', () => {
+    const h = createTestHarness({ storage: { ytab_keyword_blocklist: 'original' } });
+    const bad = exportEnvelope({ filter_url: 'javascript:alert(1)', keyword_blocklist: 'new' });
+    const result = h.importSettingsPayload(bad, 'json');
+    assert.equal(result.ok, false);
+    assert.match(result.error, /filter_url/);
+    assert.equal(h.__storage.ytab_keyword_blocklist, 'original', 'valid fields must not be applied');
+});
+
+test('import rejects wrong-typed enabled and feature_overrides', () => {
+    const h = createTestHarness({ storage: {} });
+    assert.equal(h.importSettingsPayload(exportEnvelope({ enabled: 'yes' }), 'json').ok, false);
+    assert.equal(h.importSettingsPayload(exportEnvelope({ feature_overrides: [1, 2] }), 'json').ok, false);
+});
+
+test('import rejects oversized field payloads', () => {
+    const h = createTestHarness({ storage: {} });
+    const huge = 'x'.repeat(70000);
+    const result = h.importSettingsPayload(exportEnvelope({ keyword_blocklist: huge }), 'json');
+    assert.equal(result.ok, false);
+    assert.match(result.error, /larger than the supported limit/);
+});
+
+test('preview reports an exact add/change/clear diff without writing', () => {
+    const h = createTestHarness({ storage: { ytab_keyword_blocklist: 'old', ytab_ad_allowlist: 'keepme' } });
+    const raw = exportEnvelope({ keyword_blocklist: 'new', channel_blocklist: 'added', ad_allowlist: '' });
+    const preview = h.importSettingsPayload(raw, 'json-preview');
+    assert.equal(preview.ok, true);
+    const byKey = Object.fromEntries(preview.diff.map(d => [d.key, d.kind]));
+    assert.equal(byKey.keyword_blocklist, 'change');
+    assert.equal(byKey.channel_blocklist, 'add');
+    assert.equal(byKey.ad_allowlist, 'remove');
+    assert.equal(h.__storage.ytab_keyword_blocklist, 'old', 'preview must not write');
+});
+
+test('preview reports unknown keys instead of silently dropping them', () => {
+    const h = createTestHarness({ storage: {} });
+    const raw = exportEnvelope({ keyword_blocklist: 'spam', mystery_setting: true });
+    const preview = h.importSettingsPayload(raw, 'json-preview');
+    assert.equal(preview.ok, true);
+    assert.deepEqual([...preview.unknown], ['mystery_setting']);
+});
+
+test('a confirmed import commits every field and supports one-click undo', () => {
+    const h = createTestHarness({ storage: { ytab_keyword_blocklist: 'before', ytab_enabled: true } });
+    const raw = exportEnvelope({
+        keyword_blocklist: 'after',
+        channel_blocklist: 'AddedChannel',
+        enabled: false,
+        feature_overrides: { keywordBlocker: true }
+    });
+    const result = h.importSettingsPayload(raw, 'json');
+    assert.equal(result.ok, true);
+    assert.equal(h.__storage.ytab_keyword_blocklist, 'after');
+    assert.equal(h.__storage.ytab_channel_blocklist, 'AddedChannel');
+    assert.equal(h.__storage.ytab_enabled, false);
+    assert.equal(h.hasUndoableImport(), true);
+
+    assert.equal(h.undoLastImport(), true);
+    assert.equal(h.__storage.ytab_keyword_blocklist, 'before');
+    assert.equal(h.__storage.ytab_channel_blocklist, '');
+    assert.equal(h.__storage.ytab_enabled, true);
+    assert.equal(h.hasUndoableImport(), false, 'undo is single-use per import');
+});
+
+test('a write failure part-way through rolls back every applied change', () => {
+    const h = createTestHarness({ storage: { ytab_keyword_blocklist: 'before', ytab_channel_blocklist: 'before-ch' } });
+    const validation = h.validateImportPayload({
+        settings: { keyword_blocklist: 'after', channel_blocklist: 'after-ch', ad_allowlist: 'after-alw' }
+    });
+    assert.equal(validation.ok, true);
+    // Fail the third write to prove the first two are reverted.
+    h.__failWriteAfter(2);
+    const applied = h.applyValidatedSettings(validation.values);
+    assert.equal(applied.ok, false);
+    assert.match(applied.error, /rolled back/);
+    assert.equal(h.__storage.ytab_keyword_blocklist, 'before');
+    assert.equal(h.__storage.ytab_channel_blocklist, 'before-ch');
+    assert.equal(h.hasUndoableImport(), false);
+});
+
+test('a version-1 export with no envelope metadata still imports', () => {
+    const h = createTestHarness({ storage: {} });
+    const legacy = JSON.stringify({ keyword_blocklist: 'legacy entry' });
+    const result = h.importSettingsPayload(legacy, 'json');
+    assert.equal(result.ok, true);
+    assert.equal(h.__storage.ytab_keyword_blocklist, 'legacy entry');
 });
