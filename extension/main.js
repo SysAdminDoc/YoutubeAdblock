@@ -268,6 +268,13 @@
             builtInIntegrityMessage: 'Built-in fallback rules are bundled with the script.',
             signedCompanionsUnavailable: 'Signed filter companion URLs are unavailable.',
             signedManifestInvalid: 'Signed filter manifest is invalid.',
+            signedManifestRejected: (reason) => {
+                if (reason === 'rollback') return 'Signed filter manifest is older than one already accepted; the last known good rules stayed active.';
+                if (reason === 'expired') return 'Signed filter manifest has expired; the last known good rules stayed active.';
+                if (reason === 'unsigned-manifest') return 'Signed filter manifest signature did not verify.';
+                return 'Signed filter manifest is invalid.';
+            },
+            webpackSignatureStale: 'Webpack signature manifest was replayed or expired; the last known good database stayed active.',
             signedByteMismatch: 'Signed filter byte count does not match the downloaded list.',
             signedHashMismatch: 'Signed filter hash does not match the downloaded list.',
             signedVerificationFailed: 'Signed filter verification failed.',
@@ -467,6 +474,16 @@
                 migrationToast: 'Community services (SponsorBlock and friends) now require one-time consent. Open the Control Center to allow them.'
             },
             blocklist: {
+                invalidLinesNote: (count) => count === 1 ? '1 line rejected:' : `${count} lines rejected:`,
+                invalidLine: (line, reason) => `Line ${line}: ${reason}`,
+                truncatedNote: (max) => `List truncated: only the first ${max} entries are active.`,
+                regexReasons: {
+                    tooLong: 'regex too long (max 256 characters)',
+                    backreference: 'regex backreferences are not supported',
+                    lookaround: 'regex lookarounds are not supported',
+                    nestedQuantifier: 'a quantified regex group may not contain another quantifier or alternation',
+                    syntax: 'invalid regex syntax'
+                },
                 blockedChannels: 'Blocked Channels',
                 blockedChannelsWhitelistHelp: 'Whitelist mode active: only videos from these channels will be shown. Supports names, UC IDs, @handles, channel URLs, and regex.',
                 blockedChannelsHelp: 'One channel per line. Supports names, UC IDs, @handles, channel URLs, and regex, e.g. /^Exact Channel$/.',
@@ -493,6 +510,24 @@
                 migrationNoSupportedEntries: 'Migration import did not find supported channel or keyword entries.',
                 importJsonParseError: 'Import JSON could not be parsed.',
                 importJsonNoSupportedSettings: 'Import JSON did not contain supported YoutubeAdblock settings.',
+                importWrongApp: 'That export came from a different application.',
+                importFutureSchema: (found, supported) => `That export uses settings schema v${found}; this version supports up to v${supported}. Update YoutubeAdblock first.`,
+                importInvalidField: (key, reason) => `${key}: ${reason}`,
+                importInvalidUrl: 'must be a valid http(s) URL',
+                importInvalidType: 'has an unsupported value type',
+                importTooLarge: 'is larger than the supported limit',
+                importUnknownKeys: (keys) => `Ignored unknown keys: ${keys.join(', ')}`,
+                importPreview: 'Preview',
+                importPreviewHeading: 'This import will:',
+                importPreviewAdd: (key) => `add ${key}`,
+                importPreviewChange: (key) => `change ${key}`,
+                importPreviewRemove: (key) => `clear ${key}`,
+                importPreviewNoChanges: 'Nothing would change — the import matches your current settings.',
+                importConfirm: 'Apply import',
+                importCancel: 'Cancel',
+                importRolledBack: 'Import failed part-way and every change was rolled back.',
+                importUndo: 'Undo import',
+                importUndone: 'Import undone — previous settings restored.',
                 durationTitle: 'Duration Filter (seconds)',
                 durationHelp: 'Hide videos shorter than min or longer than max. Leave blank to skip.',
                 minPlaceholder: 'Min (sec)',
@@ -2129,12 +2164,14 @@
         if (url === FILTER_URL_DEFAULT) {
             return {
                 manifestUrl: FILTER_MANIFEST_URL_DEFAULT,
+                manifestSignatureUrl: `${FILTER_MANIFEST_URL_DEFAULT}.sig`,
                 signatureUrl: FILTER_SIGNATURE_URL_DEFAULT
             };
         }
         if (mirrorIndex >= 0) {
             return {
                 manifestUrl: FILTER_MANIFEST_URL_MIRRORS[mirrorIndex],
+                manifestSignatureUrl: `${FILTER_MANIFEST_URL_MIRRORS[mirrorIndex]}.sig`,
                 signatureUrl: FILTER_SIGNATURE_URL_MIRRORS[mirrorIndex]
             };
         }
@@ -2165,24 +2202,143 @@
         return bytesToBase64Url(new Uint8Array(digest));
     }
 
-    const SIGNED_CONTENT_ALLOWLIST = new Set([
-        'youtube-adblock-filters.txt',
-        'webpack-ad-signatures.json',
-    ]);
+    /* =========================================================================
+     * SIGNED UPDATE METADATA (schema v2)
+     * =========================================================================
+     * An Ed25519 signature over the content alone proves origin and
+     * integrity but not freshness: an old (content, signature) pair stays
+     * valid forever, so a stale mirror or a downgrade attacker can pin a
+     * client to superseded rules. Schema v2 signs the manifest itself,
+     * which carries an artifact role, a monotonic revision, an expiry, and
+     * a key id. The client persists the highest accepted revision per role
+     * and refuses replayed, expired, cross-role, or unknown-key updates,
+     * falling back to the last known good data with an explicit reason.
+     * Model follows The Update Framework's rollback/freeze protections.
+     * ===================================================================== */
 
-    function sanitizeFilterManifest(value) {
+    // role → the exact content file that role is allowed to describe.
+    const SIGNED_ARTIFACT_ROLES = {
+        filters: 'youtube-adblock-filters.txt',
+        'webpack-signatures': 'webpack-ad-signatures.json'
+    };
+    const SIGNED_CONTENT_ALLOWLIST = new Set(Object.values(SIGNED_ARTIFACT_ROLES));
+    // Trusted signing keys by id. Rotation adds a new id here while the
+    // previous key stays trusted until every client has updated.
+    const SIGNED_MANIFEST_KEYS = {
+        'ytab-2026-08': FILTER_PUBLIC_KEY_BASE64
+    };
+    const SIGNED_MANIFEST_SCHEMA_VERSION = 2;
+    // Signed manifest bytes are prefixed so a manifest signature can never
+    // be replayed as a content signature (or vice versa).
+    const SIGNED_MANIFEST_DOMAIN = 'ytab-manifest-v2';
+
+    function signedManifestSigningInput(manifest) {
+        // Canonical, order-independent serialization of the signed fields.
+        const canonical = JSON.stringify({
+            schemaVersion: manifest.schemaVersion,
+            algorithm: manifest.algorithm,
+            role: manifest.role,
+            signedContent: manifest.signedContent,
+            signatureFile: manifest.signatureFile,
+            keyId: manifest.keyId,
+            publicKey: manifest.publicKey,
+            sha256: manifest.sha256,
+            bytes: manifest.bytes,
+            revision: manifest.revision,
+            updated: manifest.updated,
+            expires: manifest.expires
+        });
+        return `${SIGNED_MANIFEST_DOMAIN}:${manifest.role}:${canonical}`;
+    }
+
+    function getHighestAcceptedRevision(role) {
+        const stored = getSetting(`signed_revision_${role}`, 0);
+        const value = Number(stored);
+        return Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
+    }
+
+    function recordAcceptedRevision(role, revision) {
+        if (revision > getHighestAcceptedRevision(role)) {
+            setSetting(`signed_revision_${role}`, revision);
+        }
+    }
+
+    /**
+     * Structural validation of a signed manifest. `expectedRole` binds the
+     * manifest to the artifact being verified so a valid filters manifest
+     * cannot be substituted for the webpack-signature one.
+     */
+    function sanitizeFilterManifest(value, expectedRole) {
         if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-        if (value.schemaVersion !== 1 || value.algorithm !== 'Ed25519') return null;
+        if (value.schemaVersion !== SIGNED_MANIFEST_SCHEMA_VERSION || value.algorithm !== 'Ed25519') return null;
+        if (typeof value.role !== 'string' || !(value.role in SIGNED_ARTIFACT_ROLES)) return null;
+        if (expectedRole && value.role !== expectedRole) return null;
         if (!SIGNED_CONTENT_ALLOWLIST.has(value.signedContent)) return null;
+        // The role dictates the content file; a mismatch is a mix-and-match attempt.
+        if (SIGNED_ARTIFACT_ROLES[value.role] !== value.signedContent) return null;
         if (value.signatureFile !== `${value.signedContent}.sig`) return null;
-        if (value.publicKey !== FILTER_PUBLIC_KEY_BASE64) return null;
+        if (typeof value.keyId !== 'string' || !(value.keyId in SIGNED_MANIFEST_KEYS)) return null;
+        if (value.publicKey !== SIGNED_MANIFEST_KEYS[value.keyId]) return null;
         if (typeof value.sha256 !== 'string' || !value.sha256.trim()) return null;
         if (!Number.isFinite(Number(value.bytes)) || Number(value.bytes) <= 0) return null;
+        const revision = Number(value.revision);
+        if (!Number.isFinite(revision) || revision < 1 || Math.floor(revision) !== revision) return null;
+        if (typeof value.expires !== 'string' || !value.expires.trim()) return null;
+        const expiresAt = Date.parse(value.expires);
+        if (!Number.isFinite(expiresAt)) return null;
         return {
+            role: value.role,
+            signedContent: value.signedContent,
+            signatureFile: value.signatureFile,
+            keyId: value.keyId,
+            publicKey: value.publicKey,
             sha256: value.sha256.trim(),
             bytes: Math.floor(Number(value.bytes)),
-            updated: typeof value.updated === 'string' ? value.updated.trim().slice(0, 80) : ''
+            revision,
+            expires: value.expires.trim(),
+            expiresAt,
+            updated: typeof value.updated === 'string' ? value.updated.trim().slice(0, 80) : '',
+            schemaVersion: value.schemaVersion,
+            algorithm: value.algorithm
         };
+    }
+
+    /**
+     * Freshness gate. Runs after structural validation and manifest
+     * signature verification. Returns an explicit reason so the caller can
+     * keep the last known good data and say why the candidate was refused.
+     */
+    function checkManifestFreshness(manifest, now = Date.now()) {
+        if (!manifest) return { ok: false, reason: 'invalid' };
+        if (manifest.expiresAt <= now) return { ok: false, reason: 'expired' };
+        const highest = getHighestAcceptedRevision(manifest.role);
+        if (manifest.revision < highest) return { ok: false, reason: 'rollback' };
+        return { ok: true };
+    }
+
+    async function verifySignedManifest(manifestRaw, manifestSignature, expectedRole, now = Date.now()) {
+        let parsed;
+        try {
+            parsed = jsonParseRaw(manifestRaw);
+        } catch (e) {
+            return { ok: false, reason: 'invalid' };
+        }
+        const manifest = sanitizeFilterManifest(parsed, expectedRole);
+        if (!manifest) return { ok: false, reason: 'invalid' };
+        let verified = false;
+        try {
+            verified = await verifyEd25519Signature(
+                signedManifestSigningInput(manifest),
+                manifestSignature,
+                SIGNED_MANIFEST_KEYS[manifest.keyId]
+            );
+        } catch (e) {
+            return { ok: false, reason: 'invalid' };
+        }
+        if (!verified) return { ok: false, reason: 'unsigned-manifest' };
+        const freshness = checkManifestFreshness(manifest, now);
+        if (!freshness.ok) return { ok: false, reason: freshness.reason, manifest };
+        return { ok: true, manifest };
     }
 
     async function verifyEd25519Signature(text, signatureBase64, publicKeyBase64 = FILTER_PUBLIC_KEY_BASE64) {
@@ -2242,13 +2398,12 @@
         const companions = getSignedFilterCompanionUrls(fetchUrl);
         if (!companions) throw new Error(STRINGS.filters.signedCompanionsUnavailable);
         const manifestRaw = await gmFetchText(addCacheBust(companions.manifestUrl));
-        let manifest;
-        try {
-            manifest = sanitizeFilterManifest(jsonParseRaw(manifestRaw));
-        } catch (e) {
-            manifest = null;
+        const manifestSignature = await gmFetchText(addCacheBust(companions.manifestSignatureUrl));
+        const manifestCheck = await verifySignedManifest(manifestRaw, manifestSignature, 'filters');
+        if (!manifestCheck.ok) {
+            throw new Error(STRINGS.filters.signedManifestRejected(manifestCheck.reason));
         }
-        if (!manifest) throw new Error(STRINGS.filters.signedManifestInvalid);
+        const manifest = manifestCheck.manifest;
 
         const canonicalText = normalizeFilterTextForSignature(text);
         const expectedBytes = new TextEncoder().encode(canonicalText).length;
@@ -2259,6 +2414,9 @@
         const signature = await gmFetchText(addCacheBust(companions.signatureUrl));
         const verified = await verifyEd25519Signature(canonicalText, signature);
         if (!verified) throw new Error(STRINGS.filters.signedVerificationFailed);
+        // Only a fully verified, fresh candidate advances the stored
+        // revision floor, so a later downgrade attempt is refused.
+        recordAcceptedRevision(manifest.role, manifest.revision);
         return {
             text: canonicalText,
             integrity: 'verified',
@@ -4227,8 +4385,14 @@
     async function verifyWebpackSignatureIntegrity(text) {
         try {
             const manifestRaw = await gmFetchText(addCacheBust(WEBPACK_SIGNATURE_MANIFEST_URL_DEFAULT), FILTER_FETCH_TIMEOUT_MS);
-            const manifest = sanitizeFilterManifest(jsonParseRaw(manifestRaw));
-            if (!manifest) return 'unsigned';
+            const manifestSig = await gmFetchText(addCacheBust(`${WEBPACK_SIGNATURE_MANIFEST_URL_DEFAULT}.sig`), FILTER_FETCH_TIMEOUT_MS);
+            const check = await verifySignedManifest(manifestRaw, manifestSig, 'webpack-signatures');
+            if (!check.ok) {
+                // Replayed, expired, or cross-role metadata is refused
+                // outright; the caller keeps the last known good database.
+                return check.reason === 'rollback' || check.reason === 'expired' ? 'stale' : 'unsigned';
+            }
+            const manifest = check.manifest;
             const canonical = normalizeFilterTextForSignature(text);
             const expectedBytes = new TextEncoder().encode(canonical).length;
             if (manifest.bytes !== expectedBytes) return 'tampered';
@@ -4236,7 +4400,9 @@
             if (digest !== manifest.sha256) return 'tampered';
             const sig = await gmFetchText(addCacheBust(WEBPACK_SIGNATURE_SIG_URL_DEFAULT), FILTER_FETCH_TIMEOUT_MS);
             const verified = await verifyEd25519Signature(canonical, sig);
-            return verified ? 'verified' : 'tampered';
+            if (!verified) return 'tampered';
+            recordAcceptedRevision(manifest.role, manifest.revision);
+            return 'verified';
         } catch {
             return 'unsigned';
         }
@@ -4255,6 +4421,11 @@
                 const integrity = await verifyWebpackSignatureIntegrity(text);
                 if (integrity === 'tampered') {
                     throw new Error(STRINGS.filters.webpackSignatureTampered);
+                }
+                // A replayed or expired signed manifest must never replace
+                // the active database — keep the last known good set.
+                if (integrity === 'stale') {
+                    throw new Error(STRINGS.filters.webpackSignatureStale);
                 }
                 const parsed = sanitizeWebpackSignatureDatabase(jsonParseRaw(text));
                 if (!parsed) throw new Error(STRINGS.filters.webpackSignatureInvalid);
@@ -5195,43 +5366,147 @@
         };
     }
 
+    // Bounds for user-authored blocklists. Regex entries execute
+    // synchronously inside renderer pruning, so both the accepted grammar
+    // and the haystack length are capped to keep worst-case matching
+    // linear-ish instead of letting catastrophic backtracking stall
+    // navigation (see OWASP ReDoS).
+    const BLOCKLIST_MAX_ENTRIES = 500;
+    const BLOCKLIST_MAX_REGEX_LENGTH = 256;
+    const BLOCKLIST_MAX_MATCH_INPUT = 512;
+
+    /**
+     * Conservative regex safety validator. Accepts a documented subset:
+     * no backreferences, no lookarounds, and a group may only be
+     * quantified when its contents contain neither another quantifier nor
+     * an alternation. That rejects the classic exponential families
+     * ((a+)+, (a|aa)+, (.*a)*) while keeping common blocklist patterns.
+     */
+    function validateSafeRegexSource(src) {
+        if (typeof src !== 'string' || !src) return { ok: false, reason: 'syntax' };
+        if (src.length > BLOCKLIST_MAX_REGEX_LENGTH) return { ok: false, reason: 'tooLong' };
+        // Frame for the pattern root plus one per open group. Tracks
+        // whether the frame's own contents contain a quantifier or an
+        // alternation (nested groups propagate their flags on close).
+        const stack = [{ hasQuantifier: false, hasAlternation: false }];
+        let inClass = false;
+        for (let i = 0; i < src.length; i++) {
+            const ch = src[i];
+            if (ch === '\\') {
+                const next = src[i + 1] || '';
+                if (!inClass && next >= '1' && next <= '9') return { ok: false, reason: 'backreference' };
+                if (next === 'k') return { ok: false, reason: 'backreference' };
+                i++;
+                continue;
+            }
+            if (inClass) {
+                if (ch === ']') inClass = false;
+                continue;
+            }
+            if (ch === '[') { inClass = true; continue; }
+            if (ch === '(') {
+                if (src[i + 1] === '?') {
+                    const c2 = src[i + 2];
+                    if (c2 === '=' || c2 === '!') return { ok: false, reason: 'lookaround' };
+                    if (c2 === '<' && (src[i + 3] === '=' || src[i + 3] === '!')) {
+                        return { ok: false, reason: 'lookaround' };
+                    }
+                }
+                stack.push({ hasQuantifier: false, hasAlternation: false });
+                continue;
+            }
+            if (ch === ')') {
+                if (stack.length < 2) return { ok: false, reason: 'syntax' };
+                const group = stack.pop();
+                const parent = stack[stack.length - 1];
+                // Peek past the closing paren for a quantifier.
+                const next = src[i + 1];
+                const quantified = next === '*' || next === '+' || next === '?' || next === '{';
+                if (quantified && (group.hasQuantifier || group.hasAlternation)) {
+                    return { ok: false, reason: 'nestedQuantifier' };
+                }
+                parent.hasQuantifier = parent.hasQuantifier || group.hasQuantifier || quantified;
+                parent.hasAlternation = parent.hasAlternation || group.hasAlternation;
+                continue;
+            }
+            if (ch === '*' || ch === '+' || ch === '?' || ch === '{') {
+                stack[stack.length - 1].hasQuantifier = true;
+                continue;
+            }
+            if (ch === '|') {
+                stack[stack.length - 1].hasAlternation = true;
+            }
+        }
+        if (stack.length !== 1 || inClass) return { ok: false, reason: 'syntax' };
+        return { ok: true };
+    }
+
     function parseBlocklist(raw, options) {
         if (typeof raw !== 'string' || !raw) return [];
         const channelMode = !!(options && options.channel);
         const entries = [];
+        let lineNo = 0;
+        let active = 0;
         for (const line of raw.split(/\r?\n/)) {
+            lineNo++;
             const trimmed = line.trim();
             if (!trimmed) continue;
+            if (active >= BLOCKLIST_MAX_ENTRIES) break;
             var rxMatch = trimmed.match(/^\/(.+)\/([gimsuy]*)$/);
             if (rxMatch) {
+                const safety = validateSafeRegexSource(rxMatch[1]);
+                if (!safety.ok) {
+                    // Rejected patterns surface as line-specific errors in
+                    // the editor and are skipped by every matcher — they
+                    // must never silently degrade to substring matching.
+                    entries.push({ type: 'invalid', value: trimmed, reason: safety.reason, line: lineNo });
+                    continue;
+                }
                 try {
                     var flags = rxMatch[2].includes('i') ? rxMatch[2] : rxMatch[2] + 'i';
                     entries.push({ type: 'regex', pattern: new RegExp(rxMatch[1], flags) });
+                    active++;
                 } catch (e) {
-                    entries.push({ type: 'string', value: trimmed.toLowerCase() });
+                    entries.push({ type: 'invalid', value: trimmed, reason: 'syntax', line: lineNo });
                 }
             } else if (channelMode) {
                 entries.push(parseChannelEntry(trimmed));
+                active++;
             } else {
                 entries.push({ type: 'string', value: trimmed.toLowerCase() });
+                active++;
             }
         }
         return entries;
     }
 
+    // Blocklists are consulted on every feed prune. Compile each list once
+    // per settings revision instead of re-reading storage and re-compiling
+    // regexes on every pruned payload.
+    const blocklistParseCache = new Map(); // storageKey → { raw, entries }
+
+    function getParsedBlocklist(storageKey, options) {
+        const raw = String(getSetting(storageKey, ''));
+        const cached = blocklistParseCache.get(storageKey);
+        if (cached && cached.raw === raw) return cached.entries;
+        const entries = parseBlocklist(raw, options);
+        blocklistParseCache.set(storageKey, { raw, entries });
+        return entries;
+    }
+
     function getChannelBlocklist() {
         if (!state.features.channelBlocker) return [];
-        return parseBlocklist(getSetting('channel_blocklist', ''), { channel: true });
+        return getParsedBlocklist('channel_blocklist', { channel: true });
     }
 
     function getKeywordBlocklist() {
         if (!state.features.keywordBlocker) return [];
-        return parseBlocklist(getSetting('keyword_blocklist', ''));
+        return getParsedBlocklist('keyword_blocklist');
     }
 
     function getAdAllowlist() {
         if (!state.features.adAllowlist) return [];
-        return parseBlocklist(getSetting('ad_allowlist', ''), { channel: true });
+        return getParsedBlocklist('ad_allowlist', { channel: true });
     }
 
     function parseDurationSeconds(text) {
@@ -5327,10 +5602,11 @@
 
     function matchesList(text, list) {
         if (!text) return false;
-        text = String(text);
+        text = String(text).slice(0, BLOCKLIST_MAX_MATCH_INPUT);
         var lc = text.toLowerCase();
         for (var i = 0; i < list.length; i++) {
             var entry = list[i];
+            if (entry.type === 'invalid') continue;
             if (entry.type === 'regex') {
                 entry.pattern.lastIndex = 0;
                 if (entry.pattern.test(text)) return true;
@@ -5376,11 +5652,12 @@
     function matchesChannelEntry(identity, entry) {
         identity = normalizeChannelIdentity(identity);
         if (!entry) return false;
+        if (entry.type === 'invalid') return false;
         if (entry.type === 'regex') {
             var candidates = channelIdentityCandidates(identity);
             for (var i = 0; i < candidates.length; i++) {
                 entry.pattern.lastIndex = 0;
-                if (entry.pattern.test(candidates[i])) return true;
+                if (entry.pattern.test(String(candidates[i]).slice(0, BLOCKLIST_MAX_MATCH_INPUT))) return true;
             }
             return false;
         }
@@ -6609,6 +6886,9 @@
                 font-weight: 700;
             }
             .${CSS_PREFIX}-consent-hint {
+                color: var(--warning);
+            }
+            .${CSS_PREFIX}-blocklist-feedback {
                 color: var(--warning);
             }
             .${CSS_PREFIX}-consent-card .${CSS_PREFIX}-btn[disabled] {
@@ -7865,31 +8145,198 @@
         return clean;
     }
 
-    function applyImportedSettings(settings) {
-        if (!settings || typeof settings !== 'object') return 0;
-        var changed = 0;
+    // Settings-import contract. The export declares a schema version, so
+    // the importer must honor it: reject foreign apps and future schemas
+    // outright, validate every field before writing anything, and apply
+    // the whole payload or none of it.
+    const SETTINGS_SCHEMA_VERSION = 1;
+    const IMPORT_MAX_TEXT_BYTES = 64 * 1024;
+
+    /**
+     * Validate an import payload without touching storage. Returns either
+     * a rejection with a user-facing reason, or the normalized values plus
+     * a preflight diff describing exactly what would change.
+     */
+    function validateImportPayload(parsed) {
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+            return { ok: false, error: STRINGS.ui.blocklist.importJsonNoSupportedSettings };
+        }
+        const envelope = (parsed.settings && typeof parsed.settings === 'object' && !Array.isArray(parsed.settings))
+            ? parsed : null;
+        const settings = envelope ? parsed.settings : parsed;
+        if (envelope && typeof parsed.app === 'string' && parsed.app !== SCRIPT_NAME) {
+            return { ok: false, error: STRINGS.ui.blocklist.importWrongApp };
+        }
+        if (envelope && parsed.version != null) {
+            const version = Number(parsed.version);
+            if (!Number.isFinite(version) || version < 1) {
+                return { ok: false, error: STRINGS.ui.blocklist.importJsonNoSupportedSettings };
+            }
+            if (version > SETTINGS_SCHEMA_VERSION) {
+                return {
+                    ok: false,
+                    error: STRINGS.ui.blocklist.importFutureSchema(version, SETTINGS_SCHEMA_VERSION)
+                };
+            }
+        }
+        if (!settings || typeof settings !== 'object' || Array.isArray(settings)) {
+            return { ok: false, error: STRINGS.ui.blocklist.importJsonNoSupportedSettings };
+        }
+
+        const values = {};
+        const diff = [];
+        const invalid = [];
+        const unknown = [];
+        const knownKeys = new Set([...PORTABLE_TEXT_SETTINGS, 'enabled', 'feature_overrides']);
+
+        for (const key of Object.keys(settings)) {
+            if (!knownKeys.has(key)) unknown.push(key);
+        }
+
         for (const key of PORTABLE_TEXT_SETTINGS) {
             if (!(key in settings)) continue;
-            var value = String(settings[key] == null ? '' : settings[key]);
-            if (key === 'filter_url' && value && !isValidHttpUrl(value)) continue;
+            const rawValue = settings[key];
+            if (rawValue != null && typeof rawValue !== 'string' && typeof rawValue !== 'number') {
+                invalid.push([key, STRINGS.ui.blocklist.importInvalidType]);
+                continue;
+            }
+            let value = String(rawValue == null ? '' : rawValue);
+            if (value.length > IMPORT_MAX_TEXT_BYTES) {
+                invalid.push([key, STRINGS.ui.blocklist.importTooLarge]);
+                continue;
+            }
+            if (key === 'filter_url' && value && !isValidHttpUrl(value)) {
+                invalid.push([key, STRINGS.ui.blocklist.importInvalidUrl]);
+                continue;
+            }
             if (key === 'channel_blocklist' || key === 'keyword_blocklist' || key === 'ad_allowlist') {
                 value = normalizeBlocklistText(value);
             }
-            setSetting(key, value);
-            changed++;
+            const current = String(getSetting(key, ''));
+            if (current !== value) {
+                diff.push({ key, kind: value ? (current ? 'change' : 'add') : 'remove' });
+            }
+            values[key] = value;
         }
-        if (typeof settings.enabled === 'boolean') {
-            setSetting('enabled', settings.enabled);
-            state.enabled = settings.enabled;
-            changed++;
+
+        if ('enabled' in settings) {
+            if (typeof settings.enabled !== 'boolean') {
+                invalid.push(['enabled', STRINGS.ui.blocklist.importInvalidType]);
+            } else {
+                values.enabled = settings.enabled;
+                if (isEnabled() !== settings.enabled) diff.push({ key: 'enabled', kind: 'change' });
+            }
         }
-        var overrides = sanitizeImportedFeatureOverrides(settings.feature_overrides);
-        if (overrides) {
-            setSetting('feature_overrides', overrides);
-            state.features = normalizeFeatures({ ...(state.filters?.features || {}), ...overrides });
-            changed++;
+
+        if ('feature_overrides' in settings) {
+            const overrides = sanitizeImportedFeatureOverrides(settings.feature_overrides);
+            if (!overrides) {
+                invalid.push(['feature_overrides', STRINGS.ui.blocklist.importInvalidType]);
+            } else {
+                values.feature_overrides = overrides;
+                const current = getFeatureOverrides();
+                if (JSON.stringify(current) !== JSON.stringify(overrides)) {
+                    diff.push({ key: 'feature_overrides', kind: 'change' });
+                }
+            }
         }
-        return changed;
+
+        if (invalid.length) {
+            return {
+                ok: false,
+                error: invalid
+                    .map(([key, reason]) => STRINGS.ui.blocklist.importInvalidField(key, reason))
+                    .join(' ')
+            };
+        }
+        if (!Object.keys(values).length) {
+            return { ok: false, error: STRINGS.ui.blocklist.importJsonNoSupportedSettings };
+        }
+        return { ok: true, values, diff, unknown };
+    }
+
+    // Snapshot of every settings key the importer can write, so a failed
+    // or undone import restores exactly the prior configuration.
+    function snapshotPortableSettings() {
+        const snapshot = { feature_overrides: getFeatureOverrides(), enabled: isEnabled() };
+        for (const key of PORTABLE_TEXT_SETTINGS) snapshot[key] = String(getSetting(key, ''));
+        return snapshot;
+    }
+
+    function restorePortableSettings(snapshot) {
+        if (!snapshot) return false;
+        for (const key of PORTABLE_TEXT_SETTINGS) {
+            if (key in snapshot) setSetting(key, snapshot[key]);
+        }
+        if ('enabled' in snapshot) {
+            setSetting('enabled', snapshot.enabled);
+            state.enabled = snapshot.enabled;
+        }
+        if (snapshot.feature_overrides) {
+            setSetting('feature_overrides', snapshot.feature_overrides);
+            state.features = normalizeFeatures({ ...(state.filters?.features || {}), ...snapshot.feature_overrides });
+        }
+        return true;
+    }
+
+    // Last import's pre-change snapshot, kept in memory only so undo is
+    // available for the session without persisting a shadow copy of the
+    // user's settings.
+    let lastImportSnapshot = null;
+
+    function undoLastImport() {
+        if (!lastImportSnapshot) return false;
+        const restored = restorePortableSettings(lastImportSnapshot);
+        lastImportSnapshot = null;
+        return restored;
+    }
+
+    function hasUndoableImport() {
+        return !!lastImportSnapshot;
+    }
+
+    /**
+     * Apply validated values atomically: snapshot first, write everything,
+     * and roll the whole set back if any single write fails.
+     */
+    function applyValidatedSettings(values) {
+        const snapshot = snapshotPortableSettings();
+        try {
+            let changed = 0;
+            for (const key of PORTABLE_TEXT_SETTINGS) {
+                if (!(key in values)) continue;
+                if (!setSetting(key, values[key])) throw new Error(`failed to persist ${key}`);
+                changed++;
+            }
+            if ('enabled' in values) {
+                if (!setSetting('enabled', values.enabled)) throw new Error('failed to persist enabled');
+                state.enabled = values.enabled;
+                changed++;
+            }
+            if (values.feature_overrides) {
+                if (!setSetting('feature_overrides', values.feature_overrides)) {
+                    throw new Error('failed to persist feature_overrides');
+                }
+                state.features = normalizeFeatures({
+                    ...(state.filters?.features || {}),
+                    ...values.feature_overrides
+                });
+                changed++;
+            }
+            lastImportSnapshot = snapshot;
+            return { ok: true, count: changed };
+        } catch (e) {
+            restorePortableSettings(snapshot);
+            lastImportSnapshot = null;
+            return { ok: false, error: STRINGS.ui.blocklist.importRolledBack };
+        }
+    }
+
+    function applyImportedSettings(settings) {
+        const validation = validateImportPayload(settings);
+        if (!validation.ok) return 0;
+        const applied = applyValidatedSettings(validation.values);
+        return applied.ok ? applied.count : 0;
     }
 
     function importSettingsPayload(raw, mode) {
@@ -7943,12 +8390,28 @@
         } catch (e) {
             return { ok: false, error: STRINGS.ui.blocklist.importJsonParseError };
         }
-        var settings = parsed && typeof parsed === 'object'
-            ? (parsed.settings && typeof parsed.settings === 'object' ? parsed.settings : parsed)
-            : null;
-        var count = applyImportedSettings(settings);
-        if (!count) return { ok: false, error: STRINGS.ui.blocklist.importJsonNoSupportedSettings };
-        return { ok: true, count, mode: 'json' };
+        const validation = validateImportPayload(parsed);
+        if (!validation.ok) return { ok: false, error: validation.error };
+        // Preflight mode: the caller wants the diff to show the user
+        // before anything is written.
+        if (mode === 'json-preview') {
+            return {
+                ok: true,
+                mode: 'json-preview',
+                diff: validation.diff,
+                unknown: validation.unknown,
+                values: validation.values
+            };
+        }
+        const applied = applyValidatedSettings(validation.values);
+        if (!applied.ok) return { ok: false, error: applied.error };
+        return {
+            ok: true,
+            count: applied.count,
+            mode: 'json',
+            diff: validation.diff,
+            unknown: validation.unknown
+        };
     }
 
     function createBlocklistEditor(title, storageKey, help) {
@@ -7966,15 +8429,43 @@
         ta.rows = 4;
         ta.spellcheck = false;
         ta.value = String(getSetting(storageKey, ''));
+        // Line-specific validation feedback: rejected regex lines are
+        // skipped by the matchers, so the editor must say which lines were
+        // rejected and why instead of failing silently.
+        const feedback = document.createElement('p');
+        feedback.className = `${CSS_PREFIX}-field-help ${CSS_PREFIX}-blocklist-feedback`;
+        feedback.setAttribute('role', 'status');
+        feedback.hidden = true;
+        const channelOptions = storageKey === 'keyword_blocklist' ? undefined : { channel: true };
+        function refreshFeedback(raw) {
+            const entries = parseBlocklist(raw, channelOptions);
+            const invalid = entries.filter(entry => entry.type === 'invalid');
+            const nonEmptyLines = raw.split(/\r?\n/).filter(line => line.trim()).length;
+            const notes = [];
+            if (invalid.length) {
+                notes.push(STRINGS.ui.blocklist.invalidLinesNote(invalid.length));
+                for (const entry of invalid.slice(0, 5)) {
+                    notes.push(STRINGS.ui.blocklist.invalidLine(
+                        entry.line, STRINGS.ui.blocklist.regexReasons[entry.reason] || STRINGS.ui.blocklist.regexReasons.syntax));
+                }
+            }
+            if (nonEmptyLines > BLOCKLIST_MAX_ENTRIES) {
+                notes.push(STRINGS.ui.blocklist.truncatedNote(BLOCKLIST_MAX_ENTRIES));
+            }
+            feedback.textContent = notes.join(' ');
+            feedback.hidden = notes.length === 0;
+        }
+        refreshFeedback(ta.value);
         let saveTimer = null;
         ta.addEventListener('input', () => {
             if (saveTimer) clearTimeout(saveTimer);
             saveTimer = setTimeout(() => {
                 saveTimer = null;
                 setSetting(storageKey, ta.value);
+                refreshFeedback(ta.value);
             }, 400);
         });
-        wrap.append(label, helpEl, ta);
+        wrap.append(label, helpEl, ta, feedback);
         return wrap;
     }
 
@@ -8014,12 +8505,62 @@
             showToast(copied ? STRINGS.ui.blocklist.channelBlocklistCopied : STRINGS.ui.blocklist.channelClipboardFallback, copied ? 'success' : 'warn');
         });
 
+        // JSON import is two-step: the first click previews an exact
+        // add/change/clear diff, the second applies it atomically. An
+        // in-session undo restores the pre-import snapshot.
+        const importPreview = document.createElement('p');
+        importPreview.className = `${CSS_PREFIX}-field-help ${CSS_PREFIX}-import-preview`;
+        importPreview.setAttribute('role', 'status');
+        importPreview.hidden = true;
+
+        const undoImport = document.createElement('button');
+        undoImport.className = `${CSS_PREFIX}-btn ${CSS_PREFIX}-btn-secondary`;
+        undoImport.type = 'button';
+        undoImport.textContent = STRINGS.ui.blocklist.importUndo;
+        undoImport.hidden = true;
+
         const importJson = document.createElement('button');
         importJson.className = `${CSS_PREFIX}-btn ${CSS_PREFIX}-btn-primary`;
         importJson.type = 'button';
         importJson.textContent = STRINGS.ui.blocklist.importJson;
+        let pendingImport = null;
+
+        function resetImportPreview() {
+            pendingImport = null;
+            importPreview.hidden = true;
+            importPreview.textContent = '';
+            importJson.textContent = STRINGS.ui.blocklist.importJson;
+        }
+
+        function describeDiff(diff, unknown) {
+            const parts = diff.map(entry => {
+                if (entry.kind === 'add') return STRINGS.ui.blocklist.importPreviewAdd(entry.key);
+                if (entry.kind === 'remove') return STRINGS.ui.blocklist.importPreviewRemove(entry.key);
+                return STRINGS.ui.blocklist.importPreviewChange(entry.key);
+            });
+            const lines = parts.length
+                ? [STRINGS.ui.blocklist.importPreviewHeading, parts.join(', ')]
+                : [STRINGS.ui.blocklist.importPreviewNoChanges];
+            if (unknown && unknown.length) lines.push(STRINGS.ui.blocklist.importUnknownKeys(unknown));
+            return lines.join(' ');
+        }
+
         importJson.addEventListener('click', () => {
+            if (!pendingImport || pendingImport.raw !== payload.value) {
+                const preview = importSettingsPayload(payload.value, 'json-preview');
+                if (!preview.ok) {
+                    resetImportPreview();
+                    showToast(preview.error, 'error');
+                    return;
+                }
+                pendingImport = { raw: payload.value };
+                importPreview.textContent = describeDiff(preview.diff, preview.unknown);
+                importPreview.hidden = false;
+                importJson.textContent = STRINGS.ui.blocklist.importConfirm;
+                return;
+            }
             const result = importSettingsPayload(payload.value, 'json');
+            resetImportPreview();
             if (!result.ok) {
                 showToast(result.error, 'error');
                 return;
@@ -8028,7 +8569,24 @@
             updateCosmeticCSS();
             updateClutterCSS();
             refreshSettingsUI(true);
+            undoImport.hidden = !hasUndoableImport();
             showToast(STRINGS.ui.blocklist.importedSettings(result.count), 'success');
+        });
+
+        undoImport.addEventListener('click', () => {
+            if (!undoLastImport()) return;
+            undoImport.hidden = true;
+            loadState();
+            updateCosmeticCSS();
+            updateClutterCSS();
+            refreshSettingsUI(true);
+            showToast(STRINGS.ui.blocklist.importUndone, 'success');
+        });
+
+        // Editing the payload invalidates a pending preview so the
+        // confirm click can never apply different content than reviewed.
+        payload.addEventListener('input', () => {
+            if (pendingImport && pendingImport.raw !== payload.value) resetImportPreview();
         });
 
         const importText = document.createElement('button');
@@ -8059,8 +8617,8 @@
             showToast(STRINGS.ui.blocklist.migrationImported(result.channels, result.keywords, result.rejected && result.rejected.length), 'success');
         });
 
-        actions.append(copyJson, copyText, importJson, importText, importMigration);
-        wrap.append(payload, actions);
+        actions.append(copyJson, copyText, importJson, importText, importMigration, undoImport);
+        wrap.append(payload, importPreview, actions);
         return wrap;
     }
 

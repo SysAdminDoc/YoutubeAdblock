@@ -4,7 +4,22 @@ All notable changes to YoutubeAdblock are documented here.
 
 ## [Unreleased]
 
+### Security
+- **Signed update freshness (schema v2)**: signed filter and webpack-signature
+  metadata is now itself Ed25519-signed and carries an artifact role, a
+  monotonic revision, an expiry, and a key id. Clients persist the highest
+  accepted revision per role and refuse replayed (rollback), expired
+  (freeze), cross-role, or unknown-key updates, keeping the last known
+  good data with an explicit reason instead of silently accepting stale
+  rules. `tools/sign-filter-manifest.mjs` emits and verifies the new
+  envelope plus a detached `.manifest.json.sig`.
+
 ### Added
+- **Chrome install guidance**: documented the Chrome 138+ "Allow User
+  Scripts" switch, Tampermonkey 5.5.0's injection and download permission
+  prompts, Violentmonkey's experimental Alternative page mode for MV3
+  `document-start` timing, and orientation for users arriving from
+  Manifest V2 blockers before the 2026-08-31 Chrome Web Store delisting.
 - **Safe settings import**: JSON import now validates the declared app and
   schema version (future schemas are rejected with a clear message),
   checks every field, URL, and size limit before writing, and shows an

@@ -1,10 +1,14 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "algorithm": "Ed25519",
+  "role": "filters",
   "signedContent": "youtube-adblock-filters.txt",
   "signatureFile": "youtube-adblock-filters.txt.sig",
+  "keyId": "ytab-2026-08",
   "publicKey": "MCowBQYDK2VwAyEAdkjPuIDzXFI9UPn5w4t4selqoqbT4WCinGI58a2/a6E=",
   "sha256": "lNRv74KXUF-MebiYXh84DFhZm_9Tv3coxJt5_DED_Rs",
   "bytes": 14370,
-  "updated": "2026-08-13"
+  "revision": 1,
+  "updated": "2026-08-14",
+  "expires": "2027-02-10"
 }

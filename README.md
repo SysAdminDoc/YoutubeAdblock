@@ -16,6 +16,17 @@ Desktop validation snapshot (2026-08-13): deterministic userscript/generated-ext
 3. Confirm installation when prompted, then reload YouTube
 4. Open your userscript menu and use the built-in commands to open the Control Center, pause or resume protection, or refresh rules on demand
 
+#### Chrome: extra steps your manager now requires
+
+Chromium browsers gate userscripts behind a per-browser switch, and Tampermonkey 5.5.0 (2026-05-08) added its own injection permission on top of it. If YouTube loads but the Control Center never appears, work through these in order:
+
+1. **Enable the browser's userscript switch.** On Chrome 138 and newer, open `chrome://extensions`, click your userscript manager, and turn on **Allow User Scripts**. (Older builds exposed this as Developer mode instead.) Without it the manager is installed but cannot inject anything.
+2. **Grant Tampermonkey's injection permission.** Tampermonkey 5.5.0+ prompts for a dedicated extension permission the first time it injects a script — accept it. Saving or updating a script can also raise a separate download-permission prompt; that one covers this script's rule refreshes.
+3. **Violentmonkey on MV3 Chromium:** if the script loads *late* (ads appear on the first video after a cold start, then stop working correctly on later ones), open Violentmonkey's settings and enable the experimental **Alternative page mode**, which restores reliable `document-start` timing. Violentmonkey 2.46.0–2.47.1 (2026-07-29 → 2026-08-13) leaves it off by default.
+4. **Check the diagnostic.** The Control Center's Diagnostics section reports injection timing and will tell you whether the manager started late rather than leaving you to guess from ad behavior.
+
+> **Coming from uBlock Origin?** Manifest V2 extensions stopped running in Chrome 138 (July 2025), and the Chrome Web Store removes the remaining MV2 listings on **2026-08-31**. On Chromium, full-strength blocking now means uBO Lite, another MV3 blocker, or a userscript-based one like this. This project is a YouTube-only blocker — it does not replace a general-purpose content blocker, and it is free with no premium tier or paid feature gate.
+
 ### Chrome / Edge / Brave (Chromium 121+, MV3 extension, unpacked)
 
 1. Clone or download the repo, then run `powershell -ExecutionPolicy Bypass -File .\Build-Extension.ps1` to regenerate [extension/main.js](extension/main.js) from the userscript

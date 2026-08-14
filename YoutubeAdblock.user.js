@@ -184,6 +184,13 @@
             builtInIntegrityMessage: 'Built-in fallback rules are bundled with the script.',
             signedCompanionsUnavailable: 'Signed filter companion URLs are unavailable.',
             signedManifestInvalid: 'Signed filter manifest is invalid.',
+            signedManifestRejected: (reason) => {
+                if (reason === 'rollback') return 'Signed filter manifest is older than one already accepted; the last known good rules stayed active.';
+                if (reason === 'expired') return 'Signed filter manifest has expired; the last known good rules stayed active.';
+                if (reason === 'unsigned-manifest') return 'Signed filter manifest signature did not verify.';
+                return 'Signed filter manifest is invalid.';
+            },
+            webpackSignatureStale: 'Webpack signature manifest was replayed or expired; the last known good database stayed active.',
             signedByteMismatch: 'Signed filter byte count does not match the downloaded list.',
             signedHashMismatch: 'Signed filter hash does not match the downloaded list.',
             signedVerificationFailed: 'Signed filter verification failed.',
@@ -2073,12 +2080,14 @@
         if (url === FILTER_URL_DEFAULT) {
             return {
                 manifestUrl: FILTER_MANIFEST_URL_DEFAULT,
+                manifestSignatureUrl: `${FILTER_MANIFEST_URL_DEFAULT}.sig`,
                 signatureUrl: FILTER_SIGNATURE_URL_DEFAULT
             };
         }
         if (mirrorIndex >= 0) {
             return {
                 manifestUrl: FILTER_MANIFEST_URL_MIRRORS[mirrorIndex],
+                manifestSignatureUrl: `${FILTER_MANIFEST_URL_MIRRORS[mirrorIndex]}.sig`,
                 signatureUrl: FILTER_SIGNATURE_URL_MIRRORS[mirrorIndex]
             };
         }
@@ -2109,24 +2118,143 @@
         return bytesToBase64Url(new Uint8Array(digest));
     }
 
-    const SIGNED_CONTENT_ALLOWLIST = new Set([
-        'youtube-adblock-filters.txt',
-        'webpack-ad-signatures.json',
-    ]);
+    /* =========================================================================
+     * SIGNED UPDATE METADATA (schema v2)
+     * =========================================================================
+     * An Ed25519 signature over the content alone proves origin and
+     * integrity but not freshness: an old (content, signature) pair stays
+     * valid forever, so a stale mirror or a downgrade attacker can pin a
+     * client to superseded rules. Schema v2 signs the manifest itself,
+     * which carries an artifact role, a monotonic revision, an expiry, and
+     * a key id. The client persists the highest accepted revision per role
+     * and refuses replayed, expired, cross-role, or unknown-key updates,
+     * falling back to the last known good data with an explicit reason.
+     * Model follows The Update Framework's rollback/freeze protections.
+     * ===================================================================== */
 
-    function sanitizeFilterManifest(value) {
+    // role → the exact content file that role is allowed to describe.
+    const SIGNED_ARTIFACT_ROLES = {
+        filters: 'youtube-adblock-filters.txt',
+        'webpack-signatures': 'webpack-ad-signatures.json'
+    };
+    const SIGNED_CONTENT_ALLOWLIST = new Set(Object.values(SIGNED_ARTIFACT_ROLES));
+    // Trusted signing keys by id. Rotation adds a new id here while the
+    // previous key stays trusted until every client has updated.
+    const SIGNED_MANIFEST_KEYS = {
+        'ytab-2026-08': FILTER_PUBLIC_KEY_BASE64
+    };
+    const SIGNED_MANIFEST_SCHEMA_VERSION = 2;
+    // Signed manifest bytes are prefixed so a manifest signature can never
+    // be replayed as a content signature (or vice versa).
+    const SIGNED_MANIFEST_DOMAIN = 'ytab-manifest-v2';
+
+    function signedManifestSigningInput(manifest) {
+        // Canonical, order-independent serialization of the signed fields.
+        const canonical = JSON.stringify({
+            schemaVersion: manifest.schemaVersion,
+            algorithm: manifest.algorithm,
+            role: manifest.role,
+            signedContent: manifest.signedContent,
+            signatureFile: manifest.signatureFile,
+            keyId: manifest.keyId,
+            publicKey: manifest.publicKey,
+            sha256: manifest.sha256,
+            bytes: manifest.bytes,
+            revision: manifest.revision,
+            updated: manifest.updated,
+            expires: manifest.expires
+        });
+        return `${SIGNED_MANIFEST_DOMAIN}:${manifest.role}:${canonical}`;
+    }
+
+    function getHighestAcceptedRevision(role) {
+        const stored = getSetting(`signed_revision_${role}`, 0);
+        const value = Number(stored);
+        return Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
+    }
+
+    function recordAcceptedRevision(role, revision) {
+        if (revision > getHighestAcceptedRevision(role)) {
+            setSetting(`signed_revision_${role}`, revision);
+        }
+    }
+
+    /**
+     * Structural validation of a signed manifest. `expectedRole` binds the
+     * manifest to the artifact being verified so a valid filters manifest
+     * cannot be substituted for the webpack-signature one.
+     */
+    function sanitizeFilterManifest(value, expectedRole) {
         if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-        if (value.schemaVersion !== 1 || value.algorithm !== 'Ed25519') return null;
+        if (value.schemaVersion !== SIGNED_MANIFEST_SCHEMA_VERSION || value.algorithm !== 'Ed25519') return null;
+        if (typeof value.role !== 'string' || !(value.role in SIGNED_ARTIFACT_ROLES)) return null;
+        if (expectedRole && value.role !== expectedRole) return null;
         if (!SIGNED_CONTENT_ALLOWLIST.has(value.signedContent)) return null;
+        // The role dictates the content file; a mismatch is a mix-and-match attempt.
+        if (SIGNED_ARTIFACT_ROLES[value.role] !== value.signedContent) return null;
         if (value.signatureFile !== `${value.signedContent}.sig`) return null;
-        if (value.publicKey !== FILTER_PUBLIC_KEY_BASE64) return null;
+        if (typeof value.keyId !== 'string' || !(value.keyId in SIGNED_MANIFEST_KEYS)) return null;
+        if (value.publicKey !== SIGNED_MANIFEST_KEYS[value.keyId]) return null;
         if (typeof value.sha256 !== 'string' || !value.sha256.trim()) return null;
         if (!Number.isFinite(Number(value.bytes)) || Number(value.bytes) <= 0) return null;
+        const revision = Number(value.revision);
+        if (!Number.isFinite(revision) || revision < 1 || Math.floor(revision) !== revision) return null;
+        if (typeof value.expires !== 'string' || !value.expires.trim()) return null;
+        const expiresAt = Date.parse(value.expires);
+        if (!Number.isFinite(expiresAt)) return null;
         return {
+            role: value.role,
+            signedContent: value.signedContent,
+            signatureFile: value.signatureFile,
+            keyId: value.keyId,
+            publicKey: value.publicKey,
             sha256: value.sha256.trim(),
             bytes: Math.floor(Number(value.bytes)),
-            updated: typeof value.updated === 'string' ? value.updated.trim().slice(0, 80) : ''
+            revision,
+            expires: value.expires.trim(),
+            expiresAt,
+            updated: typeof value.updated === 'string' ? value.updated.trim().slice(0, 80) : '',
+            schemaVersion: value.schemaVersion,
+            algorithm: value.algorithm
         };
+    }
+
+    /**
+     * Freshness gate. Runs after structural validation and manifest
+     * signature verification. Returns an explicit reason so the caller can
+     * keep the last known good data and say why the candidate was refused.
+     */
+    function checkManifestFreshness(manifest, now = Date.now()) {
+        if (!manifest) return { ok: false, reason: 'invalid' };
+        if (manifest.expiresAt <= now) return { ok: false, reason: 'expired' };
+        const highest = getHighestAcceptedRevision(manifest.role);
+        if (manifest.revision < highest) return { ok: false, reason: 'rollback' };
+        return { ok: true };
+    }
+
+    async function verifySignedManifest(manifestRaw, manifestSignature, expectedRole, now = Date.now()) {
+        let parsed;
+        try {
+            parsed = jsonParseRaw(manifestRaw);
+        } catch (e) {
+            return { ok: false, reason: 'invalid' };
+        }
+        const manifest = sanitizeFilterManifest(parsed, expectedRole);
+        if (!manifest) return { ok: false, reason: 'invalid' };
+        let verified = false;
+        try {
+            verified = await verifyEd25519Signature(
+                signedManifestSigningInput(manifest),
+                manifestSignature,
+                SIGNED_MANIFEST_KEYS[manifest.keyId]
+            );
+        } catch (e) {
+            return { ok: false, reason: 'invalid' };
+        }
+        if (!verified) return { ok: false, reason: 'unsigned-manifest' };
+        const freshness = checkManifestFreshness(manifest, now);
+        if (!freshness.ok) return { ok: false, reason: freshness.reason, manifest };
+        return { ok: true, manifest };
     }
 
     async function verifyEd25519Signature(text, signatureBase64, publicKeyBase64 = FILTER_PUBLIC_KEY_BASE64) {
@@ -2186,13 +2314,12 @@
         const companions = getSignedFilterCompanionUrls(fetchUrl);
         if (!companions) throw new Error(STRINGS.filters.signedCompanionsUnavailable);
         const manifestRaw = await gmFetchText(addCacheBust(companions.manifestUrl));
-        let manifest;
-        try {
-            manifest = sanitizeFilterManifest(jsonParseRaw(manifestRaw));
-        } catch (e) {
-            manifest = null;
+        const manifestSignature = await gmFetchText(addCacheBust(companions.manifestSignatureUrl));
+        const manifestCheck = await verifySignedManifest(manifestRaw, manifestSignature, 'filters');
+        if (!manifestCheck.ok) {
+            throw new Error(STRINGS.filters.signedManifestRejected(manifestCheck.reason));
         }
-        if (!manifest) throw new Error(STRINGS.filters.signedManifestInvalid);
+        const manifest = manifestCheck.manifest;
 
         const canonicalText = normalizeFilterTextForSignature(text);
         const expectedBytes = new TextEncoder().encode(canonicalText).length;
@@ -2203,6 +2330,9 @@
         const signature = await gmFetchText(addCacheBust(companions.signatureUrl));
         const verified = await verifyEd25519Signature(canonicalText, signature);
         if (!verified) throw new Error(STRINGS.filters.signedVerificationFailed);
+        // Only a fully verified, fresh candidate advances the stored
+        // revision floor, so a later downgrade attempt is refused.
+        recordAcceptedRevision(manifest.role, manifest.revision);
         return {
             text: canonicalText,
             integrity: 'verified',
@@ -4171,8 +4301,14 @@
     async function verifyWebpackSignatureIntegrity(text) {
         try {
             const manifestRaw = await gmFetchText(addCacheBust(WEBPACK_SIGNATURE_MANIFEST_URL_DEFAULT), FILTER_FETCH_TIMEOUT_MS);
-            const manifest = sanitizeFilterManifest(jsonParseRaw(manifestRaw));
-            if (!manifest) return 'unsigned';
+            const manifestSig = await gmFetchText(addCacheBust(`${WEBPACK_SIGNATURE_MANIFEST_URL_DEFAULT}.sig`), FILTER_FETCH_TIMEOUT_MS);
+            const check = await verifySignedManifest(manifestRaw, manifestSig, 'webpack-signatures');
+            if (!check.ok) {
+                // Replayed, expired, or cross-role metadata is refused
+                // outright; the caller keeps the last known good database.
+                return check.reason === 'rollback' || check.reason === 'expired' ? 'stale' : 'unsigned';
+            }
+            const manifest = check.manifest;
             const canonical = normalizeFilterTextForSignature(text);
             const expectedBytes = new TextEncoder().encode(canonical).length;
             if (manifest.bytes !== expectedBytes) return 'tampered';
@@ -4180,7 +4316,9 @@
             if (digest !== manifest.sha256) return 'tampered';
             const sig = await gmFetchText(addCacheBust(WEBPACK_SIGNATURE_SIG_URL_DEFAULT), FILTER_FETCH_TIMEOUT_MS);
             const verified = await verifyEd25519Signature(canonical, sig);
-            return verified ? 'verified' : 'tampered';
+            if (!verified) return 'tampered';
+            recordAcceptedRevision(manifest.role, manifest.revision);
+            return 'verified';
         } catch {
             return 'unsigned';
         }
@@ -4199,6 +4337,11 @@
                 const integrity = await verifyWebpackSignatureIntegrity(text);
                 if (integrity === 'tampered') {
                     throw new Error(STRINGS.filters.webpackSignatureTampered);
+                }
+                // A replayed or expired signed manifest must never replace
+                // the active database — keep the last known good set.
+                if (integrity === 'stale') {
+                    throw new Error(STRINGS.filters.webpackSignatureStale);
                 }
                 const parsed = sanitizeWebpackSignatureDatabase(jsonParseRaw(text));
                 if (!parsed) throw new Error(STRINGS.filters.webpackSignatureInvalid);

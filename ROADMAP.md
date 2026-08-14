@@ -92,13 +92,6 @@ Incomplete, actionable work only. Completed work belongs in `CHANGELOG.md`. Ever
 
 ### P1
 
-- [ ] P1 — Make signed remote data rollback-, freeze-, and mix-and-match-resistant
-  Why: Current Ed25519 signatures prove origin and content integrity but accept an older valid filter or webpack-signature release because freshness, artifact role, and key rotation are not signed or persisted.
-  Evidence: YoutubeAdblock.user.js:47-64,1967-2055,4015-4060; youtube-adblock-filters.manifest.json; webpack-ad-signatures.manifest.json; The Update Framework metadata and security model.
-  Touches: YoutubeAdblock.user.js; tools/sign-filter-manifest.mjs; both manifest/signature pairs; tests/engine-core.test.mjs; tests/repo-contract.test.mjs; README.md.
-  Acceptance: the signed envelope includes schema, artifact role, content name, hash, byte count, monotonic revision, expiry, and key ID; filter and webpack roles use domain-separated authorization; the client persists the highest accepted revision per role, rejects replayed, expired, cross-role, or partially mixed candidates, and supports a tested key-rotation path; rejection retains the last-known-good generation offline with an explicit stale reason.
-  Complexity: M
-
 - [ ] P1 — Split development diagnostics from least-privilege production manifests
   Why: tabs grants sensitive tab metadata the background does not need, while declarativeNetRequestFeedback is documented for unpacked-extension debugging and cannot support the current production evidence claim.
   Evidence: extension/manifest.json:20-26; extension/background.js:117-191,309-329; extension/README.md:49-57; Chrome Tabs API; Chrome Declarative Net Request API; Chrome Web Store Use of Permissions policy.
@@ -111,13 +104,6 @@ Incomplete, actionable work only. Completed work belongs in `CHANGELOG.md`. Ever
   Evidence: dist/browser-smoke/userscript-www-watch-dark-section-core.png; dist/browser-smoke/userscript-www-watch-dark-section-rules.png; YoutubeAdblock.user.js:5634,8466-8482; tests/browser-smoke.test.mjs section-navigation checks; WCAG 2.2 Focus Not Obscured.
   Touches: YoutubeAdblock.user.js Control Center CSS/navigation; tests/browser-smoke.test.mjs; generated extension/main.js via Build-Extension.ps1.
   Acceptance: all ten rail destinations in both themes at 1440×900 and 1920×1080 leave the target heading and first control fully visible; no preceding/following section painted or bounding region overlaps the target; the dialog remains inside the viewport; mouse and keyboard navigation preserve focus and reduced-motion behavior; Playwright asserts geometry and captures stable screenshots.
-  Complexity: S
-
-- [ ] P1 — Make the Chrome install path bulletproof before the 2026-08-31 MV2 store removal
-  Why: Chrome Web Store deletes all remaining MV2 extensions on 2026-08-31 and uBO 1.73 is expected to be its last CWS stable, so displaced Chrome users' full-strength options narrow to Firefox, uBO Lite, or userscript/MV3 blockers — this repo's Chrome onboarding becomes its front door within weeks.
-  Evidence: developer.chrome.com MV2 deprecation timeline (2026-08-31 milestone); r/uBlockOrigin 1.73 announcement thread 2026-08-05 (1vg98o4); tampermonkey.net changelog 5.5.0 (new userscript-injection permission + download-permission prompt).
-  Touches: README.md install/troubleshooting sections; extension/README.md; userscript-manager diagnostics copy in YoutubeAdblock.user.js (Allow User Scripts guidance).
-  Acceptance: README documents the current Chrome paths step-by-step — Tampermonkey 5.5.0 permission prompt named and shown, Allow User Scripts toggle, unpacked MV3 extension route — plus a short "coming from uBlock Origin" orientation note; the in-product manager diagnostics message matches Tampermonkey 5.5.x behavior; claims verified against a real Chrome + Tampermonkey 5.5.x profile or explicitly marked pending the manager-validation matrix.
   Complexity: S
 
 ### P2

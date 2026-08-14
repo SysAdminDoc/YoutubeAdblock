@@ -13,6 +13,10 @@ const extensionSource = fs.readFileSync(path.join(repoRoot, 'extension', 'main.j
 const filterText = fs.readFileSync(path.join(repoRoot, 'youtube-adblock-filters.txt'), 'utf8').replace(/\r\n?/g, '\n');
 const filterManifest = fs.readFileSync(path.join(repoRoot, 'youtube-adblock-filters.manifest.json'), 'utf8');
 const filterSignature = fs.readFileSync(path.join(repoRoot, 'youtube-adblock-filters.txt.sig'), 'utf8');
+const filterManifestSignature = fs.readFileSync(path.join(repoRoot, 'youtube-adblock-filters.manifest.json.sig'), 'utf8');
+const webpackSigManifest = fs.readFileSync(path.join(repoRoot, 'webpack-ad-signatures.manifest.json'), 'utf8');
+const webpackSigManifestSignature = fs.readFileSync(path.join(repoRoot, 'webpack-ad-signatures.manifest.json.sig'), 'utf8');
+const webpackSignatureSig = fs.readFileSync(path.join(repoRoot, 'webpack-ad-signatures.json.sig'), 'utf8');
 const webpackSignatureJson = fs.readFileSync(path.join(repoRoot, 'webpack-ad-signatures.json'), 'utf8');
 
 const surfaces = [
@@ -87,6 +91,22 @@ async function installRoutes(context, requestLog = []) {
     await context.route('**/*', async route => {
         const requestUrl = route.request().url();
         requestLog.push(requestUrl);
+        if (requestUrl.includes('youtube-adblock-filters.manifest.json.sig')) {
+            await route.fulfill({ status: 200, contentType: 'text/plain', body: filterManifestSignature });
+            return;
+        }
+        if (requestUrl.includes('webpack-ad-signatures.manifest.json.sig')) {
+            await route.fulfill({ status: 200, contentType: 'text/plain', body: webpackSigManifestSignature });
+            return;
+        }
+        if (requestUrl.includes('webpack-ad-signatures.manifest.json')) {
+            await route.fulfill({ status: 200, contentType: 'application/json', body: webpackSigManifest });
+            return;
+        }
+        if (requestUrl.includes('webpack-ad-signatures.json.sig')) {
+            await route.fulfill({ status: 200, contentType: 'text/plain', body: webpackSignatureSig });
+            return;
+        }
         if (requestUrl.includes('youtube-adblock-filters.manifest.json')) {
             await route.fulfill({ status: 200, contentType: 'application/json', body: filterManifest });
             return;
@@ -116,7 +136,16 @@ async function installRoutes(context, requestLog = []) {
 }
 
 async function installUserscriptMode(page) {
-    await page.addInitScript(({ filterText, filterManifest, filterSignature, webpackSignatureJson }) => {
+    await page.addInitScript(({
+        filterText,
+        filterManifest,
+        filterSignature,
+        filterManifestSignature,
+        webpackSignatureJson,
+        webpackSigManifest,
+        webpackSigManifestSignature,
+        webpackSignatureSig,
+    }) => {
         window.__ytabStore = {};
         window.__ytabMenus = [];
         window.GM_getValue = (key, def) => Object.prototype.hasOwnProperty.call(window.__ytabStore, key)
@@ -132,8 +161,12 @@ async function installUserscriptMode(page) {
             setTimeout(() => {
                 let body = filterText;
                 let status = 200;
-                if (opts.url.includes('youtube-adblock-filters.manifest.json')) body = filterManifest;
+                if (opts.url.includes('youtube-adblock-filters.manifest.json.sig')) body = filterManifestSignature;
+                else if (opts.url.includes('youtube-adblock-filters.manifest.json')) body = filterManifest;
                 else if (opts.url.includes('youtube-adblock-filters.txt.sig')) body = filterSignature;
+                else if (opts.url.includes('webpack-ad-signatures.manifest.json.sig')) body = webpackSigManifestSignature;
+                else if (opts.url.includes('webpack-ad-signatures.manifest.json')) body = webpackSigManifest;
+                else if (opts.url.includes('webpack-ad-signatures.json.sig')) body = webpackSignatureSig;
                 else if (opts.url.includes('webpack-ad-signatures.json')) body = webpackSignatureJson;
                 else if (opts.url.includes('returnyoutubedislikeapi.com/votes')) body = JSON.stringify({ dislikes: 1234 });
                 else if (!opts.url.includes('youtube-adblock-filters.txt')) {
@@ -143,7 +176,16 @@ async function installUserscriptMode(page) {
                 opts.onload?.({ status, statusText: status === 200 ? 'OK' : 'Not Found', responseText: body, readyState: 4 });
             }, 0);
         };
-    }, { filterText, filterManifest, filterSignature, webpackSignatureJson });
+    }, {
+        filterText,
+        filterManifest,
+        filterSignature,
+        filterManifestSignature,
+        webpackSignatureJson,
+        webpackSigManifest,
+        webpackSigManifestSignature,
+        webpackSignatureSig,
+    });
     await page.addInitScript({ content: userscriptSource });
 }
 
@@ -181,7 +223,13 @@ async function openControlCenter(page, mode) {
     }
     await page.waitForSelector('.ytab-overlay.ytab-active .ytab-panel', { timeout: 5000 });
     await page.locator('.ytab-panel').evaluate(async panel => {
-        const animations = panel.getAnimations({ subtree: true });
+        // Only settle finite animations. Looping animations (the rule-sync
+        // spinner) never resolve `finished`, so awaiting them deadlocks
+        // whenever a refresh is still in flight when the panel opens.
+        const animations = panel.getAnimations({ subtree: true }).filter(animation => {
+            const iterations = animation.effect?.getTiming?.().iterations;
+            return Number.isFinite(iterations ?? 1);
+        });
         await Promise.all(animations.map(animation => animation.finished.catch(() => {})));
     });
 }
@@ -472,6 +520,7 @@ test('browser smoke matrix opens Control Center across modes and surfaces', { sk
                 const page = await context.newPage();
                 const consoleErrors = [];
                 page.on('console', msg => {
+                    if (process.env.YTAB_SMOKE_ECHO) console.log('PAGE:' + msg.type() + ': ' + msg.text());
                     if (msg.type() === 'error') consoleErrors.push(msg.text());
                 });
                 page.on('pageerror', err => consoleErrors.push(err.message));

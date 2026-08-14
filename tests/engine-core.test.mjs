@@ -14,6 +14,8 @@ const filterSignature = fs.readFileSync(path.join(repoRoot, 'youtube-adblock-fil
 const webpackSigText = fs.readFileSync(path.join(repoRoot, 'webpack-ad-signatures.json'), 'utf8');
 const webpackSigManifest = JSON.parse(fs.readFileSync(path.join(repoRoot, 'webpack-ad-signatures.manifest.json'), 'utf8'));
 const webpackSigSignature = fs.readFileSync(path.join(repoRoot, 'webpack-ad-signatures.json.sig'), 'utf8');
+const filterManifestSignature = fs.readFileSync(path.join(repoRoot, 'youtube-adblock-filters.manifest.json.sig'), 'utf8');
+const webpackSigManifestSignature = fs.readFileSync(path.join(repoRoot, 'webpack-ad-signatures.manifest.json.sig'), 'utf8');
 
 // Extract the IIFE body, strip the header, and expose internal functions
 // via a module-return pattern so tests can call them without a browser env.
@@ -165,6 +167,11 @@ function createTestHarness(options = {}) {
         getApiCooldownStatus,
         apiCooldowns,
         validateSafeRegexSource,
+        verifySignedManifest,
+        checkManifestFreshness,
+        signedManifestSigningInput,
+        getHighestAcceptedRevision,
+        recordAcceptedRevision,
         validateImportPayload,
         applyValidatedSettings,
         undoLastImport,
@@ -1547,4 +1554,108 @@ test('a version-1 export with no envelope metadata still imports', () => {
     const result = h.importSettingsPayload(legacy, 'json');
     assert.equal(result.ok, true);
     assert.equal(h.__storage.ytab_keyword_blocklist, 'legacy entry');
+});
+
+
+// ========== signed update freshness (rollback / freeze / mix-and-match) ==========
+
+test('committed manifests are schema v2 with role, revision, expiry, and key id', () => {
+    for (const [manifest, role, content] of [
+        [filterManifest, 'filters', 'youtube-adblock-filters.txt'],
+        [webpackSigManifest, 'webpack-signatures', 'webpack-ad-signatures.json']
+    ]) {
+        assert.equal(manifest.schemaVersion, 2);
+        assert.equal(manifest.role, role);
+        assert.equal(manifest.signedContent, content);
+        assert.equal(manifest.keyId, 'ytab-2026-08');
+        assert.ok(Number.isInteger(manifest.revision) && manifest.revision >= 1);
+        assert.ok(Date.parse(manifest.expires) > Date.now(), 'committed manifest must not be expired');
+    }
+});
+
+test('a correctly signed, fresh manifest is accepted for its own role', async () => {
+    const h = createTestHarness({ storage: {} });
+    const result = await h.verifySignedManifest(
+        JSON.stringify(filterManifest), filterManifestSignature, 'filters');
+    assert.equal(result.ok, true, result.reason);
+    assert.equal(result.manifest.revision, filterManifest.revision);
+});
+
+test('a manifest signature cannot be replayed across artifact roles', async () => {
+    const h = createTestHarness({ storage: {} });
+    // The filters manifest, presented where the webpack-signature one is expected.
+    const crossRole = await h.verifySignedManifest(
+        JSON.stringify(filterManifest), filterManifestSignature, 'webpack-signatures');
+    assert.equal(crossRole.ok, false);
+    assert.equal(crossRole.reason, 'invalid');
+    // And the webpack manifest presented as the filters one.
+    const reverse = await h.verifySignedManifest(
+        JSON.stringify(webpackSigManifest), webpackSigManifestSignature, 'filters');
+    assert.equal(reverse.ok, false);
+});
+
+test('a manifest whose role does not match its content file is rejected', async () => {
+    const h = createTestHarness({ storage: {} });
+    const mixed = { ...filterManifest, role: 'webpack-signatures' };
+    const result = await h.verifySignedManifest(
+        JSON.stringify(mixed), filterManifestSignature, 'webpack-signatures');
+    assert.equal(result.ok, false);
+    assert.equal(result.reason, 'invalid');
+});
+
+test('tampering with any signed manifest field fails verification', async () => {
+    const h = createTestHarness({ storage: {} });
+    for (const patch of [{ revision: 99 }, { bytes: 1 }, { sha256: 'AAAA' }, { expires: '2099-01-01' }]) {
+        const tampered = { ...filterManifest, ...patch };
+        const result = await h.verifySignedManifest(
+            JSON.stringify(tampered), filterManifestSignature, 'filters');
+        assert.equal(result.ok, false, JSON.stringify(patch));
+        assert.equal(result.reason, 'unsigned-manifest', JSON.stringify(patch));
+    }
+});
+
+test('an unknown signing key id is rejected, supporting controlled rotation', async () => {
+    const h = createTestHarness({ storage: {} });
+    const rotated = { ...filterManifest, keyId: 'attacker-key' };
+    const result = await h.verifySignedManifest(
+        JSON.stringify(rotated), filterManifestSignature, 'filters');
+    assert.equal(result.ok, false);
+    assert.equal(result.reason, 'invalid');
+});
+
+test('a replayed older revision is refused once a newer one was accepted', async () => {
+    const h = createTestHarness({ storage: {} });
+    h.recordAcceptedRevision('filters', 7);
+    assert.equal(h.getHighestAcceptedRevision('filters'), 7);
+    const replay = h.checkManifestFreshness({ role: 'filters', revision: 6, expiresAt: Date.now() + 100000 });
+    assert.equal(replay.ok, false);
+    assert.equal(replay.reason, 'rollback');
+    // The same revision is still acceptable (re-fetch of current data).
+    assert.equal(h.checkManifestFreshness({ role: 'filters', revision: 7, expiresAt: Date.now() + 100000 }).ok, true);
+    assert.equal(h.checkManifestFreshness({ role: 'filters', revision: 8, expiresAt: Date.now() + 100000 }).ok, true);
+});
+
+test('an expired manifest is refused even when correctly signed (freeze protection)', async () => {
+    const h = createTestHarness({ storage: {} });
+    const check = h.checkManifestFreshness(
+        { role: 'filters', revision: 1, expiresAt: Date.parse('2020-01-01') });
+    assert.equal(check.ok, false);
+    assert.equal(check.reason, 'expired');
+    // And through the full path, with a clock past the committed expiry.
+    const future = Date.parse(filterManifest.expires) + 86400000;
+    const result = await h.verifySignedManifest(
+        JSON.stringify(filterManifest), filterManifestSignature, 'filters', future);
+    assert.equal(result.ok, false);
+    assert.equal(result.reason, 'expired');
+});
+
+test('the accepted revision floor only advances, never regresses', () => {
+    const h = createTestHarness({ storage: {} });
+    h.recordAcceptedRevision('filters', 5);
+    h.recordAcceptedRevision('filters', 3);
+    assert.equal(h.getHighestAcceptedRevision('filters'), 5);
+    h.recordAcceptedRevision('filters', 9);
+    assert.equal(h.getHighestAcceptedRevision('filters'), 9);
+    // Roles keep independent floors.
+    assert.equal(h.getHighestAcceptedRevision('webpack-signatures'), 0);
 });
