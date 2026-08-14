@@ -445,6 +445,27 @@
             enhanceAttribution: 'Title/thumbnail data from DeArrow (CC BY-NC-SA 4.0); dislike counts from Return YouTube Dislike.',
             dearrowAttributionLink: 'dearrow.ajay.app',
             rydAttributionLink: 'returnyoutubedislike.com',
+            consent: {
+                heading: 'Community data consent',
+                intro: 'These optional services contact third-party APIs. Nothing is sent for a service until you allow it here, and you can turn any of them off again at any time.',
+                statusGranted: 'Allowed',
+                statusDenied: 'Off',
+                statusUnset: 'Not yet allowed',
+                allow: 'Allow',
+                revoke: 'Turn off',
+                requiresSegments: 'Requires SponsorBlock segments to be allowed first.',
+                sponsorBlockTitle: 'SponsorBlock segments',
+                sponsorBlockDetail: 'Sends the first 4 hex characters of sha256(video ID) — never the full video ID — to sponsor.ajay.app to fetch skippable segments. Purpose: skipping sponsors and similar segments. Responses are cached in memory for this tab only. Segment data is licensed CC BY-NC-SA 4.0.',
+                sponsorBlockViewTitle: 'SponsorBlock skip reports',
+                sponsorBlockViewDetail: 'After an auto-skip, reports that segment’s UUID to sponsor.ajay.app so community view counts stay accurate. The UUID identifies the segment, not you, but it is derived from what you watch.',
+                dearrowTitle: 'DeArrow titles & thumbnails',
+                dearrowDetail: 'Sends the first 4 hex characters of sha256(video ID) to sponsor.ajay.app for alternative titles, and fetches thumbnails from dearrow-thumb.ajay.app (thumbnail URLs contain the full video ID). Cached in memory for about 6 hours. Data is licensed CC BY-NC-SA 4.0.',
+                rydTitle: 'Return YouTube Dislike counts',
+                rydDetail: 'Sends the full video ID of videos you watch to returnyoutubedislikeapi.com to fetch dislike counts. Cached in memory for about 30 minutes.',
+                grantedToast: 'Community service allowed.',
+                revokedToast: 'Community service turned off and its cache cleared.',
+                migrationToast: 'Community services (SponsorBlock and friends) now require one-time consent. Open the Control Center to allow them.'
+            },
             blocklist: {
                 blockedChannels: 'Blocked Channels',
                 blockedChannelsWhitelistHelp: 'Whitelist mode active: only videos from these channels will be shown. Supports names, UC IDs, @handles, channel URLs, and regex.',
@@ -762,6 +783,7 @@
             ssaiSignals: 'SSAI signals',
             dnrMatchedRules: 'DNR matched rules',
             communityApiPermission: 'Community API permission',
+            communityConsent: 'Community data consent',
             communityApiCooldown: 'Community API cooldown',
             webpackSignatureSource: 'Webpack signature source',
             webpackSignatureVersion: 'Webpack signature version',
@@ -1063,6 +1085,15 @@
         webpackSignatureIntegrity: 'built-in',
         webpackSignatureSyncing: false,
         communityApiPermission: IS_EXTENSION_BUILD ? 'pending' : 'granted',
+        // Bumped per service on consent revocation so in-flight community
+        // API resolutions from before the revoke are dropped instead of
+        // landing in caches or player state.
+        communityConsentGeneration: {
+            sponsorBlock: 0,
+            sponsorBlockViewReports: 0,
+            dearrow: 0,
+            returnYoutubeDislike: 0
+        },
         dnrDiagnostics: {
             status: IS_EXTENSION_BUILD ? 'pending' : 'not-extension',
             reason: '',
@@ -1186,6 +1217,97 @@
             try { setSetting('channelBlocker', null); } catch (e) { /* non-fatal */ }
         }
         return clean;
+    }
+
+    /* =========================================================================
+     * COMMUNITY SERVICE CONSENT
+     * =========================================================================
+     * Every third-party community API (SponsorBlock segments, SponsorBlock
+     * view reports, DeArrow, Return YouTube Dislike) is gated on explicit,
+     * per-service, revocable consent. The gate lives in the network wrappers
+     * themselves, so no code path — feature toggle, cache miss, extension
+     * shim — can reach the network before the user has allowed the service.
+     * Legacy installs migrate to 'unset' (no requests), not 'granted'.
+     * ===================================================================== */
+
+    const COMMUNITY_CONSENT_VERSION = 1;
+    const COMMUNITY_CONSENT_SERVICES = [
+        'sponsorBlock',
+        'sponsorBlockViewReports',
+        'dearrow',
+        'returnYoutubeDislike'
+    ];
+
+    function sanitizeCommunityConsent(raw) {
+        const services = {};
+        for (const service of COMMUNITY_CONSENT_SERVICES) services[service] = 'unset';
+        if (raw && typeof raw === 'object' &&
+            raw.version === COMMUNITY_CONSENT_VERSION &&
+            raw.services && typeof raw.services === 'object') {
+            for (const service of COMMUNITY_CONSENT_SERVICES) {
+                const value = raw.services[service];
+                if (value === 'granted' || value === 'denied') services[service] = value;
+            }
+        }
+        return { version: COMMUNITY_CONSENT_VERSION, services };
+    }
+
+    function getCommunityConsent() {
+        return sanitizeCommunityConsent(getSetting('community_consent', null));
+    }
+
+    function hasServiceConsent(service) {
+        return getCommunityConsent().services[service] === 'granted';
+    }
+
+    function consentGeneration(service) {
+        return (state.communityConsentGeneration && state.communityConsentGeneration[service]) || 0;
+    }
+
+    function setServiceConsent(service, granted) {
+        if (!COMMUNITY_CONSENT_SERVICES.includes(service)) return false;
+        const consent = getCommunityConsent();
+        consent.services[service] = granted ? 'granted' : 'denied';
+        // View reports piggyback on segment consent; revoking segments
+        // must also stop the dependent reporting path.
+        if (service === 'sponsorBlock' && !granted &&
+            consent.services.sponsorBlockViewReports === 'granted') {
+            consent.services.sponsorBlockViewReports = 'denied';
+        }
+        const persisted = setSetting('community_consent', consent);
+        if (!granted) {
+            revokeCommunityService(service);
+            if (service === 'sponsorBlock') revokeCommunityService('sponsorBlockViewReports');
+        }
+        return persisted;
+    }
+
+    function revokeCommunityService(service) {
+        if (state.communityConsentGeneration) {
+            state.communityConsentGeneration[service] = consentGeneration(service) + 1;
+        }
+        // Clear the revoked service's caches and live player state so no
+        // previously fetched community data survives the revocation.
+        try {
+            if (service === 'sponsorBlock') {
+                sponsorBlockState.segments = [];
+                sponsorBlockState.highlight = null;
+                sponsorBlockState.videoId = null;
+                sponsorBlockState.loadingToken = null;
+                sponsorBlockState.pendingVideoId = null;
+            } else if (service === 'dearrow') {
+                dearrowCache.clear();
+            } else if (service === 'returnYoutubeDislike') {
+                rydCache.clear();
+            }
+        } catch (e) { /* engine not installed yet — nothing cached */ }
+    }
+
+    function getCommunityConsentReport() {
+        const services = getCommunityConsent().services;
+        return COMMUNITY_CONSENT_SERVICES
+            .map(service => `${service}=${services[service]}`)
+            .join(', ');
     }
 
     function loadState() {
@@ -3611,6 +3733,7 @@
 
     function sponsorBlockFetchBucket(hashPrefix) {
         return new Promise((resolve) => {
+            if (!hasServiceConsent('sponsorBlock')) { resolve(null); return; }
             if (typeof GM_xmlhttpRequest !== 'function') { resolve(null); return; }
             if (isApiCoolingDown('sponsorblock')) { resolve(null); return; }
             const cats = encodeURIComponent(JSON.stringify([...SPONSORBLOCK_CATEGORIES, 'poi_highlight']));
@@ -3654,6 +3777,7 @@
         sponsorBlockState.loadingToken = videoId;
         sponsorBlockState.segments = [];
         sponsorBlockState.lastSkipEnd = -1;
+        const consentGen = consentGeneration('sponsorBlock');
         try {
             const prefix = await sha256HexPrefix(videoId, 4);
             // Check the token *and* the current URL because either the
@@ -3664,6 +3788,7 @@
             if (!prefix) return;
 
             const bucket = await sponsorBlockFetchBucket(prefix);
+            if (consentGeneration('sponsorBlock') !== consentGen) return;
             if (sponsorBlockState.loadingToken !== videoId) return;
             if (getCurrentVideoId() !== videoId) return;
             if (!Array.isArray(bucket)) return;
@@ -3712,6 +3837,7 @@
     }
 
     function reportSponsorBlockView(segmentUUID) {
+        if (!hasServiceConsent('sponsorBlock') || !hasServiceConsent('sponsorBlockViewReports')) return;
         if (!segmentUUID || typeof GM_xmlhttpRequest !== 'function') return;
         try {
             GM_xmlhttpRequest({
@@ -4328,6 +4454,7 @@
 
     function dearrowFetchBucket(hashPrefix) {
         return new Promise((resolve) => {
+            if (!hasServiceConsent('dearrow')) { resolve(null); return; }
             if (typeof GM_xmlhttpRequest !== 'function') { resolve(null); return; }
             if (isApiCoolingDown('dearrow')) { resolve(null); return; }
             const url = `${DEARROW_API}/${hashPrefix}`;
@@ -4354,9 +4481,11 @@
         if (!videoId) return null;
         const cached = dearrowCacheGet(videoId);
         if (cached) return cached;
+        const consentGen = consentGeneration('dearrow');
         const prefix = await sha256HexPrefix(videoId, 4);
         if (!prefix) return null;
         const bucket = await dearrowFetchBucket(prefix);
+        if (consentGeneration('dearrow') !== consentGen) return null;
         if (!bucket || typeof bucket !== 'object') return null;
         // DeArrow returns { videoID: { titles: [...], thumbnails: [...] } }
         // keyed by full videoId. Pick the top-voted entry that is locked or
@@ -4496,6 +4625,7 @@
 
     function rydFetch(videoId) {
         return new Promise((resolve) => {
+            if (!hasServiceConsent('returnYoutubeDislike')) { resolve(null); return; }
             if (typeof GM_xmlhttpRequest !== 'function') { resolve(null); return; }
             if (isApiCoolingDown('ryd')) { resolve(null); return; }
             GM_xmlhttpRequest({
@@ -4556,8 +4686,10 @@
     async function applyRyd(videoId) {
         let entry = rydCacheGet(videoId);
         if (!entry) {
+            const consentGen = consentGeneration('returnYoutubeDislike');
             entry = await rydFetch(videoId);
             if (!entry) return;
+            if (consentGeneration('returnYoutubeDislike') !== consentGen) return;
             rydCacheSet(videoId, entry);
         }
         // YouTube currently keeps hidden duplicate dislike controls mounted
@@ -6457,6 +6589,32 @@
                 color: var(--accent);
                 text-decoration: underline;
             }
+            .${CSS_PREFIX}-consent-panel {
+                margin-top: 10px;
+                display: grid;
+                gap: 8px;
+            }
+            .${CSS_PREFIX}-consent-card {
+                display: grid;
+                gap: 6px;
+            }
+            .${CSS_PREFIX}-consent-head {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                gap: 8px;
+            }
+            .${CSS_PREFIX}-consent-title {
+                font-size: 12px;
+                font-weight: 700;
+            }
+            .${CSS_PREFIX}-consent-hint {
+                color: var(--warning);
+            }
+            .${CSS_PREFIX}-consent-card .${CSS_PREFIX}-btn[disabled] {
+                opacity: 0.5;
+                cursor: default;
+            }
 
             /* v0.5.21 desktop Control Center redesign. The existing component
                rules remain as conservative fallbacks; these tokens and shell
@@ -7489,12 +7647,29 @@
         // DeArrow data are CC BY-NC-SA licensed (attribution required), and
         // Return YouTube Dislike's usage terms mandate attribution.
         if (group.sectionId === SECTION_IDS.sponsor) {
+            surface.appendChild(createConsentPanel([
+                createConsentCard('sponsorBlock',
+                    STRINGS.ui.consent.sponsorBlockTitle,
+                    STRINGS.ui.consent.sponsorBlockDetail),
+                createConsentCard('sponsorBlockViewReports',
+                    STRINGS.ui.consent.sponsorBlockViewTitle,
+                    STRINGS.ui.consent.sponsorBlockViewDetail,
+                    { requiresSegments: true })
+            ]));
             surface.appendChild(createAttributionNote(
                 STRINGS.ui.sponsorAttribution,
                 [[STRINGS.ui.sponsorAttributionLink, 'https://sponsor.ajay.app']]
             ));
         }
         if (group.sectionId === SECTION_IDS.enhance) {
+            surface.appendChild(createConsentPanel([
+                createConsentCard('dearrow',
+                    STRINGS.ui.consent.dearrowTitle,
+                    STRINGS.ui.consent.dearrowDetail),
+                createConsentCard('returnYoutubeDislike',
+                    STRINGS.ui.consent.rydTitle,
+                    STRINGS.ui.consent.rydDetail)
+            ]));
             surface.appendChild(createAttributionNote(
                 STRINGS.ui.enhanceAttribution,
                 [
@@ -8224,6 +8399,104 @@
         return note;
     }
 
+    function consentStatusPresentation(status) {
+        if (status === 'granted') return { text: STRINGS.ui.consent.statusGranted, tone: 'success' };
+        if (status === 'denied') return { text: STRINGS.ui.consent.statusDenied, tone: 'neutral' };
+        return { text: STRINGS.ui.consent.statusUnset, tone: 'warn' };
+    }
+
+    function createConsentCard(service, title, detail, options) {
+        const requiresSegments = !!(options && options.requiresSegments);
+        const card = document.createElement('div');
+        card.className = `${CSS_PREFIX}-note ${CSS_PREFIX}-consent-card`;
+        card.dataset.tone = 'neutral';
+        card.dataset.consentService = service;
+
+        const head = document.createElement('div');
+        head.className = `${CSS_PREFIX}-consent-head`;
+        const titleEl = document.createElement('span');
+        titleEl.className = `${CSS_PREFIX}-consent-title`;
+        titleEl.textContent = title;
+        head.appendChild(titleEl);
+        const status = getCommunityConsent().services[service];
+        const pres = consentStatusPresentation(status);
+        const pill = createPill(pres.text, pres.tone);
+        head.appendChild(pill);
+        card.appendChild(head);
+
+        const body = document.createElement('p');
+        body.className = `${CSS_PREFIX}-note-text`;
+        body.textContent = detail;
+        card.appendChild(body);
+
+        const hint = document.createElement('p');
+        hint.className = `${CSS_PREFIX}-note-text ${CSS_PREFIX}-consent-hint`;
+        hint.textContent = STRINGS.ui.consent.requiresSegments;
+        hint.hidden = true;
+        card.appendChild(hint);
+
+        const actions = document.createElement('div');
+        actions.className = `${CSS_PREFIX}-btn-row`;
+        const allowBtn = document.createElement('button');
+        allowBtn.type = 'button';
+        allowBtn.className = `${CSS_PREFIX}-btn ${CSS_PREFIX}-btn-secondary ${CSS_PREFIX}-btn-small`;
+        allowBtn.textContent = STRINGS.ui.consent.allow;
+        const revokeBtn = document.createElement('button');
+        revokeBtn.type = 'button';
+        revokeBtn.className = `${CSS_PREFIX}-btn ${CSS_PREFIX}-btn-secondary ${CSS_PREFIX}-btn-small`;
+        revokeBtn.textContent = STRINGS.ui.consent.revoke;
+        actions.appendChild(allowBtn);
+        actions.appendChild(revokeBtn);
+        card.appendChild(actions);
+
+        function refresh() {
+            const current = getCommunityConsent().services[service];
+            const presentation = consentStatusPresentation(current);
+            pill.textContent = presentation.text;
+            pill.dataset.tone = presentation.tone;
+            const segmentsGranted = hasServiceConsent('sponsorBlock');
+            const blockedByDependency = requiresSegments && !segmentsGranted;
+            allowBtn.disabled = current === 'granted' || blockedByDependency;
+            revokeBtn.disabled = current !== 'granted';
+            hint.hidden = !blockedByDependency;
+        }
+
+        allowBtn.addEventListener('click', () => {
+            setServiceConsent(service, true);
+            refreshConsentCards(document);
+            showToast(STRINGS.ui.consent.grantedToast, 'success');
+        });
+        revokeBtn.addEventListener('click', () => {
+            setServiceConsent(service, false);
+            refreshConsentCards(document);
+            showToast(STRINGS.ui.consent.revokedToast, 'info');
+        });
+
+        card._ytabConsentRefresh = refresh;
+        refresh();
+        return card;
+    }
+
+    // Revoking one service can change another card's state (view reports
+    // depend on segments), so refresh every rendered card together.
+    function refreshConsentCards(root) {
+        const scope = root && typeof root.querySelectorAll === 'function' ? root : document;
+        for (const card of scope.querySelectorAll(`[data-consent-service]`)) {
+            if (typeof card._ytabConsentRefresh === 'function') card._ytabConsentRefresh();
+        }
+    }
+
+    function createConsentPanel(cards) {
+        const wrap = document.createElement('div');
+        wrap.className = `${CSS_PREFIX}-consent-panel`;
+        const intro = document.createElement('p');
+        intro.className = `${CSS_PREFIX}-note-text ${CSS_PREFIX}-consent-intro`;
+        intro.textContent = STRINGS.ui.consent.intro;
+        wrap.appendChild(intro);
+        for (const card of cards) wrap.appendChild(card);
+        return wrap;
+    }
+
     function createAttributionNote(text, links) {
         const note = document.createElement('div');
         note.className = `${CSS_PREFIX}-note ${CSS_PREFIX}-attribution`;
@@ -8819,6 +9092,7 @@
             `${report.ssaiSignals}: detected=${state.stats.ssaiDetected || 0}, lastSeen=${state.ssaiLastSeen ? new Date(state.ssaiLastSeen).toISOString() : STRINGS.common.never}, lastUrl=${redactUrl(state.ssaiLastUrl) || STRINGS.common.none}`,
             `${report.dnrMatchedRules}: ${formatDnrDiagnosticsReport()}`,
             `${report.communityApiPermission}: ${state.communityApiPermission || STRINGS.common.unknown}`,
+            `${report.communityConsent}: ${getCommunityConsentReport()}`,
             `${report.communityApiCooldown}: ${Object.entries(getApiCooldownStatus()).map(([k, v]) => `${k}=${v}`).join(', ')}`,
             `${report.webpackSignatureSource}: ${state.webpackSignatureSource || STRINGS.common.unknown}`,
             `${report.webpackSignatureVersion}: ${state.webpackSignatureVersion || STRINGS.common.unknown}`,
@@ -9037,13 +9311,30 @@
     function onDOMReady() {
         buildSettingsPanel();
 
-        if (!getSetting('welcomed', false)) {
+        const previouslyWelcomed = getSetting('welcomed', false);
+        if (!previouslyWelcomed) {
             setSetting('welcomed', true);
             const injectionStatus = getInjectionTimingStatus();
             if (injectionStatus.likelyLate) {
                 showToast(STRINGS.ui.loadedLate(getControlCenterAccessHint()), 'warn');
             } else {
                 showToast(STRINGS.ui.activeToast(getControlCenterAccessHint()), 'success');
+            }
+        }
+
+        // One-time migration notice: community features that used to call
+        // out silently now require per-service consent, so an upgraded
+        // install with SponsorBlock/DeArrow/RYD enabled needs to know why
+        // segments/titles/dislikes stopped appearing. New installs get the
+        // consent cards in the Control Center without an extra toast.
+        if (previouslyWelcomed && !getSetting('community_consent_notified', false)) {
+            setSetting('community_consent_notified', true);
+            const consentServices = getCommunityConsent().services;
+            const wantsCommunityData = state.features.sponsorBlock ||
+                state.features.dearrow || state.features.returnYoutubeDislike;
+            const anyUnset = COMMUNITY_CONSENT_SERVICES.some(s => consentServices[s] === 'unset');
+            if (wantsCommunityData && anyUnset) {
+                showToast(STRINGS.ui.consent.migrationToast, 'info');
             }
         }
 

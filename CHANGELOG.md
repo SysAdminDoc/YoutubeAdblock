@@ -4,6 +4,17 @@ All notable changes to YoutubeAdblock are documented here.
 
 ## [Unreleased]
 
+### Added
+- **Community service consent**: SponsorBlock segments, SponsorBlock skip
+  view-reports, DeArrow, and Return YouTube Dislike are now gated behind
+  explicit per-service, revocable consent enforced inside the network
+  wrappers themselves. Consent cards in the Control Center's SponsorBlock
+  and Enhancements sections state exactly what each service transmits, its
+  purpose, cache behavior, and data license. Legacy installs migrate to
+  "not yet allowed" (no requests) with a one-time notice; revoking a
+  service clears its caches and drops in-flight responses. Diagnostics
+  report per-service consent state.
+
 ## [0.5.23] - 2026-08-13
 
 ### Added

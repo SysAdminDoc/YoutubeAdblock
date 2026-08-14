@@ -90,13 +90,6 @@ Incomplete, actionable work only. Completed work belongs in `CHANGELOG.md`. Ever
   Acceptance: a versioned allowlist syncs only user-authored preferences; stats, rule/signature caches, integrity state, cooldowns, and onboarding state remain local or session-only; UTF-8 byte accounting respects per-item/total quotas; generation IDs, checksum, and a final commit marker prevent partial reads; concurrent-device merges cannot erase local-only keys; migration from the current version-1 snapshot is idempotent; tests cover sustained stats, quota errors, Unicode boundaries, interrupted writes, and competing device updates.
   Complexity: L
 
-- [ ] P0 — Gate every community service behind informed, revocable consent
-  Why: SponsorBlock is default-on and the generated MAIN-world fetch shim can contact its API without the optional extension host permission, while segment-view reports disclose UUIDs derived from viewing activity.
-  Evidence: YoutubeAdblock.user.js:815,3423-3426,3528-3554,3630-3641,8737; Build-Extension.ps1:159-188; extension/manifest.json optional_host_permissions; Chrome Web Store User Data and Use of Permissions policies; SponsorBlock.
-  Touches: YoutubeAdblock.user.js; Build-Extension.ps1; extension/manifest.json; extension/background.js; extension/bridge.js; tests/browser-smoke.test.mjs; tests/background-contract.test.mjs; README.md; extension/README.md.
-  Acceptance: a versioned consent state defaults to unknown/disabled for new and legacy installs; no SponsorBlock, DeArrow, Return YouTube Dislike, or view-report request occurs before service-specific consent; the UI states the transmitted identifier, purpose, retention/cache behavior, and license; read access and SponsorBlock view reporting can be controlled separately; revocation cancels in-flight work and clears that service’s cache; core blocking works unchanged without consent; userscript and extension tests prove zero pre-consent requests.
-  Complexity: M
-
 ### P1
 
 - [ ] P1 — Make signed remote data rollback-, freeze-, and mix-and-match-resistant

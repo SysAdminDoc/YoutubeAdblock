@@ -328,6 +328,19 @@ async function exercisePanel(page, mode, surface) {
     if (mode === 'userscript' && surface.name === 'www-watch-dark') {
         await page.click('.ytab-nav-button[data-section-id="ytab-section-enhance"]');
         await page.waitForFunction(() => document.querySelector('#ytab-section-enhance details')?.open === true);
+        // RYD is consent-gated: no request may fire until the user allows
+        // the service, so the fixture must grant consent through the real
+        // consent card before enabling the feature toggle.
+        const rydConsentCard = '[data-consent-service="returnYoutubeDislike"]';
+        await page.waitForSelector(`${rydConsentCard} .ytab-btn-row button`, { timeout: 5000 });
+        assert.equal(
+            await page.locator(`${rydConsentCard} .ytab-pill`).getAttribute('data-tone'),
+            'warn',
+            'RYD consent must start unset');
+        await page.click(`${rydConsentCard} .ytab-btn-row button:first-child`);
+        await page.waitForFunction((sel) =>
+            document.querySelector(`${sel} .ytab-pill`)?.dataset.tone === 'success',
+        rydConsentCard, { timeout: 5000 });
         await page.click('#ytab-toggle-returnYoutubeDislike');
         await page.waitForFunction(() => {
             const buttons = [...document.querySelectorAll('dislike-button-view-model button')];

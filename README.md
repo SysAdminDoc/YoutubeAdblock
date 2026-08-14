@@ -89,15 +89,15 @@ If you trigger the extension while you are not already on YouTube, YoutubeAdbloc
 | Iframe Fetch-Lift Defense | Rebridges `contentWindow.fetch`, `XMLHttpRequest`, and `JSON.parse` in same-origin iframes so YouTube can't lift pristine globals | Enabled |
 | Aggressive Anti-Stall | Fast-forwards 17-second bound timers YouTube uses to stall playback when a blocker is suspected | Enabled |
 | Video Ad Fast-Forward | Mutes and accelerates any ad that slips past pruning (last-resort safety net) | Enabled |
-| SponsorBlock Auto-Skip | Silently skips sponsor, self-promo, intro, outro, interaction, preview, music-off-topic, and filler segments using the privacy-preserving SponsorBlock hash-prefix API | Enabled |
+| SponsorBlock Auto-Skip | Silently skips sponsor, self-promo, intro, outro, interaction, preview, music-off-topic, and filler segments using the privacy-preserving SponsorBlock hash-prefix API. Requires one-time consent in the Control Center before any request is made; skip view-reports are a separate opt-in | Consent-gated |
 | toString Proxy Mask | Patches `Function.prototype.toString` so every hooked native still reports `[native code]` to YouTube's detection paths | Enabled |
 | ServiceWorker Block | Proxies `navigator.serviceWorker.register` / `getRegistration{s}` so YouTube can't install a worker that bypasses the request proxies | Enabled |
 | Webpack Chunk Prune | Rewrites ad-rendering factory modules inside `self.webpackChunk_youtube_player.push` before they execute, using a built-in signature set that refreshes from [`webpack-ad-signatures.json`](webpack-ad-signatures.json) | Enabled |
 | DASH/HLS Manifest Scrub | Removes googlevideo `ctier=SA`/`ctier=SR` ad segment references from text DASH/HLS manifests as a playback-layer fallback when browser DNR is unavailable | Enabled |
 | No-Ad Request Signal | Injects `isInlinePlaybackNoAd` into outbound `/player`, `/get_watch`, and YouTube TV `/tenx_player` request bodies via fetch, XHR, and an `Object.assign` hook that survives YouTube's locker script | Enabled |
 | Engine Health Monitor | Tracks per-engine install success and surfaces degraded-protection warnings in the Control Center when YouTube's locker script or a competing blocker locks a native | Enabled |
-| DeArrow Titles & Thumbnails | Replaces clickbait titles and thumbnails with crowd-submitted alternatives via the privacy-preserving DeArrow hash-prefix API *(userscript only — extension build pending API permission)* | Optional |
-| Return YouTube Dislike | Restores the public dislike count under the like button | Optional |
+| DeArrow Titles & Thumbnails | Replaces clickbait titles and thumbnails with crowd-submitted alternatives via the privacy-preserving DeArrow hash-prefix API *(userscript only — extension build pending API permission)*. Requires one-time consent in the Control Center | Consent-gated |
+| Return YouTube Dislike | Restores the public dislike count under the like button. Sends full video IDs to returnyoutubedislikeapi.com, so it requires one-time consent in the Control Center | Consent-gated |
 | Force Original Audio | Switches back to the original-language audio track when YouTube defaults to an auto-dubbed or translated track | Optional |
 | Volume Boost | Web Audio gain stage up to 5x with an inline slider in the player controls | Optional |
 | Clutter-Free Mode | Eight Unhook-style toggles: home feed, Shorts shelves, Shorts tab, related videos, comments, end-screen cards, live chat, merch shelves | Optional |

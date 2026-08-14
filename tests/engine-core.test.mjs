@@ -99,7 +99,7 @@ function createTestHarness(options = {}) {
         GM_setValue: (key, val) => { storage[key] = val; },
         GM_registerMenuCommand: noop,
         GM_unregisterMenuCommand: noop,
-        GM_xmlhttpRequest: noop,
+        GM_xmlhttpRequest: options.gmXhr || noop,
     };
 
     // Expose the internal functions we want to test by appending an
@@ -151,6 +151,16 @@ function createTestHarness(options = {}) {
         setApiCooldown,
         getApiCooldownStatus,
         apiCooldowns,
+        sanitizeCommunityConsent,
+        getCommunityConsent,
+        hasServiceConsent,
+        setServiceConsent,
+        getCommunityConsentReport,
+        sponsorBlockFetchBucket,
+        reportSponsorBlockView,
+        dearrowFetchBucket,
+        rydFetch,
+        COMMUNITY_CONSENT_SERVICES,
         DEFAULT_FILTERS,
         DEFAULT_WEBPACK_SIGNATURE_DATABASE,
         state,
@@ -1195,4 +1205,110 @@ test('migration import classifies plain text as keywords when not a channel entr
     assert.equal(result.keywords, 2);
     assert.equal(result.channels, 0);
     assert.equal(h.__storage.ytab_keyword_blocklist, 'some random phrase\nanother word');
+});
+
+// ========== community service consent ==========
+
+function makeCountingXhr() {
+    const calls = [];
+    const stub = (req) => {
+        calls.push({ method: req.method || 'GET', url: req.url });
+        // Resolve immediately so awaited wrappers settle in tests.
+        if (req && typeof req.onload === 'function') {
+            req.onload({ status: 404, responseText: '', responseHeaders: '' });
+        }
+    };
+    stub.calls = calls;
+    stub.community = () => calls.filter(c =>
+        /sponsor\.ajay\.app|dearrow-thumb\.ajay\.app|returnyoutubedislikeapi\.com/.test(c.url));
+    return stub;
+}
+
+test('community consent defaults to unset for new and legacy installs', () => {
+    const h = createTestHarness({ storage: {} });
+    const consent = h.getCommunityConsent();
+    assert.equal(consent.version, 1);
+    for (const service of h.COMMUNITY_CONSENT_SERVICES) {
+        assert.equal(consent.services[service], 'unset');
+        assert.equal(h.hasServiceConsent(service), false);
+    }
+});
+
+test('community consent rejects invalid, wrong-version, and garbage payloads', () => {
+    for (const bad of [null, 42, 'granted', [], { version: 99, services: { sponsorBlock: 'granted' } },
+        { version: 1, services: { sponsorBlock: 'yes-please' } }]) {
+        const h = createTestHarness({ storage: { ytab_community_consent: bad } });
+        const consent = h.getCommunityConsent();
+        for (const service of h.COMMUNITY_CONSENT_SERVICES) {
+            assert.equal(consent.services[service], 'unset', JSON.stringify(bad));
+        }
+    }
+});
+
+test('no community request is made before consent, for any service', async () => {
+    const gmXhr = makeCountingXhr();
+    const h = createTestHarness({ storage: {}, gmXhr });
+    assert.equal(await h.sponsorBlockFetchBucket('abcd'), null);
+    assert.equal(await h.dearrowFetchBucket('abcd'), null);
+    assert.equal(await h.rydFetch('dQw4w9WgXcQ'), null);
+    h.reportSponsorBlockView('segment-uuid');
+    assert.equal(gmXhr.community().length, 0);
+});
+
+test('granting consent enables exactly that service', async () => {
+    const gmXhr = makeCountingXhr();
+    const h = createTestHarness({ storage: {}, gmXhr });
+    h.setServiceConsent('sponsorBlock', true);
+    await h.sponsorBlockFetchBucket('abcd');
+    assert.equal(gmXhr.community().length, 1);
+    assert.match(gmXhr.community()[0].url, /sponsor\.ajay\.app\/api\/skipSegments\/abcd/);
+    // Other services stay gated.
+    await h.dearrowFetchBucket('abcd');
+    await h.rydFetch('dQw4w9WgXcQ');
+    h.reportSponsorBlockView('segment-uuid');
+    assert.equal(gmXhr.community().length, 1);
+});
+
+test('view reports require both segment consent and report consent', async () => {
+    const gmXhr = makeCountingXhr();
+    const h = createTestHarness({ storage: {}, gmXhr });
+    h.setServiceConsent('sponsorBlockViewReports', true);
+    h.reportSponsorBlockView('segment-uuid');
+    assert.equal(gmXhr.community().length, 0, 'reports without segment consent must not fire');
+    h.setServiceConsent('sponsorBlock', true);
+    h.reportSponsorBlockView('segment-uuid');
+    assert.equal(gmXhr.community().length, 1);
+    assert.match(gmXhr.community()[0].url, /viewedVideoSponsorTime\?UUID=segment-uuid/);
+});
+
+test('revoking segment consent also revokes dependent view reporting', () => {
+    const h = createTestHarness({ storage: {} });
+    h.setServiceConsent('sponsorBlock', true);
+    h.setServiceConsent('sponsorBlockViewReports', true);
+    h.setServiceConsent('sponsorBlock', false);
+    const consent = h.getCommunityConsent();
+    assert.equal(consent.services.sponsorBlock, 'denied');
+    assert.equal(consent.services.sponsorBlockViewReports, 'denied');
+});
+
+test('revocation persists, blocks future requests, and bumps the consent generation', async () => {
+    const gmXhr = makeCountingXhr();
+    const h = createTestHarness({ storage: {}, gmXhr });
+    h.setServiceConsent('dearrow', true);
+    await h.dearrowFetchBucket('abcd');
+    assert.equal(gmXhr.community().length, 1);
+    const genBefore = h.state.communityConsentGeneration.dearrow;
+    h.setServiceConsent('dearrow', false);
+    assert.equal(h.state.communityConsentGeneration.dearrow, genBefore + 1);
+    await h.dearrowFetchBucket('abcd');
+    assert.equal(gmXhr.community().length, 1, 'no request after revocation');
+    assert.equal(h.__storage.ytab_community_consent.services.dearrow, 'denied');
+});
+
+test('consent report lists every service state for diagnostics', () => {
+    const h = createTestHarness({ storage: {} });
+    h.setServiceConsent('returnYoutubeDislike', true);
+    const report = h.getCommunityConsentReport();
+    assert.match(report, /sponsorBlock=unset/);
+    assert.match(report, /returnYoutubeDislike=granted/);
 });
