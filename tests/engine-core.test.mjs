@@ -151,6 +151,9 @@ function createTestHarness(options = {}) {
         setApiCooldown,
         getApiCooldownStatus,
         apiCooldowns,
+        validateSafeRegexSource,
+        matchesList,
+        getParsedBlocklist,
         sanitizeCommunityConsent,
         getCommunityConsent,
         hasServiceConsent,
@@ -1311,4 +1314,96 @@ test('consent report lists every service state for diagnostics', () => {
     const report = h.getCommunityConsentReport();
     assert.match(report, /sponsorBlock=unset/);
     assert.match(report, /returnYoutubeDislike=granted/);
+});
+
+
+// ========== user regex bounding (ReDoS) ==========
+
+test('validateSafeRegexSource rejects exponential and unsupported constructs', () => {
+    const h = harness;
+    assert.equal(h.validateSafeRegexSource('(a+)+').reason, 'nestedQuantifier');
+    assert.equal(h.validateSafeRegexSource('(a|aa)+').reason, 'nestedQuantifier');
+    assert.equal(h.validateSafeRegexSource('(.*a)*').reason, 'nestedQuantifier');
+    assert.equal(h.validateSafeRegexSource('((b+)c)+').reason, 'nestedQuantifier');
+    // A quantified group with only literals inside is linear-safe.
+    assert.equal(h.validateSafeRegexSource('((b)c)+').ok, true);
+    assert.equal(h.validateSafeRegexSource('(a)' + String.fromCharCode(92) + '1').reason, 'backreference');
+    assert.equal(h.validateSafeRegexSource('a(?=b)').reason, 'lookaround');
+    assert.equal(h.validateSafeRegexSource('(?<=a)b').reason, 'lookaround');
+    assert.equal(h.validateSafeRegexSource('(?<!a)b').reason, 'lookaround');
+    assert.equal(h.validateSafeRegexSource('a'.repeat(300)).reason, 'tooLong');
+    assert.equal(h.validateSafeRegexSource('(a').reason, 'syntax');
+});
+
+test('validateSafeRegexSource accepts common safe blocklist patterns', () => {
+    const h = harness;
+    for (const src of [
+        'free.*robux',
+        'v-?bucks',
+        '(free robux|vbucks giveaway)',
+        '^MrBeast$',
+        '(abc)+',
+        'sponsored?' + String.fromCharCode(92) + 's+content',
+        '[0-9]{3,} subscribers',
+        'shorts|reels'
+    ]) {
+        assert.equal(h.validateSafeRegexSource(src).ok, true, src);
+    }
+});
+
+test('rejected regex lines become line-numbered invalid entries, never substring matchers', () => {
+    const entries = harness.parseBlocklist('good words\n/(a+)+$/\n/free.*stuff/');
+    assert.equal(entries.length, 3);
+    assert.equal(entries[0].type, 'string');
+    assert.equal(entries[1].type, 'invalid');
+    assert.equal(entries[1].reason, 'nestedQuantifier');
+    assert.equal(entries[1].line, 2);
+    assert.equal(entries[2].type, 'regex');
+    // The invalid line must not match as a literal string either.
+    assert.equal(harness.matchesList('/(a+)+$/ is in this title', entries.slice(1, 2)), false);
+});
+
+test('malformed regex syntax is surfaced instead of silently degrading', () => {
+    const entries = harness.parseBlocklist('/[unclosed/');
+    assert.equal(entries[0].type, 'invalid');
+    assert.equal(entries[0].reason, 'syntax');
+});
+
+test('blocklists cap active entries and matching input length', () => {
+    const raw = Array.from({ length: 600 }, (_, i) => `word${i}`).join('\n');
+    const entries = harness.parseBlocklist(raw);
+    assert.equal(entries.length, 500);
+    // Long haystacks are truncated before matching.
+    const longTitle = 'x'.repeat(10000) + ' target';
+    assert.equal(harness.matchesList(longTitle, harness.parseBlocklist('target')), false,
+        'match input must be capped, so a suffix beyond the cap cannot match');
+    assert.equal(harness.matchesList('target ' + 'x'.repeat(10000), harness.parseBlocklist('target')), true);
+});
+
+test('parsed blocklists are cached per settings revision', () => {
+    const h = createTestHarness({ storage: { ytab_keyword_blocklist: '/free.*stuff/' } });
+    const first = h.getParsedBlocklist('keyword_blocklist');
+    const second = h.getParsedBlocklist('keyword_blocklist');
+    assert.equal(first, second, 'same raw text must return the cached compiled entries');
+    h.__storage.ytab_keyword_blocklist = '/free.*stuff/\nmore';
+    const third = h.getParsedBlocklist('keyword_blocklist');
+    assert.notEqual(second, third, 'changed raw text must recompile');
+    assert.equal(third.length, 2);
+});
+
+test('safe user regex corpus matches long renderer titles within budget', () => {
+    const h = harness;
+    const list = h.parseBlocklist([
+        '/free.*robux/', '/v-?bucks/', '/^clickbait/', '/(giveaway|scam alert)/', 'plain keyword'
+    ].join('\n'));
+    const titles = [];
+    for (let i = 0; i < 2000; i++) {
+        titles.push(('An unusually long renderer title about nothing in particular ' + i + ' ').repeat(8));
+    }
+    const startTime = performance.now();
+    let matches = 0;
+    for (const title of titles) if (h.matchesList(title, list)) matches++;
+    const elapsed = performance.now() - startTime;
+    assert.equal(matches, 0);
+    assert.ok(elapsed < 1000, `matching took ${elapsed.toFixed(0)}ms, budget is 1000ms`);
 });

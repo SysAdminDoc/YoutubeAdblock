@@ -383,6 +383,16 @@
                 migrationToast: 'Community services (SponsorBlock and friends) now require one-time consent. Open the Control Center to allow them.'
             },
             blocklist: {
+                invalidLinesNote: (count) => count === 1 ? '1 line rejected:' : `${count} lines rejected:`,
+                invalidLine: (line, reason) => `Line ${line}: ${reason}`,
+                truncatedNote: (max) => `List truncated: only the first ${max} entries are active.`,
+                regexReasons: {
+                    tooLong: 'regex too long (max 256 characters)',
+                    backreference: 'regex backreferences are not supported',
+                    lookaround: 'regex lookarounds are not supported',
+                    nestedQuantifier: 'a quantified regex group may not contain another quantifier or alternation',
+                    syntax: 'invalid regex syntax'
+                },
                 blockedChannels: 'Blocked Channels',
                 blockedChannelsWhitelistHelp: 'Whitelist mode active: only videos from these channels will be shown. Supports names, UC IDs, @handles, channel URLs, and regex.',
                 blockedChannelsHelp: 'One channel per line. Supports names, UC IDs, @handles, channel URLs, and regex, e.g. /^Exact Channel$/.',
@@ -5111,43 +5121,147 @@
         };
     }
 
+    // Bounds for user-authored blocklists. Regex entries execute
+    // synchronously inside renderer pruning, so both the accepted grammar
+    // and the haystack length are capped to keep worst-case matching
+    // linear-ish instead of letting catastrophic backtracking stall
+    // navigation (see OWASP ReDoS).
+    const BLOCKLIST_MAX_ENTRIES = 500;
+    const BLOCKLIST_MAX_REGEX_LENGTH = 256;
+    const BLOCKLIST_MAX_MATCH_INPUT = 512;
+
+    /**
+     * Conservative regex safety validator. Accepts a documented subset:
+     * no backreferences, no lookarounds, and a group may only be
+     * quantified when its contents contain neither another quantifier nor
+     * an alternation. That rejects the classic exponential families
+     * ((a+)+, (a|aa)+, (.*a)*) while keeping common blocklist patterns.
+     */
+    function validateSafeRegexSource(src) {
+        if (typeof src !== 'string' || !src) return { ok: false, reason: 'syntax' };
+        if (src.length > BLOCKLIST_MAX_REGEX_LENGTH) return { ok: false, reason: 'tooLong' };
+        // Frame for the pattern root plus one per open group. Tracks
+        // whether the frame's own contents contain a quantifier or an
+        // alternation (nested groups propagate their flags on close).
+        const stack = [{ hasQuantifier: false, hasAlternation: false }];
+        let inClass = false;
+        for (let i = 0; i < src.length; i++) {
+            const ch = src[i];
+            if (ch === '\\') {
+                const next = src[i + 1] || '';
+                if (!inClass && next >= '1' && next <= '9') return { ok: false, reason: 'backreference' };
+                if (next === 'k') return { ok: false, reason: 'backreference' };
+                i++;
+                continue;
+            }
+            if (inClass) {
+                if (ch === ']') inClass = false;
+                continue;
+            }
+            if (ch === '[') { inClass = true; continue; }
+            if (ch === '(') {
+                if (src[i + 1] === '?') {
+                    const c2 = src[i + 2];
+                    if (c2 === '=' || c2 === '!') return { ok: false, reason: 'lookaround' };
+                    if (c2 === '<' && (src[i + 3] === '=' || src[i + 3] === '!')) {
+                        return { ok: false, reason: 'lookaround' };
+                    }
+                }
+                stack.push({ hasQuantifier: false, hasAlternation: false });
+                continue;
+            }
+            if (ch === ')') {
+                if (stack.length < 2) return { ok: false, reason: 'syntax' };
+                const group = stack.pop();
+                const parent = stack[stack.length - 1];
+                // Peek past the closing paren for a quantifier.
+                const next = src[i + 1];
+                const quantified = next === '*' || next === '+' || next === '?' || next === '{';
+                if (quantified && (group.hasQuantifier || group.hasAlternation)) {
+                    return { ok: false, reason: 'nestedQuantifier' };
+                }
+                parent.hasQuantifier = parent.hasQuantifier || group.hasQuantifier || quantified;
+                parent.hasAlternation = parent.hasAlternation || group.hasAlternation;
+                continue;
+            }
+            if (ch === '*' || ch === '+' || ch === '?' || ch === '{') {
+                stack[stack.length - 1].hasQuantifier = true;
+                continue;
+            }
+            if (ch === '|') {
+                stack[stack.length - 1].hasAlternation = true;
+            }
+        }
+        if (stack.length !== 1 || inClass) return { ok: false, reason: 'syntax' };
+        return { ok: true };
+    }
+
     function parseBlocklist(raw, options) {
         if (typeof raw !== 'string' || !raw) return [];
         const channelMode = !!(options && options.channel);
         const entries = [];
+        let lineNo = 0;
+        let active = 0;
         for (const line of raw.split(/\r?\n/)) {
+            lineNo++;
             const trimmed = line.trim();
             if (!trimmed) continue;
+            if (active >= BLOCKLIST_MAX_ENTRIES) break;
             var rxMatch = trimmed.match(/^\/(.+)\/([gimsuy]*)$/);
             if (rxMatch) {
+                const safety = validateSafeRegexSource(rxMatch[1]);
+                if (!safety.ok) {
+                    // Rejected patterns surface as line-specific errors in
+                    // the editor and are skipped by every matcher — they
+                    // must never silently degrade to substring matching.
+                    entries.push({ type: 'invalid', value: trimmed, reason: safety.reason, line: lineNo });
+                    continue;
+                }
                 try {
                     var flags = rxMatch[2].includes('i') ? rxMatch[2] : rxMatch[2] + 'i';
                     entries.push({ type: 'regex', pattern: new RegExp(rxMatch[1], flags) });
+                    active++;
                 } catch (e) {
-                    entries.push({ type: 'string', value: trimmed.toLowerCase() });
+                    entries.push({ type: 'invalid', value: trimmed, reason: 'syntax', line: lineNo });
                 }
             } else if (channelMode) {
                 entries.push(parseChannelEntry(trimmed));
+                active++;
             } else {
                 entries.push({ type: 'string', value: trimmed.toLowerCase() });
+                active++;
             }
         }
         return entries;
     }
 
+    // Blocklists are consulted on every feed prune. Compile each list once
+    // per settings revision instead of re-reading storage and re-compiling
+    // regexes on every pruned payload.
+    const blocklistParseCache = new Map(); // storageKey → { raw, entries }
+
+    function getParsedBlocklist(storageKey, options) {
+        const raw = String(getSetting(storageKey, ''));
+        const cached = blocklistParseCache.get(storageKey);
+        if (cached && cached.raw === raw) return cached.entries;
+        const entries = parseBlocklist(raw, options);
+        blocklistParseCache.set(storageKey, { raw, entries });
+        return entries;
+    }
+
     function getChannelBlocklist() {
         if (!state.features.channelBlocker) return [];
-        return parseBlocklist(getSetting('channel_blocklist', ''), { channel: true });
+        return getParsedBlocklist('channel_blocklist', { channel: true });
     }
 
     function getKeywordBlocklist() {
         if (!state.features.keywordBlocker) return [];
-        return parseBlocklist(getSetting('keyword_blocklist', ''));
+        return getParsedBlocklist('keyword_blocklist');
     }
 
     function getAdAllowlist() {
         if (!state.features.adAllowlist) return [];
-        return parseBlocklist(getSetting('ad_allowlist', ''), { channel: true });
+        return getParsedBlocklist('ad_allowlist', { channel: true });
     }
 
     function parseDurationSeconds(text) {
@@ -5243,10 +5357,11 @@
 
     function matchesList(text, list) {
         if (!text) return false;
-        text = String(text);
+        text = String(text).slice(0, BLOCKLIST_MAX_MATCH_INPUT);
         var lc = text.toLowerCase();
         for (var i = 0; i < list.length; i++) {
             var entry = list[i];
+            if (entry.type === 'invalid') continue;
             if (entry.type === 'regex') {
                 entry.pattern.lastIndex = 0;
                 if (entry.pattern.test(text)) return true;
@@ -5292,11 +5407,12 @@
     function matchesChannelEntry(identity, entry) {
         identity = normalizeChannelIdentity(identity);
         if (!entry) return false;
+        if (entry.type === 'invalid') return false;
         if (entry.type === 'regex') {
             var candidates = channelIdentityCandidates(identity);
             for (var i = 0; i < candidates.length; i++) {
                 entry.pattern.lastIndex = 0;
-                if (entry.pattern.test(candidates[i])) return true;
+                if (entry.pattern.test(String(candidates[i]).slice(0, BLOCKLIST_MAX_MATCH_INPUT))) return true;
             }
             return false;
         }
@@ -6525,6 +6641,9 @@
                 font-weight: 700;
             }
             .${CSS_PREFIX}-consent-hint {
+                color: var(--warning);
+            }
+            .${CSS_PREFIX}-blocklist-feedback {
                 color: var(--warning);
             }
             .${CSS_PREFIX}-consent-card .${CSS_PREFIX}-btn[disabled] {
@@ -7882,15 +8001,43 @@
         ta.rows = 4;
         ta.spellcheck = false;
         ta.value = String(getSetting(storageKey, ''));
+        // Line-specific validation feedback: rejected regex lines are
+        // skipped by the matchers, so the editor must say which lines were
+        // rejected and why instead of failing silently.
+        const feedback = document.createElement('p');
+        feedback.className = `${CSS_PREFIX}-field-help ${CSS_PREFIX}-blocklist-feedback`;
+        feedback.setAttribute('role', 'status');
+        feedback.hidden = true;
+        const channelOptions = storageKey === 'keyword_blocklist' ? undefined : { channel: true };
+        function refreshFeedback(raw) {
+            const entries = parseBlocklist(raw, channelOptions);
+            const invalid = entries.filter(entry => entry.type === 'invalid');
+            const nonEmptyLines = raw.split(/\r?\n/).filter(line => line.trim()).length;
+            const notes = [];
+            if (invalid.length) {
+                notes.push(STRINGS.ui.blocklist.invalidLinesNote(invalid.length));
+                for (const entry of invalid.slice(0, 5)) {
+                    notes.push(STRINGS.ui.blocklist.invalidLine(
+                        entry.line, STRINGS.ui.blocklist.regexReasons[entry.reason] || STRINGS.ui.blocklist.regexReasons.syntax));
+                }
+            }
+            if (nonEmptyLines > BLOCKLIST_MAX_ENTRIES) {
+                notes.push(STRINGS.ui.blocklist.truncatedNote(BLOCKLIST_MAX_ENTRIES));
+            }
+            feedback.textContent = notes.join(' ');
+            feedback.hidden = notes.length === 0;
+        }
+        refreshFeedback(ta.value);
         let saveTimer = null;
         ta.addEventListener('input', () => {
             if (saveTimer) clearTimeout(saveTimer);
             saveTimer = setTimeout(() => {
                 saveTimer = null;
                 setSetting(storageKey, ta.value);
+                refreshFeedback(ta.value);
             }, 400);
         });
-        wrap.append(label, helpEl, ta);
+        wrap.append(label, helpEl, ta, feedback);
         return wrap;
     }
 

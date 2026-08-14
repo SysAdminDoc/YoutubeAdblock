@@ -99,13 +99,6 @@ Incomplete, actionable work only. Completed work belongs in `CHANGELOG.md`. Ever
   Acceptance: the signed envelope includes schema, artifact role, content name, hash, byte count, monotonic revision, expiry, and key ID; filter and webpack roles use domain-separated authorization; the client persists the highest accepted revision per role, rejects replayed, expired, cross-role, or partially mixed candidates, and supports a tested key-rotation path; rejection retains the last-known-good generation offline with an explicit stale reason.
   Complexity: M
 
-- [ ] P1 — Constrain and cache user-authored regular expressions
-  Why: Channel, keyword, and allowlist inputs currently compile unrestricted JavaScript regexes and execute them synchronously over renderer text, allowing catastrophic backtracking to stall YouTube navigation.
-  Evidence: YoutubeAdblock.user.js:4982-5019,5112-5125; OWASP ReDoS; BlockTube issue 681.
-  Touches: YoutubeAdblock.user.js; tests/engine-core.test.mjs; tests/browser-smoke.test.mjs; README.md.
-  Acceptance: regex entries use a documented conservative subset with explicit pattern, entry-count, and input-length caps; nested/overlapping quantifiers, backreferences, unsupported lookarounds, and other rejected constructs show line-specific errors instead of becoming literal strings; accepted entries compile once per settings revision; a corpus including (a+)+$ and long renderer titles completes within a fixed CI time budget; plain-string and channel-identity matching remain unchanged.
-  Complexity: M
-
 - [ ] P1 — Make settings import versioned, preflighted, atomic, and undoable
   Why: Export declares app/schema versions, but import ignores them, silently skips invalid fields, and performs sequential writes that can leave a partial configuration.
   Evidence: YoutubeAdblock.user.js:7448-7470,7586-7692; current portability UI; migration and upgrade category audit.

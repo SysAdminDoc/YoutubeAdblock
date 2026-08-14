@@ -5,6 +5,14 @@ All notable changes to YoutubeAdblock are documented here.
 ## [Unreleased]
 
 ### Added
+- **Bounded user regex grammar**: channel/keyword/allowlist `/regex/`
+  entries are validated against a conservative safe subset (length and
+  entry-count caps, no backreferences or lookarounds, no quantified group
+  containing another quantifier or alternation) so catastrophic
+  backtracking cannot stall navigation. Rejected lines surface
+  line-specific errors in the blocklist editors instead of silently
+  degrading to substring matches; parsed lists are compiled once per
+  settings revision and match input is capped at 512 characters.
 - **Community service consent**: SponsorBlock segments, SponsorBlock skip
   view-reports, DeArrow, and Return YouTube Dislike are now gated behind
   explicit per-service, revocable consent enforced inside the network
