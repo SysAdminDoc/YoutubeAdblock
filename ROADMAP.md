@@ -123,13 +123,6 @@ Incomplete, actionable work only. Completed work belongs in `CHANGELOG.md`. Ever
   Acceptance: a fixture player response lacking adaptiveFormats URLs is detected and counted in diagnostics; JSON pruning and cosmetic engines stay active; URL-dependent engines (ctier rules, manifest scrub) report "no signal" rather than false success; playback-affecting interventions are suppressed for that session; behavior is covered by a regression test. Rollout measurement stays in RESEARCH.md Open Question 4.
   Complexity: M
 
-- [ ] P2 — Never auto-dismiss compliance dialogs; surface and log them instead
-  Why: Desktop YouTube is A/B-testing transient pre-playback overlays tied to AI age/identity verification; popup-dismissal or anti-detection heuristics that pattern-match "unexpected overlay at player start" risk silently dismissing a dialog with account consequences.
-  Evidence: r/uBlockOrigin 2026-07-20 thread 1v1x09u (multiple reports, uBO active); YouTube age-estimation program announcement (blog.youtube); existing enforcement-popup cosmetic fallback and breakage self-test in YoutubeAdblock.user.js.
-  Touches: YoutubeAdblock.user.js enforcement-popup/overlay handling and self-test; tests/engine-core.test.mjs; diagnostics copy.
-  Acceptance: overlay handling checks a conservative allowlist of compliance-dialog signatures (age/identity verification markers) before any hide/dismiss action; matches are left untouched, counted, and surfaced in diagnostics as "compliance dialog detected, not blocked"; a fixture proves an age-verification overlay survives while a known enforcement popup is still handled; the allowlist is data-driven so signed filter updates can extend it without code changes.
-  Complexity: S
-
 - [ ] P2 — YouTube-semantic element zapper (picker → stable named toggle)
   Why: July–August 2026 threads show sustained unmet demand for hide-Shorts/hide-VODs/kill-hover-autoplay/hide-injected-recommendations controls; users hand-write fragile uBO filters, and no YouTube-specific blocker ships a picker — a leapfrog feature this repo's existing filter/clutter infrastructure can carry.
   Evidence: r/uBlockOrigin threads 1v5lajc (2026-07-24), 1v6qoz6 (2026-07-26), 1vfouqs (2026-08-04), 1viss98 (2026-08-08); FilterTube 2026 additions lack a picker (AMO listing); uBO element zapper is generic and its CWS host dies 2026-08-31. Builds on the existing P2 Rules playground item — the playground's bounded-preview/confirm flow is the zapper's commit step.

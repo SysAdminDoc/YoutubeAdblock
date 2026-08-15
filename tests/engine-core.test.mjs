@@ -166,7 +166,12 @@ function createTestHarness(options = {}) {
         setApiCooldown,
         getApiCooldownStatus,
         apiCooldowns,
+        isComplianceDialogElement,
+        scanForComplianceDialogs,
+        hasVisibleComplianceDialog,
+        COMPLIANCE_MARK_ATTR,
         validateSafeRegexSource,
+        updateCosmeticCSS,
         verifySignedManifest,
         checkManifestFreshness,
         signedManifestSigningInput,
@@ -1658,4 +1663,100 @@ test('the accepted revision floor only advances, never regresses', () => {
     assert.equal(h.getHighestAcceptedRevision('filters'), 9);
     // Roles keep independent floors.
     assert.equal(h.getHighestAcceptedRevision('webpack-signatures'), 0);
+});
+
+
+// ========== compliance dialog protection ==========
+
+function fakeDialog(text, attrs = {}) {
+    const store = { ...attrs };
+    return {
+        tagName: 'TP-YT-PAPER-DIALOG',
+        textContent: text,
+        hasAttribute: (k) => Object.prototype.hasOwnProperty.call(store, k),
+        setAttribute: (k, v) => { store[k] = v; },
+        getAttribute: (k) => (k in store ? store[k] : null),
+        __store: store,
+    };
+}
+
+function fakeRoot(nodesBySelector) {
+    return {
+        querySelectorAll: (sel) => nodesBySelector[sel] || [],
+        querySelector: (sel) => (nodesBySelector[sel] || [])[0] || null,
+    };
+}
+
+test('age and identity verification wording is recognized as a compliance dialog', () => {
+    const h = harness;
+    for (const text of [
+        'We need to verify your age to continue',
+        'Age verification required',
+        'Please confirm that your face is visible',
+        'Upload a photo ID to verify your identity',
+        'Take a selfie to continue'
+    ]) {
+        assert.equal(h.isComplianceDialogElement(fakeDialog(text)), true, text);
+    }
+});
+
+test('ordinary anti-adblock enforcement wording is not treated as a compliance dialog', () => {
+    const h = harness;
+    for (const text of [
+        'Ad blockers are not allowed on YouTube',
+        'It looks like you may be using an ad blocker',
+        'Video player will be blocked after 3 videos'
+    ]) {
+        assert.equal(h.isComplianceDialogElement(fakeDialog(text)), false, text);
+    }
+});
+
+test('scanning marks compliance dialogs once and counts them', () => {
+    const h = createTestHarness({ storage: {} });
+    const dialog = fakeDialog('Please verify your age to keep watching');
+    const root = fakeRoot({ 'tp-yt-paper-dialog': [dialog] });
+    const before = h.state.stats.complianceDialogs || 0;
+    assert.equal(h.scanForComplianceDialogs(root), 1);
+    assert.equal(dialog.getAttribute(h.COMPLIANCE_MARK_ATTR), '1');
+    assert.equal(h.state.stats.complianceDialogs, before + 1);
+    // Already-marked dialogs are not recounted on the next sweep.
+    assert.equal(h.scanForComplianceDialogs(root), 0);
+    assert.equal(h.state.stats.complianceDialogs, before + 1);
+});
+
+test('an enforcement popup without verification wording is left unmarked so it stays blockable', () => {
+    const h = createTestHarness({ storage: {} });
+    const dialog = fakeDialog('Ad blockers violate YouTube Terms of Service');
+    const root = fakeRoot({ 'tp-yt-paper-dialog': [dialog] });
+    assert.equal(h.scanForComplianceDialogs(root), 0);
+    assert.equal(dialog.getAttribute(h.COMPLIANCE_MARK_ATTR), null);
+});
+
+test('marked compliance dialogs are reported as present without being hidden', () => {
+    const h = createTestHarness({ storage: {} });
+    const marked = fakeDialog('verify your age', { 'data-ytab-compliance': '1' });
+    const root = fakeRoot({ '[data-ytab-compliance]': [marked] });
+    assert.equal(h.hasVisibleComplianceDialog(root), true);
+});
+
+test('remote filter data can extend the compliance marker list', () => {
+    const h = createTestHarness({ storage: {} });
+    h.state.filters = { ...(h.state.filters || {}), complianceMarkers: ['bestätige dein alter'] };
+    assert.equal(h.isComplianceDialogElement(fakeDialog('Bitte bestätige dein Alter')), true);
+    // Junk entries are ignored rather than widening the match.
+    h.state.filters.complianceMarkers = ['a', 12, null, 'x'.repeat(500)];
+    assert.equal(h.isComplianceDialogElement(fakeDialog('a random unrelated dialog')), false);
+});
+
+test('cosmetic CSS exempts marked compliance dialogs from every hiding rule', () => {
+    const h = createTestHarness({ storage: {} });
+    h.state.features.cosmeticHiding = true;
+    h.updateCosmeticCSS();
+    const css = h.state.cosmeticStyleEl?.textContent || '';
+    assert.ok(css.length > 0, 'cosmetic CSS should be generated');
+    const rules = css.split('\n').filter(Boolean);
+    for (const rule of rules) {
+        assert.ok(rule.includes(':not([data-ytab-compliance])'),
+            `every cosmetic rule must exempt compliance dialogs: ${rule}`);
+    }
 });

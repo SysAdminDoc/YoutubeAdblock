@@ -14,6 +14,14 @@ All notable changes to YoutubeAdblock are documented here.
   rules. `tools/sign-filter-manifest.mjs` emits and verifies the new
   envelope plus a detached `.manifest.json.sig`.
 
+### Security
+- **Compliance dialogs are never hidden or dismissed**: YouTube's
+  pre-playback age/identity verification prompts look structurally like the
+  anti-adblock enforcement modal. Candidates carrying verification wording
+  are now marked, exempted from every cosmetic hiding rule, excluded from
+  breakage detection, and reported in diagnostics as detected-but-untouched.
+  The marker list is data, so a signed filter update can extend it.
+
 ### Fixed
 - **Control Center rail navigation**: the last destination could stop with
   its controls sitting behind the footer on short panels (Music, TV, Kids).

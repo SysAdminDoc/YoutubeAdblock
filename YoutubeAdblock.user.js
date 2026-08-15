@@ -95,7 +95,8 @@
         sponsorSkipped: 0,
         dearrowReplaced: 0,
         feedFiltered: 0,
-        ssaiDetected: 0
+        ssaiDetected: 0,
+        complianceDialogs: 0
     };
     const SPONSORBLOCK_API = 'https://sponsor.ajay.app/api/skipSegments';
     const SPONSORBLOCK_CATEGORIES = [
@@ -732,6 +733,7 @@
             unsupportedScriptlets: 'Unsupported scriptlets',
             rejectedDangerousScriptlets: 'Rejected dangerous scriptlets',
             ssaiSignals: 'SSAI signals',
+            complianceDialogs: 'Compliance dialogs',
             dnrMatchedRules: 'DNR matched rules',
             communityApiPermission: 'Community API permission',
             communityConsent: 'Community data consent',
@@ -1035,6 +1037,7 @@
         webpackSignatureError: '',
         webpackSignatureIntegrity: 'built-in',
         webpackSignatureSyncing: false,
+        complianceDialogLastSeen: 0,
         communityApiPermission: IS_EXTENSION_BUILD ? 'pending' : 'granted',
         // Bumped per service on consent revocation so in-flight community
         // API resolutions from before the revoke are dropped instead of
@@ -4514,9 +4517,94 @@
         // One rule per selector — per the CSS spec, a malformed selector in
         // a comma list invalidates the whole rule. Per-selector isolation
         // means a single bad entry only loses itself.
+        // Every cosmetic rule is scoped away from elements the compliance
+        // scanner has marked, so an age/identity verification dialog can
+        // never be hidden by an ad selector that happens to match it.
         state.cosmeticStyleEl.textContent = safe
-            .map(s => `${s} { display: none !important; }`)
+            .map(s => `${s}:not([${COMPLIANCE_MARK_ATTR}]) { display: none !important; }`)
             .join('\n');
+    }
+
+    /* =========================================================================
+     * COMPLIANCE DIALOG PROTECTION
+     * =========================================================================
+     * YouTube is rolling out pre-playback age/identity verification prompts
+     * that look structurally like the anti-adblock enforcement modal. Hiding
+     * or auto-dismissing one has real account consequences, so any candidate
+     * carrying verification wording is marked, exempted from cosmetic
+     * hiding, and surfaced in diagnostics instead of being treated as
+     * breakage. The marker list is data so a signed filter update can extend
+     * it without a code change.
+     * ===================================================================== */
+
+    const COMPLIANCE_MARK_ATTR = 'data-ytab-compliance';
+    const COMPLIANCE_TEXT_MARKERS = [
+        'verify your age',
+        'age verification',
+        'verify that you',
+        'confirm your age',
+        'confirm that your face',
+        'estimate your age',
+        'verify your identity',
+        'identity verification',
+        'upload a photo id',
+        'photo id',
+        'selfie',
+        'credit card to verify'
+    ];
+    const COMPLIANCE_CANDIDATE_SELECTORS = [
+        'ytd-enforcement-message-view-model',
+        'tp-yt-paper-dialog',
+        'ytd-consent-bump-v2-lightbox',
+        'yt-confirm-dialog-renderer',
+        'ytd-popup-container tp-yt-paper-dialog'
+    ];
+
+    function complianceMarkerList() {
+        const remote = state.filters?.complianceMarkers;
+        const extra = Array.isArray(remote)
+            ? remote.filter(m => typeof m === 'string' && m.length > 2 && m.length < 120)
+            : [];
+        return COMPLIANCE_TEXT_MARKERS.concat(extra.map(m => m.toLowerCase()));
+    }
+
+    function isComplianceDialogElement(el) {
+        if (!el || typeof el.textContent !== 'string') return false;
+        // Bounded read: dialogs are short, and this runs on a poll.
+        const text = el.textContent.slice(0, 2000).toLowerCase();
+        if (!text) return false;
+        return complianceMarkerList().some(marker => text.includes(marker));
+    }
+
+    function scanForComplianceDialogs(root = document) {
+        if (!root || typeof root.querySelectorAll !== 'function') return 0;
+        let marked = 0;
+        for (const selector of COMPLIANCE_CANDIDATE_SELECTORS) {
+            let nodes;
+            try {
+                nodes = root.querySelectorAll(selector);
+            } catch (e) {
+                continue;
+            }
+            for (const el of nodes) {
+                if (el.hasAttribute(COMPLIANCE_MARK_ATTR)) continue;
+                if (!isComplianceDialogElement(el)) continue;
+                try {
+                    el.setAttribute(COMPLIANCE_MARK_ATTR, '1');
+                } catch (e) {
+                    continue;
+                }
+                marked++;
+                state.stats.complianceDialogs = (state.stats.complianceDialogs || 0) + 1;
+                state.complianceDialogLastSeen = Date.now();
+            }
+        }
+        return marked;
+    }
+
+    function hasVisibleComplianceDialog(root = document) {
+        if (!root || typeof root.querySelector !== 'function') return false;
+        return !!root.querySelector(`[${COMPLIANCE_MARK_ATTR}]`);
     }
 
     /* =========================================================================
@@ -4679,7 +4767,12 @@
         // Sweep on SPA nav + on a throttled interval. A MutationObserver on
         // document.body is too noisy on YouTube — polling every 1.5s is
         // functionally equivalent for feed-level replacements.
-        const run = () => sweepDearrow(document);
+        const run = () => {
+            // Mark verification dialogs on the fast sweep too, so the
+            // cosmetic exemption applies well before the 10s self-test.
+            scanForComplianceDialogs(document);
+            sweepDearrow(document);
+        };
         registerInterval(run, 1500);
         document.addEventListener('yt-navigate-finish', run);
         if (document.readyState === 'loading') {
@@ -9567,6 +9660,7 @@
             `${report.unsupportedScriptlets}: ${formatScriptletCoverage(coverage.unsupportedScriptlets)}`,
             `${report.rejectedDangerousScriptlets}: ${formatScriptletCoverage(coverage.rejectedDangerousScriptlets)}`,
             `${report.ssaiSignals}: detected=${state.stats.ssaiDetected || 0}, lastSeen=${state.ssaiLastSeen ? new Date(state.ssaiLastSeen).toISOString() : STRINGS.common.never}, lastUrl=${redactUrl(state.ssaiLastUrl) || STRINGS.common.none}`,
+            `${report.complianceDialogs}: detected=${state.stats.complianceDialogs || 0}, lastSeen=${state.complianceDialogLastSeen ? new Date(state.complianceDialogLastSeen).toISOString() : STRINGS.common.never} (never hidden or dismissed)`,
             `${report.dnrMatchedRules}: ${formatDnrDiagnosticsReport()}`,
             `${report.communityApiPermission}: ${state.communityApiPermission || STRINGS.common.unknown}`,
             `${report.communityConsent}: ${getCommunityConsentReport()}`,
@@ -9835,8 +9929,11 @@
         let breakageToastFired = false;
         registerInterval(() => {
             if (!isEnabled() || breakageToastFired) return;
+            // Mark verification dialogs first so they are exempt from
+            // cosmetic hiding and are never mistaken for ad breakage.
+            scanForComplianceDialogs();
             const enforcement = document.querySelector(
-                'ytd-enforcement-message-view-model, tp-yt-paper-dialog:has(ytd-enforcement-message-view-model)'
+                `ytd-enforcement-message-view-model:not([${COMPLIANCE_MARK_ATTR}]), tp-yt-paper-dialog:not([${COMPLIANCE_MARK_ATTR}]):has(ytd-enforcement-message-view-model:not([${COMPLIANCE_MARK_ATTR}]))`
             );
             const adOverlay = document.querySelector(
                 '.ytp-ad-player-overlay, .ytp-ad-action-interstitial, .ad-showing .ytp-ad-module'
