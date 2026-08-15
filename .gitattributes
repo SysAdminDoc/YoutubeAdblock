@@ -1,0 +1,12 @@
+# Signed data must round-trip byte-for-byte on every platform. With
+# core.autocrlf=true a checkout would otherwise rewrite these files to
+# CRLF, which is tolerated by the current verifiers only because they
+# strip or re-canonicalize whitespace — a fragile thing to rely on.
+youtube-adblock-filters.txt            text eol=lf
+youtube-adblock-filters.txt.sig        text eol=lf
+youtube-adblock-filters.manifest.json  text eol=lf
+youtube-adblock-filters.manifest.json.sig text eol=lf
+webpack-ad-signatures.json             text eol=lf
+webpack-ad-signatures.json.sig         text eol=lf
+webpack-ad-signatures.manifest.json    text eol=lf
+webpack-ad-signatures.manifest.json.sig text eol=lf
