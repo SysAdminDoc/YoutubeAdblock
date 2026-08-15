@@ -172,6 +172,7 @@ function createTestHarness(options = {}) {
         COMPLIANCE_MARK_ATTR,
         detectSabrOnlyStreaming,
         recordSabrOnlyStreaming,
+        detectFetchLiftPattern,
         compareDearrowCandidates,
         getCommunityCacheStatus,
         clearCommunityCache,
@@ -1972,4 +1973,68 @@ test('cache ages render as coarse human durations', () => {
     assert.equal(h.formatDuration(5000), '5s ago');
     assert.equal(h.formatDuration(90 * 1000), '1m ago');
     assert.equal(h.formatDuration(3 * 60 * 60 * 1000), '3h ago');
+});
+
+// ========== DOM bypass detection ==========
+
+test('detects realm-lift bypasses across quoting and global-object variants', () => {
+    const h = harness;
+    const bypasses = [
+        // The original shape the old substring check caught.
+        'var f=document.createElement("iframe");document.body.appendChild(f);Object.defineProperty(window,"fetch",{value:f.contentWindow.fetch});',
+        // Single quotes and extra whitespace.
+        "var f=document.createElement('iframe');document.body.appendChild(f); Object.defineProperty( window , 'fetch' ,{value:f.contentWindow.fetch});",
+        // Plain assignment instead of defineProperty.
+        'const fr=document.createElement("iframe");document.documentElement.appendChild(fr);window.fetch=fr.contentWindow.fetch;',
+        // Bracket assignment.
+        'const fr=document.createElement("iframe");document.body.appendChild(fr);window["fetch"]=fr.contentWindow.fetch;',
+        // globalThis instead of window.
+        'let i=document.createElement("iframe");document.body.appendChild(i);globalThis.fetch=i.contentWindow.fetch;',
+        // XMLHttpRequest lift via contentDocument.
+        'var i=document.createElement("iframe");document.body.appendChild(i);self.XMLHttpRequest=i.contentDocument.defaultView.XMLHttpRequest;'
+    ];
+    for (const source of bypasses) {
+        assert.equal(h.detectFetchLiftPattern(source), true, source.slice(0, 60));
+    }
+});
+
+test('leaves legitimate scripts that merely assign fetch alone', () => {
+    const h = harness;
+    const benign = [
+        // A polyfill: assigns fetch, never touches another realm.
+        'if(!window.fetch){window.fetch=function(){return Promise.reject(new Error("no fetch"))};}',
+        // An instrumentation wrapper around the existing fetch.
+        'const orig=window.fetch;window.fetch=function(){console.log("req");return orig.apply(this,arguments);};',
+        // Uses an iframe but never reinstalls a native globally.
+        'var f=document.createElement("iframe");f.src="/embed";document.body.appendChild(f);f.contentWindow.postMessage("hi","*");',
+        // Mentions the words but performs no assignment.
+        'console.log("window fetch iframe contentWindow");',
+        'const config={fetch:true,contentWindow:false};'
+    ];
+    for (const source of benign) {
+        assert.equal(h.detectFetchLiftPattern(source), false, source.slice(0, 60));
+    }
+});
+
+test('bypass detection ignores trivial and non-string input', () => {
+    const h = harness;
+    for (const value of ['', 'x', null, undefined, 42, {}]) {
+        assert.equal(h.detectFetchLiftPattern(value), false);
+    }
+});
+
+test('bypass scanning is bounded so large bundles stay cheap', () => {
+    const h = harness;
+    // A big bundle whose only match sits past the scan window.
+    const filler = 'var a=1;'.repeat(6000);
+    const late = filler + 'var f=document.createElement("iframe");window.fetch=f.contentWindow.fetch;';
+    const start = performance.now();
+    const result = h.detectFetchLiftPattern(late);
+    const elapsed = performance.now() - start;
+    assert.equal(result, false, 'content past the scan window is not inspected');
+    assert.ok(elapsed < 100, `scan took ${elapsed.toFixed(1)}ms, expected a bounded cost`);
+
+    // The same pattern early in a large file is still caught.
+    const early = 'var f=document.createElement("iframe");window.fetch=f.contentWindow.fetch;' + filler;
+    assert.equal(h.detectFetchLiftPattern(early), true);
 });

@@ -181,7 +181,8 @@
         feedFiltered: 0,
         ssaiDetected: 0,
         complianceDialogs: 0,
-        sabrOnlyResponses: 0
+        sabrOnlyResponses: 0,
+        domBypassBlocked: 0
     };
     const SPONSORBLOCK_API = 'https://sponsor.ajay.app/api/skipSegments';
     const SPONSORBLOCK_CATEGORIES = [
@@ -3641,6 +3642,42 @@
         } catch (e) { /* fail silently */ }
     }
 
+    /* =========================================================================
+     * DOM BYPASS DETECTION
+     * =========================================================================
+     * The bypass we care about has two halves: a script grabs a pristine
+     * realm (a fresh iframe's contentWindow/contentDocument) and then
+     * reinstalls one of our proxied network/parsing natives onto the page's
+     * own global. Matching only the second half — as a bare
+     * `window,"fetch"` substring did — both misses trivial variants
+     * (whitespace, single quotes, `self`/`globalThis`, bracket assignment)
+     * and risks neutering an innocent polyfill that merely assigns fetch.
+     * Requiring the conjunction keeps the detector narrow in both
+     * directions.
+     * ===================================================================== */
+
+    // Half one: the script acquires another realm it could lift from.
+    const REALM_LIFT_RE = /\.\s*content(?:Window|Document)|createElement\s*\(\s*['"`]iframe['"`]\s*\)/;
+    // Half two: it installs a network/parsing native onto a global object.
+    // Covers defineProperty(window, "fetch", …), window.fetch = …, and
+    // window["fetch"] = …, across window/self/globalThis/top/parent and
+    // either quote style, so whitespace or quoting tweaks do not evade it.
+    const GLOBAL_NATIVE_ASSIGN_RE = /defineProperty\s*\(\s*(?:window|self|globalThis|top|parent)\s*,\s*['"`](?:fetch|XMLHttpRequest|Request|Response)['"`]|(?:window|self|globalThis|top|parent)\s*\.\s*(?:fetch|XMLHttpRequest|Request|Response)\s*=[^=]|(?:window|self|globalThis|top|parent)\s*\[\s*['"`](?:fetch|XMLHttpRequest|Request|Response)['"`]\s*\]\s*=[^=]/;
+
+    /**
+     * True only when a script shows both halves of a realm-lift bypass.
+     * Returns false for ordinary polyfills, which assign a native without
+     * ever reaching into another realm.
+     */
+    function detectFetchLiftPattern(source) {
+        if (typeof source !== 'string' || source.length < 16) return false;
+        // Bound the scan: inline bypass shims are small, and a megabyte of
+        // bundled application code should not be regex-scanned on insertion.
+        const text = source.length > 20000 ? source.slice(0, 20000) : source;
+        if (!GLOBAL_NATIVE_ASSIGN_RE.test(text)) return false;
+        return REALM_LIFT_RE.test(text);
+    }
+
     function installDOMBypassPrevention() {
         const originalAppendChild = Node.prototype.appendChild;
         const originalInsertBefore = Node.prototype.insertBefore;
@@ -3664,11 +3701,12 @@
                         }
                     } catch (e) { /* ignore */ }
                 }
-                // Block inline script injection that resets fetch.
+                // Block inline script injection that lifts pristine network
+                // APIs out of a fresh realm and reinstalls them globally.
                 if (node instanceof HTMLScriptElement) {
-                    const text = node.textContent || '';
-                    if (text.includes('window,"fetch"') || text.includes("window,'fetch'")) {
+                    if (detectFetchLiftPattern(node.textContent || '')) {
                         node.textContent = '/* blocked by YoutubeAdblock */';
+                        state.stats.domBypassBlocked = (state.stats.domBypassBlocked || 0) + 1;
                     }
                 }
             } catch (e) { /* fail silently */ }

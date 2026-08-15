@@ -4,6 +4,18 @@ All notable changes to YoutubeAdblock are documented here.
 
 ## [Unreleased]
 
+### Changed
+- **Structural DOM-bypass detection**: inline-script screening no longer
+  keys off the literal substring `window,"fetch"`. It now requires both
+  halves of a real realm-lift — the script reaches into another realm
+  (`contentWindow`/`contentDocument`, or a freshly created iframe) *and*
+  installs a network native onto a global object — across
+  window/self/globalThis/top/parent, either quote style, and
+  defineProperty, dotted, or bracket assignment. Ordinary polyfills and
+  fetch wrappers, which never touch another realm, are left alone. The scan
+  is length-bounded so large bundles stay cheap, and blocked injections are
+  counted.
+
 ### Added
 - **Community cache controls**: each consent card now reports how many
   responses that service has cached this session and how old the oldest is,
