@@ -14,6 +14,15 @@ All notable changes to YoutubeAdblock are documented here.
   rules. `tools/sign-filter-manifest.mjs` emits and verifies the new
   envelope plus a detached `.manifest.json.sig`.
 
+### Fixed
+- **Control Center rail navigation**: the last destination could stop with
+  its controls sitting behind the footer on short panels (Music, TV, Kids).
+  The content area now keeps trailing scroll space so every destination can
+  reach the top. Browser smoke asserts real non-obscuration by hit-testing
+  each destination's heading and first control, and now runs the full
+  ten-destination rail sweep in both themes and at 1440x900 and 1920x1080
+  instead of only the canonical dark journey.
+
 ### Added
 - **Chrome install guidance**: documented the Chrome 138+ "Allow User
   Scripts" switch, Tampermonkey 5.5.0's injection and download permission

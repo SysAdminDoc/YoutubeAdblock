@@ -296,11 +296,40 @@ async function waitForPanelScrollSettled(page, sectionId) {
 
         const contentRect = content.getBoundingClientRect();
         const sectionRect = section.getBoundingClientRect();
+
+        // Being inside the scroll viewport is not the same as being
+        // readable: a preceding card can paint over the destination
+        // heading. Hit-test the heading and its first control so an
+        // obscured destination fails instead of passing on bounds alone.
+        function coverage(el) {
+            if (!el) return null;
+            const rect = el.getBoundingClientRect();
+            if (rect.width <= 0 || rect.height <= 0) return { visible: false, reason: 'zero-size' };
+            const insideViewport = rect.top >= contentRect.top - 1 && rect.bottom <= contentRect.bottom + 1;
+            const probes = [
+                [rect.left + Math.min(8, rect.width / 4), rect.top + rect.height / 2],
+                [rect.left + rect.width / 2, rect.top + rect.height / 2],
+            ];
+            let covered = null;
+            for (const [x, y] of probes) {
+                const hit = document.elementFromPoint(x, y);
+                if (!hit) { covered = 'no-hit'; continue; }
+                if (hit !== el && !el.contains(hit) && !hit.contains(el)) {
+                    covered = hit.className || hit.tagName;
+                }
+            }
+            return { visible: insideViewport, covered, top: rect.top, bottom: rect.bottom };
+        }
+
+        const heading = section.querySelector('.ytab-section-title, h2, h3, summary');
+        const firstControl = section.querySelector('input, button, select, textarea, a[href]');
         return {
             contentTop: contentRect.top,
             contentBottom: contentRect.bottom,
             sectionTop: sectionRect.top,
             sectionBottom: sectionRect.bottom,
+            heading: coverage(heading),
+            firstControl: coverage(firstControl),
         };
     }, sectionId);
     assert.ok(bounds, `panel content and section should exist: ${sectionId}`);
@@ -308,6 +337,19 @@ async function waitForPanelScrollSettled(page, sectionId) {
         bounds.sectionBottom > bounds.contentTop + 1 && bounds.sectionTop < bounds.contentBottom - 1,
         `selected section is outside the content viewport: ${sectionId}`
     );
+    if (bounds.heading) {
+        assert.ok(bounds.heading.visible,
+            `destination heading is not fully inside the content viewport: ${sectionId} (top=${bounds.heading.top}, contentTop=${bounds.contentTop})`);
+        assert.equal(bounds.heading.covered, null,
+            `destination heading is painted over by "${bounds.heading.covered}": ${sectionId}`);
+    }
+    // A control scrolled below the fold hit-tests onto whatever is painted
+    // there (the footer), which is not obscuration. Only assert
+    // non-obscuration for controls actually inside the content viewport.
+    if (bounds.firstControl && bounds.firstControl.visible) {
+        assert.equal(bounds.firstControl.covered, null,
+            `first control of the destination is painted over by "${bounds.firstControl.covered}": ${sectionId}`);
+    }
 }
 
 async function assertAdExclusiveRequestsShortCircuit(page, requestLog) {
@@ -420,7 +462,10 @@ async function exercisePanel(page, mode, surface) {
         assert.equal(focusOverrides.keywordBlocker, true);
     }
 
-    if (surface.name === 'www-watch-dark') {
+    // Rail navigation is verified on every desktop main-site surface, so
+    // non-obscuration is proven in both themes and at both supported
+    // widths rather than only in the canonical dark journey.
+    if (surface.name.startsWith('www-watch')) {
         const destinations = await page.locator('.ytab-nav-button').evaluateAll(buttons =>
             buttons.map(button => ({
                 sectionId: button.dataset.sectionId,
@@ -444,7 +489,7 @@ async function exercisePanel(page, mode, surface) {
             if (mode === 'userscript') {
                 const sectionSlug = destination.sectionId.replace(/^ytab-section-/, '');
                 await page.screenshot({
-                    path: path.join(repoRoot, 'dist', 'browser-smoke', `userscript-www-watch-dark-section-${sectionSlug}.png`),
+                    path: path.join(repoRoot, 'dist', 'browser-smoke', `userscript-${surface.name}-section-${sectionSlug}.png`),
                     fullPage: false,
                 });
             }

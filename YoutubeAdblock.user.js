@@ -6036,7 +6036,10 @@
                 display: grid;
                 grid-template-columns: minmax(0, 1fr);
                 gap: 16px;
-                padding: 16px 24px 24px;
+                /* Trailing space so the last rail destination can scroll to
+                   the top of the content area instead of stopping with its
+                   controls behind the footer on short panels. */
+                padding: 16px 24px 96px;
             }
             .${CSS_PREFIX}-section {
                 min-width: 0;

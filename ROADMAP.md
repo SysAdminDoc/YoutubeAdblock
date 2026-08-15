@@ -99,13 +99,6 @@ Incomplete, actionable work only. Completed work belongs in `CHANGELOG.md`. Ever
   Acceptance: the production manifest contains neither tabs nor declarativeNetRequestFeedback; a development manifest enables DNR match debugging only for unpacked QA; toolbar, commands, context menus, tab creation, and YouTube messaging pass on YouTube and non-YouTube tabs without tabs; production diagnostics either use an eligible explicit user-gesture grant or report evidence unavailable without implying blocking failure; release checks inspect both profiles and the ZIP contains only the production profile.
   Complexity: M
 
-- [ ] P1 — Fix Control Center section overlap during rail navigation
-  Why: Captured browser-smoke screenshots show the prior section’s cards painting over the selected Core Blocking and Rule Library headings, so the destination can be technically in the viewport while its content remains obscured.
-  Evidence: dist/browser-smoke/userscript-www-watch-dark-section-core.png; dist/browser-smoke/userscript-www-watch-dark-section-rules.png; YoutubeAdblock.user.js:5634,8466-8482; tests/browser-smoke.test.mjs section-navigation checks; WCAG 2.2 Focus Not Obscured.
-  Touches: YoutubeAdblock.user.js Control Center CSS/navigation; tests/browser-smoke.test.mjs; generated extension/main.js via Build-Extension.ps1.
-  Acceptance: all ten rail destinations in both themes at 1440×900 and 1920×1080 leave the target heading and first control fully visible; no preceding/following section painted or bounding region overlaps the target; the dialog remains inside the viewport; mouse and keyboard navigation preserve focus and reduced-motion behavior; Playwright asserts geometry and captures stable screenshots.
-  Complexity: S
-
 ### P2
 
 - [ ] P2 — Add an accessibility release gate for the complete Control Center
