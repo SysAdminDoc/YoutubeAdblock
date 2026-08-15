@@ -77,6 +77,12 @@ function Copy-ExtensionPayload([string]$SourceDir, [string]$TargetDir) {
     if (Test-Path -LiteralPath $readme) {
         Remove-Item -LiteralPath $readme -Force
     }
+    # The development profile carries the unpacked-only debugging
+    # permission and must never ship inside a release artifact.
+    $devManifest = Join-Path $TargetDir 'manifest.dev.json'
+    if (Test-Path -LiteralPath $devManifest) {
+        Remove-Item -LiteralPath $devManifest -Force
+    }
 }
 
 function Write-ZipArtifact([string]$SourceDir, [string]$DestinationPath) {

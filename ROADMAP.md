@@ -92,13 +92,6 @@ Incomplete, actionable work only. Completed work belongs in `CHANGELOG.md`. Ever
 
 ### P1
 
-- [ ] P1 — Split development diagnostics from least-privilege production manifests
-  Why: tabs grants sensitive tab metadata the background does not need, while declarativeNetRequestFeedback is documented for unpacked-extension debugging and cannot support the current production evidence claim.
-  Evidence: extension/manifest.json:20-26; extension/background.js:117-191,309-329; extension/README.md:49-57; Chrome Tabs API; Chrome Declarative Net Request API; Chrome Web Store Use of Permissions policy.
-  Touches: extension/manifest.json; Build-Extension.ps1; Build-Release.ps1; extension/background.js; extension/bridge.js; tests/background-contract.test.mjs; tests/repo-contract.test.mjs; README.md; extension/README.md.
-  Acceptance: the production manifest contains neither tabs nor declarativeNetRequestFeedback; a development manifest enables DNR match debugging only for unpacked QA; toolbar, commands, context menus, tab creation, and YouTube messaging pass on YouTube and non-YouTube tabs without tabs; production diagnostics either use an eligible explicit user-gesture grant or report evidence unavailable without implying blocking failure; release checks inspect both profiles and the ZIP contains only the production profile.
-  Complexity: M
-
 ### P2
 
 - [ ] P2 — Add an accessibility release gate for the complete Control Center

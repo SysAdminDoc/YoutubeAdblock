@@ -93,6 +93,8 @@ function verifyZipPayload(zipBuffer, label) {
         if (!entrySet.has(required)) fail(`${label} missing required ZIP entry: ${required}`);
     }
     if (entrySet.has('README.md')) fail(`${label} should not include extension/README.md.`);
+    // The development manifest enables unpacked-only DNR match debugging.
+    if (entrySet.has('manifest.dev.json')) fail(`${label} must not include the development manifest profile.`);
     return entries;
 }
 

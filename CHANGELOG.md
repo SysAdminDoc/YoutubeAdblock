@@ -14,6 +14,15 @@ All notable changes to YoutubeAdblock are documented here.
   rules. `tools/sign-filter-manifest.mjs` emits and verifies the new
   envelope plus a detached `.manifest.json.sig`.
 
+### Security
+- **Least-privilege production manifest**: release builds no longer request
+  `tabs` (matching host permissions already expose `tab.url` for YouTube
+  tabs) or `declarativeNetRequestFeedback`, which Chrome documents for
+  unpacked-extension debugging. That permission moved to a development-only
+  `extension/manifest.dev.json` profile that the release packer and artifact
+  verifier both refuse to ship. Production diagnostics report matched-rule
+  evidence as unavailable instead of implying a blocking failure.
+
 ### Added
 - **SABR-only response detection**: player responses that advertise formats
   without per-format URLs and deliver media through `serverAbrStreamingUrl`

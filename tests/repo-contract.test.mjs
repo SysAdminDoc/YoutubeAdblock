@@ -13,6 +13,7 @@ function read(relativePath) {
 
 const userscript = read('YoutubeAdblock.user.js');
 const manifest = JSON.parse(read(path.join('extension', 'manifest.json')));
+const devManifest = JSON.parse(read(path.join('extension', 'manifest.dev.json')));
 const generatedRulesText = read(path.join('extension', 'rules', 'network-blocks.json'));
 const rules = JSON.parse(generatedRulesText);
 const networkRuleSource = JSON.parse(read(path.join('extension', 'rules', 'network-rules-source.json')));
@@ -136,8 +137,29 @@ test('community API hosts use optional runtime permissions instead of install-ti
     assert.match(userscript, /communityApiPermission/);
 });
 
+test('the production manifest stays least-privilege', () => {
+    assert.equal(manifest.permissions.includes('tabs'), false,
+        'tabs is not needed: matching host permissions already expose tab.url for YouTube tabs');
+    assert.equal(manifest.permissions.includes('declarativeNetRequestFeedback'), false,
+        'declarativeNetRequestFeedback is an unpacked-debugging permission and belongs in the development profile');
+    // Everything the extension actually uses must still be present.
+    for (const permission of ['storage', 'contextMenus', 'declarativeNetRequest']) {
+        assert.ok(manifest.permissions.includes(permission), `missing required permission: ${permission}`);
+    }
+});
+
+test('the development manifest adds only the debugging permission', () => {
+    const extra = devManifest.permissions.filter(p => !manifest.permissions.includes(p));
+    assert.deepEqual(extra, ['declarativeNetRequestFeedback']);
+    assert.equal(devManifest.manifest_version, manifest.manifest_version);
+    assert.equal(devManifest.version, manifest.version);
+    assert.deepEqual(devManifest.host_permissions, manifest.host_permissions);
+    assert.deepEqual(devManifest.content_scripts, manifest.content_scripts);
+    assert.match(devManifest.name, /development/i,
+        'the development profile must be visually distinct when loaded unpacked');
+});
+
 test('matched-rule diagnostics use privacy-bounded DNR feedback', () => {
-    assert.ok(manifest.permissions.includes('declarativeNetRequestFeedback'));
     assert.match(background, /declarativeNetRequest\.getMatchedRules/);
     assert.match(background, /rulesetId\s*!==\s*DNR_RULESET_ID/);
     assert.match(bridge, /DNR diagnostics as bounded rule IDs\/counts only/);

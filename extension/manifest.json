@@ -11,14 +11,14 @@
   },
   "background": {
     "service_worker": "background.js",
-    "scripts": ["background.js"]
+    "scripts": [
+      "background.js"
+    ]
   },
   "permissions": [
     "storage",
     "contextMenus",
-    "declarativeNetRequest",
-    "declarativeNetRequestFeedback",
-    "tabs"
+    "declarativeNetRequest"
   ],
   "host_permissions": [
     "*://*.youtube.com/*",
@@ -39,7 +39,9 @@
         "*://youtubekids.com/*",
         "*://www.youtubekids.com/*"
       ],
-      "js": ["main.js"],
+      "js": [
+        "main.js"
+      ],
       "run_at": "document_start",
       "all_frames": false,
       "world": "MAIN"
@@ -51,7 +53,9 @@
         "*://youtubekids.com/*",
         "*://www.youtubekids.com/*"
       ],
-      "js": ["bridge.js"],
+      "js": [
+        "bridge.js"
+      ],
       "run_at": "document_start",
       "all_frames": false
     }

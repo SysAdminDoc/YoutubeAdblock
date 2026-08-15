@@ -1,0 +1,93 @@
+{
+  "manifest_version": 3,
+  "name": "YoutubeAdblock (development)",
+  "version": "0.5.23",
+  "description": "YouTube ad blocker with payload pruning, anti-detect hardening, SponsorBlock, Return YouTube Dislike, and a Control Center.",
+  "author": "SysAdminDoc",
+  "homepage_url": "https://github.com/SysAdminDoc/YoutubeAdblock",
+  "minimum_chrome_version": "121",
+  "action": {
+    "default_title": "Open YoutubeAdblock Control Center"
+  },
+  "background": {
+    "service_worker": "background.js",
+    "scripts": [
+      "background.js"
+    ]
+  },
+  "permissions": [
+    "storage",
+    "contextMenus",
+    "declarativeNetRequest",
+    "declarativeNetRequestFeedback"
+  ],
+  "host_permissions": [
+    "*://*.youtube.com/*",
+    "*://www.youtube-nocookie.com/*",
+    "*://youtubekids.com/*",
+    "*://www.youtubekids.com/*",
+    "https://raw.githubusercontent.com/SysAdminDoc/YoutubeAdblock/*"
+  ],
+  "optional_host_permissions": [
+    "https://sponsor.ajay.app/*",
+    "https://returnyoutubedislikeapi.com/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "*://*.youtube.com/*",
+        "*://www.youtube-nocookie.com/*",
+        "*://youtubekids.com/*",
+        "*://www.youtubekids.com/*"
+      ],
+      "js": [
+        "main.js"
+      ],
+      "run_at": "document_start",
+      "all_frames": false,
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "*://*.youtube.com/*",
+        "*://www.youtube-nocookie.com/*",
+        "*://youtubekids.com/*",
+        "*://www.youtubekids.com/*"
+      ],
+      "js": [
+        "bridge.js"
+      ],
+      "run_at": "document_start",
+      "all_frames": false
+    }
+  ],
+  "declarative_net_request": {
+    "rule_resources": [
+      {
+        "id": "ytab-network-blocks",
+        "enabled": true,
+        "path": "rules/network-blocks.json"
+      }
+    ]
+  },
+  "commands": {
+    "ytab-open-panel": {
+      "description": "Open YoutubeAdblock Control Center"
+    },
+    "ytab-toggle-protection": {
+      "description": "Pause or Resume YoutubeAdblock Protection"
+    },
+    "ytab-refresh-rules": {
+      "description": "Refresh YoutubeAdblock Rules"
+    }
+  },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "youtubeadblock@sysadmindoc.github.io",
+      "strict_min_version": "128.0"
+    },
+    "gecko_android": {
+      "strict_min_version": "128.0"
+    }
+  }
+}

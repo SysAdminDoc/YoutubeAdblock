@@ -46,8 +46,16 @@ on `document`, and `main.js` invokes the matching in-page action. The bounded
 reverse path handles settings and diagnostics: page events can access only the
 allowlisted settings object or request a sanitized current-tab DNR summary.
 
-The manifest's `declarativeNetRequestFeedback` permission exists only for that
-summary. `background.js` uses `getMatchedRules()` with a five-minute window,
+Matched-rule evidence needs the `declarativeNetRequestFeedback` permission,
+which Chrome documents for unpacked-extension debugging. It therefore lives in
+`manifest.dev.json` — a development-only profile — and is absent from the
+production `manifest.json` and from every release artifact. To use the Browser
+Network Layer card during QA, copy `manifest.dev.json` over `manifest.json` in a
+scratch copy of `extension/` and load that unpacked. In production builds
+blocking is unchanged and the card reports that the evidence is unavailable
+rather than implying a blocking failure.
+
+That permission powers only that summary. `background.js` uses `getMatchedRules()` with a five-minute window,
 keeps only `ytab-network-blocks` rule IDs/counts/timestamps, and applies a
 30-second global cooldown. `bridge.js` validates the result again before the
 page can see it. No request URL, raw browser error, or unrelated-tab data is
