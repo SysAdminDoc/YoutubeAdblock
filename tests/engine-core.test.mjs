@@ -187,6 +187,8 @@ function createTestHarness(options = {}) {
         rydCache,
         validateSafeRegexSource,
         updateCosmeticCSS,
+        updateClutterCSS,
+        applyFeatureSideEffects,
         verifySignedManifest,
         checkManifestFreshness,
         signedManifestSigningInput,
@@ -1828,6 +1830,34 @@ test('remote filter data can extend the compliance marker list', () => {
     // Junk entries are ignored rather than widening the match.
     h.state.filters.complianceMarkers = ['a', 12, null, 'x'.repeat(500)];
     assert.equal(h.isComplianceDialogElement(fakeDialog('a random unrelated dialog')), false);
+});
+
+test('a bulk feature change reconciles live page state, not just the toggles', () => {
+    const h = createTestHarness({ storage: {} });
+    h.state.features.hideComments = true;
+    h.updateClutterCSS();
+    const style = h.state.clutterStyleEl;
+    assert.ok(style.textContent.length > 0, 'clutter hiding should be applied');
+
+    // Restore Defaults, import and import-undo all change many features at
+    // once. Before this reconciliation existed they refreshed the toggles and
+    // the cosmetic sheet but left the clutter sheet applied, so elements
+    // stayed hidden while their switches read off.
+    h.state.features.hideComments = false;
+    h.applyFeatureSideEffects();
+    assert.equal(style.textContent, '', 'stale hides must not survive a bulk change');
+});
+
+test('importing settings that disable a clutter feature clears its hides', () => {
+    const h = createTestHarness({ storage: {} });
+    h.state.features.hideComments = true;
+    h.updateClutterCSS();
+    const style = h.state.clutterStyleEl;
+    assert.ok(style.textContent.length > 0);
+
+    const applied = h.applyValidatedSettings({ feature_overrides: { hideComments: false } });
+    assert.equal(applied.ok, true);
+    assert.equal(style.textContent, '', 'an import must not leave the previous hides on the page');
 });
 
 test('cosmetic CSS exempts marked compliance dialogs from every hiding rule', () => {

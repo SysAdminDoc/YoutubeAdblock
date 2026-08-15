@@ -70,13 +70,6 @@ Start with the P1 sync-regression repair under Research-Driven Additions, then t
   Acceptance: the sync payload carries a monotonic revision independent of wall-clock time; a remote snapshot is merged only for keys not modified locally since the last flush, and only when its revision is strictly greater; a two-device test asserts that a local edit made during an in-flight remote update survives, and that clock skew in either direction cannot cause one-way overwrite.
   Complexity: M
 
-- [ ] P1 — Make Restore Defaults actually restore live engine state
-  Why: the one documented recovery action leaves the page in the previous state — clutter hides stay applied while their toggles read off, and the volume gain node stays amplified indefinitely. The correct teardown already exists in two other code paths.
-  Evidence: YoutubeAdblock.user.js:9156-9167 calls `updateCosmeticCSS()` only; `applyPauseState()` at :1465-1470 calls both CSS updaters; `setFeatureEnabled` at :9693-9705 performs the volume teardown; README.md:225 advertises the behaviour.
-  Touches: YoutubeAdblock.user.js; tests/browser-smoke.test.mjs.
-  Acceptance: after Restore Defaults with clutter hides and volume boost previously enabled, the clutter stylesheet is empty, the boost slider is removed, gain is reset to 1, and the SponsorBlock highlight button is gone — asserted in a rendered test, not from storage.
-  Complexity: S
-
 - [ ] P1 — Make the pause and the master switch actually stop protection, and survive worker eviction
   Why: the timed pause is backed by `setTimeout`, so an MV3 service-worker eviction leaves protection paused with no scheduled restore; and nothing ever disables the packaged DNR ruleset, so network rules keep blocking while the UI says "Protection paused" — defeating the exact diagnostic the pause exists for.
   Evidence: YoutubeAdblock.user.js:1444 (`setTimeout`); zero `chrome.alarms` references repo-wide; zero `updateEnabledRulesets` references repo-wide; UI copy at :376, :382; Ghostery's alarm-backed pattern in src/background/paused.js.

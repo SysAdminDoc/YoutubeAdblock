@@ -1178,6 +1178,7 @@
         panelEl: null,
         lastFocusedEl: null,
         cosmeticStyleEl: null,
+        clutterStyleEl: null,
         toastRegionEl: null,
         toastLaneEl: null,
         settingsNavEl: null,
@@ -5631,7 +5632,12 @@
     };
 
     function updateClutterCSS() {
-        const style = ensureStyleElement(`${CSS_PREFIX}-clutter`);
+        // Cached like the cosmetic sheet: re-resolving by id on every
+        // feature toggle churns the element and costs a DOM lookup.
+        if (!state.clutterStyleEl || !state.clutterStyleEl.isConnected) {
+            state.clutterStyleEl = ensureStyleElement(`${CSS_PREFIX}-clutter`);
+        }
+        const style = state.clutterStyleEl;
         if (!isEnabled()) { style.textContent = ''; return; }
         const parts = [];
         for (const [feature, selectors] of Object.entries(CLUTTER_SELECTORS)) {
@@ -8830,6 +8836,7 @@
             setSetting('feature_overrides', snapshot.feature_overrides);
             state.features = normalizeFeatures({ ...(state.filters?.features || {}), ...snapshot.feature_overrides });
         }
+        applyFeatureSideEffects();
         return true;
     }
 
@@ -8878,6 +8885,7 @@
                 changed++;
             }
             lastImportSnapshot = snapshot;
+            applyFeatureSideEffects();
             return { ok: true, count: changed };
         } catch (e) {
             restorePortableSettings(snapshot);
@@ -9334,7 +9342,7 @@
                 state.pendingFilterUrl = null;
                 state.features = normalizeFeatures(state.filters?.features);
                 state.filterError = '';
-                updateCosmeticCSS();
+                applyFeatureSideEffects();
                 refreshSettingsUI(true);
                 showToast(STRINGS.ui.diagnosticsSection.defaultsRestored, 'success');
             }
@@ -9851,6 +9859,36 @@
     // document.head and prevents unrelated selectors from flashing.
     const COSMETIC_AFFECTING_FEATURES = new Set(['cosmeticHiding', 'upsellBlock']);
     const CLUTTER_AFFECTING_FEATURES = new Set(Object.keys(CLUTTER_SELECTORS));
+
+    /**
+     * Reconciles the page-level side effects a feature owns but CSS does not
+     * cover. setFeatureEnabled handles one key at a time; this is for the
+     * paths that change many at once (Restore Defaults, import, undo), where
+     * skipping it leaves hidden elements hidden and the gain node amplified
+     * while the toggles read off.
+     */
+    function applyFeatureSideEffects() {
+        updateCosmeticCSS();
+        updateClutterCSS();
+        try {
+            if (state.features.volumeBoost) {
+                attachVolumeBoost();
+                ensureVolumeBoostSlider();
+            } else {
+                const existing = document.getElementById(`${CSS_PREFIX}-vol-boost`);
+                if (existing) existing.remove();
+                if (volumeBoostState.gainNode) {
+                    try { volumeBoostState.gainNode.gain.value = 1; } catch (e) { /* ignore */ }
+                }
+            }
+        } catch (e) { /* ignore */ }
+        if (!state.features.sponsorBlock) {
+            try {
+                const highlight = document.getElementById(`${CSS_PREFIX}-highlight-btn`);
+                if (highlight) highlight.remove();
+            } catch (e) { /* ignore */ }
+        }
+    }
 
     function setFeatureEnabled(key, checked, label) {
         const overrides = getFeatureOverrides();

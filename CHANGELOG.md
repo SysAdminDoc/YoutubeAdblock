@@ -5,6 +5,14 @@ All notable changes to YoutubeAdblock are documented here.
 ## [Unreleased]
 
 ### Fixed
+- **Restore Defaults now actually restores the page.** It reset the toggles
+  and the cosmetic stylesheet but never the clutter stylesheet or the volume
+  gain node, so hidden elements stayed hidden while their switches read off
+  and boosted audio stayed boosted indefinitely. Settings import and
+  import-undo had the same gap. All four paths now reconcile the page state a
+  feature owns, not just its stored value.
+
+### Fixed
 - **Settings sync no longer stops silently.** Two defects introduced with the
   v0.7.0 preference split: chunks were sliced by UTF-16 length against a
   byte-denominated quota, so a CJK, Cyrillic or emoji blocklist produced
