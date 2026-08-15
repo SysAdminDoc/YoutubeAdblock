@@ -4,28 +4,6 @@ Incomplete, actionable work only. Completed work belongs in `CHANGELOG.md`. Ever
 
 ## Now / Next — Top Five
 
-- [ ] **P1 — Capture and replay real ad creative across desktop surfaces**
-  Why: the 2026-08-13 live sessions exposed current ad endpoints and DOM roots, but the available account/browser environment did not receive pre-roll, mid-roll, feed, Shorts, Music, TV, Kids, or embed creative.
-  Next investigation: use disposable signed-out and non-Premium profiles plus at least two regions; wait until each creative type is actually served; record sanitized request paths, response field shapes, media URLs, and rendered containers.
-  Acceptance: one privacy-scrubbed fixture and regression test per observed creative type; unpacked-extension and userscript-manager runs show no visible ads, audible ads, or escaping ad-media requests while normal playback/comments/navigation remain intact.
-  Blocker: needs an account/region/experiment combination that receives real ads.
-  Complexity: L
-
-- [ ] **P1 — Validate real desktop userscript managers**
-  Why: direct userscript fixture injection passes, but it does not prove Tampermonkey or Violentmonkey document-start timing and sandbox behavior on current browser releases.
-  Next investigation: test Chrome + Tampermonkey and Firefox + Violentmonkey in isolated desktop profiles; capture injection-health diagnostics on cold watch loads and SPA navigation.
-  Note (2026-08-14): Violentmonkey shipped v2.46.0–v2.47.1 between 2026-07-29 and 2026-08-13; its MV3 document-start timing depends on an off-by-default experimental "Alternative page mode". The matrix must test VM 2.47.x default mode explicitly and document the required setting if the injection race is lost. Tampermonkey 5.5.0 added a userscript-injection permission prompt that install docs must name.
-  Acceptance: a dated pass/fail matrix covers install, update, Control Center, cold load, search-to-watch navigation, video playback, comments, Music, Shorts, and ad-request suppression; README support claims match the results.
-  Blocker: requires those manager extensions and Firefox desktop in disposable profiles.
-  Complexity: M
-
-- [ ] **P1 — Recover or deliberately migrate the stable CRX identity**
-  Why: v0.5.20 pinned Chromium ID `jpeojodihepmkpdhibnnbgamnakclnnj`, but its matching private key is not present in the repository or current local release locations. A newly generated key changes the ID, storage namespace, and update continuity.
-  Next investigation: recover the original PEM from the maintainer's secure backup or prior release machine and verify it with `Build-CRX.ps1 -KeyPath`; if it is permanently lost, design an explicit ID/storage/update migration and document the break before rotating.
-  Acceptance: the generated CRX cryptographically verifies, matches `extension/extension-id.txt`, and the full gate passes with `-Artifacts Userscript,Zip,Crx -CrxKeyPath <key>`; no private key is committed.
-  Blocker: requires the historical private key or an explicit maintainer decision to rotate identity.
-  Complexity: M
-
 - [ ] **P2 — Export a privacy-scrubbed diagnostic bundle**
   Why: copied text now includes browser-layer DNR evidence, but issue triage still lacks a structured bundle of bounded recent engine events and integrity state.
   Next investigation: define a versioned JSON schema over existing counters, engine health, rule integrity, API cooldowns, and DNR summaries; add a small in-memory prune-event ring that records keys and endpoint classes without URLs or media identifiers.
@@ -77,14 +55,6 @@ Incomplete, actionable work only. Completed work belongs in `CHANGELOG.md`. Ever
   Evidence: YoutubeAdblock.user.js Control Center construction and CSS; tests/browser-smoke.test.mjs; WAI-ARIA modal dialog pattern; WCAG 2.2 Focus Not Obscured.
   Touches: package.json; package-lock.json; tests/browser-smoke.test.mjs; YoutubeAdblock.user.js; README.md support matrix.
   Acceptance: scoped axe/ARIA checks find no serious or critical violations across every section and both themes; tests cover accessible name/role/state, tab wrap, Escape, focus return, live status, forced colors, 320 CSS-pixel width, and 200%/400% zoom without lost controls or two-dimensional page scrolling; a dated manual NVDA pass is recorded, while VoiceOver/TalkBack remains part of the existing platform-validation work.
-  Complexity: M
-
-- [ ] P2 — Add an auto-restoring recovery pause that never syncs
-  Why: False positives can break playback, but the current master switch is persistent and global; commercial blockers demonstrate safer tab/session/short timed trust controls.
-  Evidence: YoutubeAdblock.user.js protection switch and settings persistence; GitHub issue 2; Ghostery 10 temporary trust controls; community false-positive reports.
-  Note (2026-08-14): the pause/self-test should recognize the progressive degradation ladder reported in the 2026-08-09/10 anti-adblock wave — repeated ads → throttling → autoplay stops → videos refuse to load (r/Adblock threads 1vka53b, 1vjyjth) — and suggest stage-appropriate recovery, not only react to binary enforcement popups.
-  Touches: YoutubeAdblock.user.js; extension/background.js; extension/bridge.js; extension action/context menus; tests/browser-smoke.test.mjs; tests/background-contract.test.mjs; README.md.
-  Acceptance: users can pause the current tab/session or choose a short timed pause with a visible scope and countdown; the state is stored only in memory, sessionStorage, or chrome.storage.session and is excluded from sync/export; expiry, tab close, extension restart, and an explicit Resume restore the documented engine set; persistent global disable remains a separate deliberate action; tests prove a pause cannot silently become permanent or leak to another tab/device.
   Complexity: M
 
 - [ ] P2 — YouTube-semantic element zapper (picker → stable named toggle)

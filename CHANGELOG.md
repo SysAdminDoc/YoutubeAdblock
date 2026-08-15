@@ -4,6 +4,23 @@ All notable changes to YoutubeAdblock are documented here.
 
 ## [Unreleased]
 
+### Added
+- **Temporary recovery pause**: the Overview now offers a 5-minute,
+  30-minute, or this-tab pause that suspends every engine without touching
+  saved settings. It lives in memory only — never written to storage, never
+  mirrored to sync, never included in an export — restores itself when the
+  timer expires, and leaves the persistent master switch as a separate
+  deliberate action.
+
+### Fixed
+- **`hidden` now actually hides**: the panel sets `display` on buttons and
+  cards, which overrides the user-agent `[hidden]` rule, so elements toggled
+  through the `hidden` property (the import-undo button, the new pause
+  controls) stayed on screen. Panel styles now honor the attribute.
+- **A temporary pause can no longer be exported as a permanent disable**:
+  settings export and the import-undo snapshot record the persisted
+  protection preference rather than the effective runtime state.
+
 ### Changed
 - **Structural DOM-bypass detection**: inline-script screening no longer
   keys off the literal substring `window,"fetch"`. It now requires both

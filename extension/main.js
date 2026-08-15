@@ -455,6 +455,19 @@
             enhanceAttribution: 'Title/thumbnail data from DeArrow (CC BY-NC-SA 4.0); dislike counts from Return YouTube Dislike.',
             dearrowAttributionLink: 'dearrow.ajay.app',
             rydAttributionLink: 'returnyoutubedislike.com',
+            pause: {
+                heading: 'Temporary pause',
+                help: 'Suspend every engine for this tab without changing your saved settings. It restores itself automatically and never syncs to your other devices.',
+                start5m: 'Pause 5 min',
+                start30m: 'Pause 30 min',
+                startSession: 'Pause for this tab',
+                resume: 'Resume now',
+                scopeLabel: (id) => id === 'session' ? 'this tab' : (id === '30m' ? '30 minutes' : '5 minutes'),
+                startedToast: (scope) => `Protection paused for ${scope}. It resumes automatically.`,
+                resumedToast: 'Protection resumed.',
+                activeTimed: (remaining) => `Paused - resumes in ${remaining}.`,
+                activeSession: 'Paused for this tab - resumes when the tab closes.'
+            },
             consent: {
                 heading: 'Community data consent',
                 intro: 'These optional services contact third-party APIs. Nothing is sent for a service until you allow it here, and you can turn any of them off again at any time.',
@@ -1132,6 +1145,11 @@
         webpackSignatureIntegrity: 'built-in',
         webpackSignatureSyncing: false,
         complianceDialogLastSeen: 0,
+        // Recovery pause is in-memory only: never written to storage,
+        // never mirrored to sync, never included in an export.
+        pauseScope: '',
+        pauseUntil: 0,
+        pauseTimer: null,
         sabrLastSeen: 0,
         sabrLastKey: '',
         sabrOnlyActive: false,
@@ -1464,7 +1482,82 @@
         return id;
     }
 
+    /* =========================================================================
+     * TEMPORARY RECOVERY PAUSE
+     * =========================================================================
+     * A false positive should be recoverable without a permanent, global
+     * kill switch. A pause suspends every engine for this tab only, lives
+     * in memory (never storage, never sync, never export), and restores
+     * itself when the timer expires or the tab goes away. The persistent
+     * master switch stays a separate, deliberate action.
+     * ===================================================================== */
+
+    const PAUSE_DURATION_OPTIONS = [
+        { id: '5m', ms: 5 * 60 * 1000 },
+        { id: '30m', ms: 30 * 60 * 1000 },
+        { id: 'session', ms: 0 }
+    ];
+
+    function isPaused() {
+        const until = state.pauseUntil || 0;
+        if (state.pauseScope === 'session') return true;
+        if (!until) return false;
+        if (Date.now() >= until) {
+            // Expired: restore automatically rather than waiting for a tick.
+            clearRecoveryPause({ silent: true });
+            return false;
+        }
+        return true;
+    }
+
+    function pauseRemainingMs() {
+        if (state.pauseScope === 'session') return Infinity;
+        const until = state.pauseUntil || 0;
+        return until ? Math.max(0, until - Date.now()) : 0;
+    }
+
+    function startRecoveryPause(optionId) {
+        const option = PAUSE_DURATION_OPTIONS.find(o => o.id === optionId) || PAUSE_DURATION_OPTIONS[0];
+        state.pauseScope = option.ms ? 'timed' : 'session';
+        state.pauseUntil = option.ms ? Date.now() + option.ms : 0;
+        if (state.pauseTimer) {
+            try { clearTimeout(state.pauseTimer); } catch (e) { /* ignore */ }
+            state.pauseTimer = null;
+        }
+        if (option.ms) {
+            state.pauseTimer = setTimeout(() => clearRecoveryPause(), option.ms);
+        }
+        applyPauseState();
+        showToast(STRINGS.ui.pause.startedToast(STRINGS.ui.pause.scopeLabel(option.id)), 'warn');
+        return true;
+    }
+
+    function clearRecoveryPause(options) {
+        const wasPaused = !!(state.pauseScope);
+        state.pauseScope = '';
+        state.pauseUntil = 0;
+        if (state.pauseTimer) {
+            try { clearTimeout(state.pauseTimer); } catch (e) { /* ignore */ }
+            state.pauseTimer = null;
+        }
+        if (!wasPaused) return false;
+        applyPauseState();
+        if (!(options && options.silent)) showToast(STRINGS.ui.pause.resumedToast, 'success');
+        return true;
+    }
+
+    function applyPauseState() {
+        updateCosmeticCSS();
+        updateClutterCSS();
+        refreshSettingsUI(true);
+        try { registerMenuCommands(); } catch (e) { /* ignore */ }
+    }
+
+    // Protection is off when the user disabled it persistently OR while a
+    // temporary pause is active. Every engine already gates on isEnabled(),
+    // so the pause needs no separate wiring.
     function isEnabled() {
+        if (isPaused()) return false;
         return state.enabled !== false;
     }
 
@@ -6748,6 +6841,14 @@
                     transform 0.16s ease,
                     box-shadow 0.16s ease;
             }
+            /* Any author rule that sets display beats the user-agent
+               [hidden] rule, so buttons and cards toggled via the hidden
+               property would otherwise stay on screen. Restore the
+               attribute's meaning for everything this UI renders. */
+            .${CSS_PREFIX}-panel [hidden],
+            .${CSS_PREFIX}-overlay [hidden] {
+                display: none !important;
+            }
             .${CSS_PREFIX}-btn {
                 min-height: 40px;
                 padding: 9px 14px;
@@ -7996,11 +8097,88 @@
             diagnosticsJump
         );
 
+        const pauseCard = createRecoveryPauseCard();
+
         const notes = [injectionNote, healthNote, ssaiNote].filter(Boolean);
-        if (notes.length) surface.append(hero, facts, ...notes, metrics, actions);
-        else surface.append(hero, facts, metrics, actions);
+        if (notes.length) surface.append(hero, facts, ...notes, metrics, actions, pauseCard);
+        else surface.append(hero, facts, metrics, actions, pauseCard);
         section.appendChild(surface);
         return section;
+    }
+
+    function createRecoveryPauseCard() {
+        const card = document.createElement('div');
+        card.className = `${CSS_PREFIX}-note ${CSS_PREFIX}-pause-card`;
+        card.dataset.tone = isPaused() ? 'warn' : 'neutral';
+        card.id = `${CSS_PREFIX}-pause-card`;
+
+        const title = document.createElement('span');
+        title.className = `${CSS_PREFIX}-consent-title`;
+        title.textContent = STRINGS.ui.pause.heading;
+        card.appendChild(title);
+
+        const help = document.createElement('p');
+        help.className = `${CSS_PREFIX}-note-text`;
+        help.textContent = STRINGS.ui.pause.help;
+        card.appendChild(help);
+
+        const status = document.createElement('p');
+        status.className = `${CSS_PREFIX}-note-text ${CSS_PREFIX}-pause-status`;
+        status.setAttribute('role', 'status');
+        card.appendChild(status);
+
+        const row = document.createElement('div');
+        row.className = `${CSS_PREFIX}-btn-row`;
+        const buttons = [
+            ['5m', STRINGS.ui.pause.start5m],
+            ['30m', STRINGS.ui.pause.start30m],
+            ['session', STRINGS.ui.pause.startSession]
+        ].map(([id, label]) => {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = `${CSS_PREFIX}-btn ${CSS_PREFIX}-btn-secondary ${CSS_PREFIX}-btn-small`;
+            button.textContent = label;
+            button.dataset.pauseOption = id;
+            button.addEventListener('click', () => {
+                startRecoveryPause(id);
+            });
+            row.appendChild(button);
+            return button;
+        });
+
+        const resume = document.createElement('button');
+        resume.type = 'button';
+        resume.className = `${CSS_PREFIX}-btn ${CSS_PREFIX}-btn-primary ${CSS_PREFIX}-btn-small`;
+        resume.id = `${CSS_PREFIX}-pause-resume`;
+        resume.textContent = STRINGS.ui.pause.resume;
+        resume.addEventListener('click', () => {
+            clearRecoveryPause();
+        });
+        row.appendChild(resume);
+        card.appendChild(row);
+
+        const paused = isPaused();
+        if (paused) {
+            status.hidden = false;
+            status.textContent = state.pauseScope === 'session'
+                ? STRINGS.ui.pause.activeSession
+                : STRINGS.ui.pause.activeTimed(formatRemaining(pauseRemainingMs()));
+        } else {
+            status.hidden = true;
+            status.textContent = '';
+        }
+        for (const button of buttons) button.disabled = paused;
+        resume.hidden = !paused;
+        return card;
+    }
+
+    function formatRemaining(ms) {
+        const seconds = Math.max(0, Math.ceil(Number(ms) / 1000));
+        if (seconds >= 60) {
+            const minutes = Math.ceil(seconds / 60);
+            return `${minutes} min`;
+        }
+        return `${seconds}s`;
     }
 
     function createMetricTile(label, statKey) {
@@ -8394,7 +8572,9 @@
 
     function readPortableSettings() {
         return {
-            enabled: isEnabled(),
+            // The persisted preference, not the effective runtime state: a
+            // temporary pause must never be exported as a permanent disable.
+            enabled: state.enabled !== false,
             filter_url: resolveFilterUrl(),
             channel_blocklist: String(getSetting('channel_blocklist', '')),
             keyword_blocklist: String(getSetting('keyword_blocklist', '')),
@@ -8541,7 +8721,9 @@
     // Snapshot of every settings key the importer can write, so a failed
     // or undone import restores exactly the prior configuration.
     function snapshotPortableSettings() {
-        const snapshot = { feature_overrides: getFeatureOverrides(), enabled: isEnabled() };
+        // Snapshot the persisted preference so an undo cannot resurrect a
+        // temporary pause as a permanent disable.
+        const snapshot = { feature_overrides: getFeatureOverrides(), enabled: state.enabled !== false };
         for (const key of PORTABLE_TEXT_SETTINGS) snapshot[key] = String(getSetting(key, ''));
         return snapshot;
     }

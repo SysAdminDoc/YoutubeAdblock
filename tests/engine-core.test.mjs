@@ -172,6 +172,11 @@ function createTestHarness(options = {}) {
         COMPLIANCE_MARK_ATTR,
         detectSabrOnlyStreaming,
         recordSabrOnlyStreaming,
+        isPaused,
+        isEnabled,
+        startRecoveryPause,
+        clearRecoveryPause,
+        pauseRemainingMs,
         detectFetchLiftPattern,
         compareDearrowCandidates,
         getCommunityCacheStatus,
@@ -2037,4 +2042,87 @@ test('bypass scanning is bounded so large bundles stay cheap', () => {
     // The same pattern early in a large file is still caught.
     const early = 'var f=document.createElement("iframe");window.fetch=f.contentWindow.fetch;' + filler;
     assert.equal(h.detectFetchLiftPattern(early), true);
+});
+
+// ========== temporary recovery pause ==========
+
+test('a timed pause suspends protection and restores itself on expiry', () => {
+    const h = createTestHarness({ storage: {} });
+    assert.equal(h.isEnabled(), true);
+
+    h.startRecoveryPause('5m');
+    assert.equal(h.isPaused(), true);
+    assert.equal(h.isEnabled(), false, 'every engine gates on isEnabled, so a pause disables them all');
+
+    // Wind the clock past the deadline: the next check restores protection
+    // without needing the timer to fire.
+    h.state.pauseUntil = Date.now() - 1;
+    assert.equal(h.isPaused(), false);
+    assert.equal(h.isEnabled(), true);
+    assert.equal(h.state.pauseScope, '', 'expiry clears the pause scope');
+});
+
+test('a session pause stays until explicitly resumed', () => {
+    const h = createTestHarness({ storage: {} });
+    h.startRecoveryPause('session');
+    assert.equal(h.isPaused(), true);
+    assert.equal(h.pauseRemainingMs(), Infinity);
+    // No deadline means no silent expiry.
+    h.state.pauseUntil = Date.now() - 100000;
+    assert.equal(h.isPaused(), true);
+
+    assert.equal(h.clearRecoveryPause(), true);
+    assert.equal(h.isPaused(), false);
+    assert.equal(h.isEnabled(), true);
+});
+
+test('a pause is never written to storage, so it cannot become permanent', () => {
+    const h = createTestHarness({ storage: {} });
+    h.startRecoveryPause('30m');
+    const persisted = JSON.stringify(h.__storage);
+    assert.equal(persisted.includes('pause'), false, `pause state leaked into storage: ${persisted}`);
+    // The persistent master switch is untouched by a pause.
+    assert.equal(h.__storage.ytab_enabled, undefined);
+    assert.equal(h.state.enabled, true, 'the saved preference still says enabled');
+});
+
+test('a pause is excluded from the portable settings export', () => {
+    const h = createTestHarness({ storage: {} });
+    h.startRecoveryPause('5m');
+    const payload = h.buildSettingsExportPayload();
+    const serialized = JSON.stringify(payload);
+    assert.equal(serialized.includes('pause'), false, 'exports must not carry a temporary pause');
+    assert.equal(payload.settings.enabled, true);
+});
+
+test('resuming a pause that is not active is a no-op', () => {
+    const h = createTestHarness({ storage: {} });
+    assert.equal(h.clearRecoveryPause(), false);
+    assert.equal(h.isEnabled(), true);
+});
+
+test('starting a new pause replaces the previous scope rather than stacking', () => {
+    const h = createTestHarness({ storage: {} });
+    h.startRecoveryPause('session');
+    assert.equal(h.state.pauseScope, 'session');
+    h.startRecoveryPause('5m');
+    assert.equal(h.state.pauseScope, 'timed');
+    assert.ok(h.pauseRemainingMs() > 0 && h.pauseRemainingMs() <= 5 * 60 * 1000);
+});
+
+test('an unknown pause duration falls back to the shortest option', () => {
+    const h = createTestHarness({ storage: {} });
+    h.startRecoveryPause('not-a-duration');
+    assert.equal(h.state.pauseScope, 'timed');
+    assert.ok(h.pauseRemainingMs() <= 5 * 60 * 1000);
+});
+
+test('the persistent master switch remains independent of a pause', () => {
+    const h = createTestHarness({ storage: {} });
+    // Disable persistently, then pause and resume: still disabled.
+    h.state.enabled = false;
+    h.startRecoveryPause('5m');
+    assert.equal(h.isEnabled(), false);
+    h.clearRecoveryPause();
+    assert.equal(h.isEnabled(), false, 'resuming a pause must not re-enable a deliberately disabled engine');
 });
