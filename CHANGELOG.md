@@ -4,6 +4,8 @@ All notable changes to YoutubeAdblock are documented here.
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-08-15
+
 ### Changed
 - **Documentation now describes the architecture that exists.** The README
   described injecting the engine into the page through a `<script>` element

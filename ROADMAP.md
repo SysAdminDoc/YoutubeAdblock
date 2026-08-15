@@ -77,13 +77,6 @@ Start with the P1 sync-regression repair under Research-Driven Additions, then t
   Acceptance: a timed pause restores itself after a simulated worker restart; pausing and the master switch both disable the packaged ruleset and re-enable it on resume; a rendered test asserts the countdown is visible and that a blocked request succeeds while paused.
   Complexity: M
 
-- [ ] P1 — Publish the v0.6.0 and v0.7.0 releases
-  Why: the latest GitHub Release is v0.5.20 (2026-06-30) while the tree, README badge, manifest and userscript all read 0.7.0 and `dist/` holds unpublished artifacts. No extension user is running v0.6.0's least-privilege manifest or v0.7.0's storage broker; the security work of two releases is undelivered.
-  Evidence: `gh release list` (latest v0.5.20, 2026-06-30); package.json/manifest.json/userscript all 0.7.0; dist/YoutubeAdblock-extension-v0.7.0.zip present and unpublished.
-  Touches: release process only (Build-Release.ps1 output, GitHub release assets, CHANGELOG links).
-  Acceptance: releases exist for the shipped versions with the userscript, ZIP, checksums and provenance attached, and the published assets verify against their recorded checksums. The self-hosted CRX auto-update manifest half of this work stays blocked on the CRX identity decision in Roadmap_Blocked.md.
-  Complexity: S
-
 - [ ] P1 — Refresh the upstream filter base and cover YouTube's request-pipeline experiment flags, behind a toggle
   Why: the uBO-derived portion of the filter list is stamped `Last extracted: 2026-02-12`, while uAssets' `quick-fixes.txt` was rewritten repeatedly between 2026-07-26 and 2026-08-12 and now disables YouTube's `network_machine` request pipeline — which this engine has no coverage for, and which can route `/player` past the fetch/XHR surfaces it proxies.
   Evidence: youtube-adblock-filters.txt header; uAssets filters/quick-fixes.txt (`all_web_enable_network_machine`, `all_web_network_machine_raw_request`); zero repo occurrences of `EXPERIMENT_FLAGS` or `network_machine`. Counter-evidence: community reports attribute the dominant 2026-07/08 stop-start playback loop to aggressive quick-fix rules, with "disable uBO's Quick fixes list" as the working fix.
