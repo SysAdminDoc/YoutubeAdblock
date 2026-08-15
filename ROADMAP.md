@@ -43,9 +43,6 @@ Incomplete, actionable work only. Completed work belongs in `CHANGELOG.md`. Ever
 - [ ] **P2 — Trusted Types completion audit**
   Remove or wrap every remaining string-to-HTML path, add a Trusted Types-enforced browser fixture, and downgrade README claims until the audit passes.
 
-- [ ] **P2 — Community API cache controls**
-  Show SponsorBlock, DeArrow, and RYD cache counts/ages; clear each independently; retain hash-prefix privacy and cooldown reporting.
-
 - [ ] **P2 — Manual uAssets quick-fix ingestion tool**
   Fetch upstream changes on explicit maintainer command, map only locally supported safe syntax, reject dangerous capabilities, re-sign data, and run parser/signature tests.
 

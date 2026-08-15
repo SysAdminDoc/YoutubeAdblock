@@ -462,6 +462,12 @@
                 statusUnset: 'Not yet allowed',
                 allow: 'Allow',
                 revoke: 'Turn off',
+                clearCache: 'Clear cache',
+                cacheEmpty: 'Nothing cached this session.',
+                cacheSummary: (entries, age) => age
+                    ? `${entries} cached ${entries === 1 ? 'entry' : 'entries'} this session, oldest ${age}.`
+                    : `${entries} cached ${entries === 1 ? 'entry' : 'entries'} this session.`,
+                cacheCleared: 'Cached data for that service was cleared.',
                 requiresSegments: 'Requires SponsorBlock segments to be allowed first.',
                 sponsorBlockTitle: 'SponsorBlock segments',
                 sponsorBlockDetail: 'Sends the first 4 hex characters of sha256(video ID) — never the full video ID — to sponsor.ajay.app to fetch skippable segments. Purpose: skipping sponsors and similar segments. Responses are cached in memory for this tab only. Segment data is licensed CC BY-NC-SA 4.0.',
@@ -823,6 +829,7 @@
             dnrMatchedRules: 'DNR matched rules',
             communityApiPermission: 'Community API permission',
             communityConsent: 'Community data consent',
+            communityCache: 'Community cache entries',
             communityApiCooldown: 'Community API cooldown',
             webpackSignatureSource: 'Webpack signature source',
             webpackSignatureVersion: 'Webpack signature version',
@@ -3921,6 +3928,68 @@
             return null;
         }
         return entry;
+    }
+
+    /* =========================================================================
+     * COMMUNITY CACHE INSPECTION
+     * =========================================================================
+     * Community responses are cached in memory only. Users who have granted
+     * consent should be able to see how much of their session each service
+     * is holding, how old it is, and drop any one of them independently
+     * without revoking consent or clearing the others. Nothing here leaks a
+     * video ID: only counts and ages are reported.
+     * ===================================================================== */
+
+    function formatDuration(ms) {
+        const seconds = Math.max(0, Math.floor(Number(ms) / 1000));
+        if (!seconds) return '';
+        if (seconds < 60) return `${seconds}s ago`;
+        const minutes = Math.floor(seconds / 60);
+        if (minutes < 60) return `${minutes}m ago`;
+        const hours = Math.floor(minutes / 60);
+        return `${hours}h ago`;
+    }
+
+    function summarizeLruCache(cache, ttl) {
+        const now = Date.now();
+        let entries = 0;
+        let oldestAt = 0;
+        for (const entry of cache.values()) {
+            const fetchedAt = Number(entry && entry.fetchedAt) || 0;
+            if (!fetchedAt || now - fetchedAt > ttl) continue;
+            entries++;
+            if (!oldestAt || fetchedAt < oldestAt) oldestAt = fetchedAt;
+        }
+        return { entries, oldestAgeMs: oldestAt ? now - oldestAt : 0 };
+    }
+
+    function getCommunityCacheStatus() {
+        const sponsorEntries = sponsorBlockState.videoId && sponsorBlockState.segments.length
+            ? sponsorBlockState.segments.length
+            : 0;
+        return {
+            sponsorBlock: {
+                entries: sponsorEntries,
+                oldestAgeMs: 0,
+                consent: hasServiceConsent('sponsorBlock')
+            },
+            dearrow: {
+                ...summarizeLruCache(dearrowCache, DEARROW_CACHE_TTL),
+                consent: hasServiceConsent('dearrow')
+            },
+            returnYoutubeDislike: {
+                ...summarizeLruCache(rydCache, RYD_CACHE_TTL),
+                consent: hasServiceConsent('returnYoutubeDislike')
+            }
+        };
+    }
+
+    function clearCommunityCache(service) {
+        // Reuses the same teardown the consent revoke path performs, so a
+        // manual clear and a revoke can never diverge.
+        if (!COMMUNITY_CONSENT_SERVICES.includes(service)) return false;
+        revokeCommunityService(service);
+        return true;
     }
 
     const apiCooldowns = { sponsorblock: 0, dearrow: 0, ryd: 0 };
@@ -7061,6 +7130,9 @@
             .${CSS_PREFIX}-consent-hint {
                 color: var(--warning);
             }
+            .${CSS_PREFIX}-consent-cache {
+                color: var(--text-3);
+            }
             .${CSS_PREFIX}-blocklist-feedback {
                 color: var(--warning);
             }
@@ -9166,6 +9238,11 @@
         hint.hidden = true;
         card.appendChild(hint);
 
+        // Cached-response visibility: counts and ages only, never video IDs.
+        const cacheLine = document.createElement('p');
+        cacheLine.className = `${CSS_PREFIX}-note-text ${CSS_PREFIX}-consent-cache`;
+        card.appendChild(cacheLine);
+
         const actions = document.createElement('div');
         actions.className = `${CSS_PREFIX}-btn-row`;
         const allowBtn = document.createElement('button');
@@ -9176,8 +9253,13 @@
         revokeBtn.type = 'button';
         revokeBtn.className = `${CSS_PREFIX}-btn ${CSS_PREFIX}-btn-secondary ${CSS_PREFIX}-btn-small`;
         revokeBtn.textContent = STRINGS.ui.consent.revoke;
+        const clearBtn = document.createElement('button');
+        clearBtn.type = 'button';
+        clearBtn.className = `${CSS_PREFIX}-btn ${CSS_PREFIX}-btn-secondary ${CSS_PREFIX}-btn-small`;
+        clearBtn.textContent = STRINGS.ui.consent.clearCache;
         actions.appendChild(allowBtn);
         actions.appendChild(revokeBtn);
+        actions.appendChild(clearBtn);
         card.appendChild(actions);
 
         function refresh() {
@@ -9190,6 +9272,18 @@
             allowBtn.disabled = current === 'granted' || blockedByDependency;
             revokeBtn.disabled = current !== 'granted';
             hint.hidden = !blockedByDependency;
+            const status = getCommunityCacheStatus()[service];
+            if (!status || service === 'sponsorBlockViewReports') {
+                cacheLine.hidden = true;
+                clearBtn.hidden = true;
+            } else {
+                cacheLine.hidden = false;
+                clearBtn.hidden = false;
+                cacheLine.textContent = status.entries
+                    ? STRINGS.ui.consent.cacheSummary(status.entries, formatDuration(status.oldestAgeMs))
+                    : STRINGS.ui.consent.cacheEmpty;
+                clearBtn.disabled = !status.entries;
+            }
         }
 
         allowBtn.addEventListener('click', () => {
@@ -9201,6 +9295,13 @@
             setServiceConsent(service, false);
             refreshConsentCards(document);
             showToast(STRINGS.ui.consent.revokedToast, 'info');
+        });
+        clearBtn.addEventListener('click', () => {
+            // Clearing a cache is independent of consent: the service stays
+            // allowed, it just starts from an empty cache.
+            if (!clearCommunityCache(service)) return;
+            refreshConsentCards(document);
+            showToast(STRINGS.ui.consent.cacheCleared, 'success');
         });
 
         card._ytabConsentRefresh = refresh;
@@ -9826,6 +9927,7 @@
             `${report.dnrMatchedRules}: ${formatDnrDiagnosticsReport()}`,
             `${report.communityApiPermission}: ${state.communityApiPermission || STRINGS.common.unknown}`,
             `${report.communityConsent}: ${getCommunityConsentReport()}`,
+            `${report.communityCache}: ${Object.entries(getCommunityCacheStatus()).map(([name, info]) => `${name}=${info.entries}`).join(', ')}`,
             `${report.communityApiCooldown}: ${Object.entries(getApiCooldownStatus()).map(([k, v]) => `${k}=${v}`).join(', ')}`,
             `${report.webpackSignatureSource}: ${state.webpackSignatureSource || STRINGS.common.unknown}`,
             `${report.webpackSignatureVersion}: ${state.webpackSignatureVersion || STRINGS.common.unknown}`,

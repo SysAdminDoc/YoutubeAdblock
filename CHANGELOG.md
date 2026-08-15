@@ -4,6 +4,15 @@ All notable changes to YoutubeAdblock are documented here.
 
 ## [Unreleased]
 
+### Added
+- **Community cache controls**: each consent card now reports how many
+  responses that service has cached this session and how old the oldest is,
+  with a per-service Clear cache button. Clearing is independent of consent —
+  the service stays allowed and simply starts from an empty cache — and
+  reuses the same teardown as revocation so the two paths cannot diverge.
+  Counts and ages only; no cached video identifier is exposed. Diagnostics
+  gained a matching per-service line.
+
 ### Fixed
 - **Synced preferences separated from device-local state**: only a versioned
   allowlist of user-authored preferences (protection switch, feature

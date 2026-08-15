@@ -173,6 +173,12 @@ function createTestHarness(options = {}) {
         detectSabrOnlyStreaming,
         recordSabrOnlyStreaming,
         compareDearrowCandidates,
+        getCommunityCacheStatus,
+        clearCommunityCache,
+        summarizeLruCache,
+        formatDuration,
+        dearrowCache,
+        rydCache,
         validateSafeRegexSource,
         updateCosmeticCSS,
         verifySignedManifest,
@@ -1904,4 +1910,66 @@ test('DeArrow ordering tolerates missing or non-numeric fields', () => {
     // A numeric string still sorts above an absent count.
     assert.equal(sorted[1].title, 'string votes');
     assert.equal(sorted.length, 3);
+});
+
+// ========== community cache controls ==========
+
+test('community cache status reports counts and consent per service', () => {
+    const h = createTestHarness({ storage: {} });
+    h.setServiceConsent('dearrow', true);
+    h.dearrowCache.set('vid1', { title: 'a', fetchedAt: Date.now() });
+    h.dearrowCache.set('vid2', { title: 'b', fetchedAt: Date.now() });
+    h.rydCache.set('vid1', { dislikes: 3, fetchedAt: Date.now() });
+
+    const status = h.getCommunityCacheStatus();
+    assert.equal(status.dearrow.entries, 2);
+    assert.equal(status.dearrow.consent, true);
+    assert.equal(status.returnYoutubeDislike.entries, 1);
+    assert.equal(status.returnYoutubeDislike.consent, false);
+    assert.ok('sponsorBlock' in status);
+});
+
+test('cache status never exposes cached video identifiers', () => {
+    const h = createTestHarness({ storage: {} });
+    h.dearrowCache.set('secret-video-id', { title: 'x', fetchedAt: Date.now() });
+    const serialized = JSON.stringify(h.getCommunityCacheStatus());
+    assert.equal(serialized.includes('secret-video-id'), false);
+    assert.match(serialized, /"entries":1/);
+});
+
+test('expired entries are not counted as cached', () => {
+    const h = createTestHarness({ storage: {} });
+    const longAgo = Date.now() - (7 * 60 * 60 * 1000);
+    h.dearrowCache.set('stale', { title: 'x', fetchedAt: longAgo });
+    h.dearrowCache.set('fresh', { title: 'y', fetchedAt: Date.now() });
+    assert.equal(h.getCommunityCacheStatus().dearrow.entries, 1);
+});
+
+test('clearing one service cache leaves the others and consent intact', () => {
+    const h = createTestHarness({ storage: {} });
+    h.setServiceConsent('dearrow', true);
+    h.setServiceConsent('returnYoutubeDislike', true);
+    h.dearrowCache.set('vid1', { title: 'a', fetchedAt: Date.now() });
+    h.rydCache.set('vid1', { dislikes: 3, fetchedAt: Date.now() });
+
+    assert.equal(h.clearCommunityCache('dearrow'), true);
+
+    assert.equal(h.getCommunityCacheStatus().dearrow.entries, 0);
+    assert.equal(h.getCommunityCacheStatus().returnYoutubeDislike.entries, 1,
+        'clearing one service must not touch another');
+    assert.equal(h.hasServiceConsent('dearrow'), true,
+        'clearing a cache is not a consent revocation');
+});
+
+test('clearing an unknown service is refused', () => {
+    const h = createTestHarness({ storage: {} });
+    assert.equal(h.clearCommunityCache('not-a-service'), false);
+});
+
+test('cache ages render as coarse human durations', () => {
+    const h = harness;
+    assert.equal(h.formatDuration(0), '');
+    assert.equal(h.formatDuration(5000), '5s ago');
+    assert.equal(h.formatDuration(90 * 1000), '1m ago');
+    assert.equal(h.formatDuration(3 * 60 * 60 * 1000), '3h ago');
 });
