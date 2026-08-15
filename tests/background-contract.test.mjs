@@ -35,7 +35,12 @@ function createBackgroundEnv(options = {}) {
             },
             set(items, cb) {
                 storageCalls.push(`${name}.set`);
-                if (options.failWrites) {
+                // A boolean fails every write; a predicate lets a test fail
+                // one area, or one attempt, and then recover.
+                const shouldFail = typeof options.failWrites === 'function'
+                    ? options.failWrites(name, items)
+                    : options.failWrites;
+                if (shouldFail) {
                     mockChrome.runtime.lastError = { message: 'QUOTA_BYTES quota exceeded' };
                     if (cb) cb();
                     mockChrome.runtime.lastError = null;
@@ -520,6 +525,54 @@ test('consent is stored only in the shape the engine reads back', async () => {
     const response = await writeAs(env, { ytab_community_consent: 'granted' });
     assert.deepEqual(JSON.parse(JSON.stringify(response.rejected)), ['ytab_community_consent']);
     assert.deepEqual(storedSettings(env).ytab_community_consent.services, { sponsorBlock: 'granted', rogue: 'granted' });
+});
+
+test('sync chunks respect the per-item byte quota for non-ASCII settings', async () => {
+    const env = createBackgroundEnv();
+    // Three-byte characters. 3,000 of them is 9,000 bytes — one chunk if the
+    // payload is sliced by UTF-16 length, which is over Chrome's documented
+    // 8,192-byte per-item ceiling and fails the write with nothing surfaced.
+    const blocklist = '観'.repeat(3000);
+    await writeAs(env, { ytab_channel_blocklist: blocklist });
+    await env.flush();
+
+    const meta = env.syncStore[SYNC_META_KEY];
+    assert.ok(meta, 'a payload this size belongs in sync, not the tombstone path');
+    assert.ok(meta.chunkCount >= 2, `expected a byte-aware split, got ${meta.chunkCount} chunk(s)`);
+
+    let reassembled = '';
+    for (let i = 0; i < meta.chunkCount; i++) {
+        const chunk = env.syncStore[`${SYNC_CHUNK_PREFIX}${i}`];
+        const bytes = Buffer.byteLength(chunk, 'utf8');
+        assert.ok(bytes <= 8192, `chunk ${i} is ${bytes} bytes, over the per-item quota`);
+        reassembled += chunk;
+    }
+    assert.deepEqual(JSON.parse(reassembled), { ytab_channel_blocklist: blocklist },
+        'chunks must reassemble without a split surrogate pair');
+});
+
+test('a failed sync publish is retried rather than remembered as done', async () => {
+    let failNextSyncWrite = true;
+    const env = createBackgroundEnv({
+        failWrites: (area) => {
+            if (area === 'sync' && failNextSyncWrite) {
+                failNextSyncWrite = false;
+                return true;
+            }
+            return false;
+        }
+    });
+
+    await writeAs(env, { ytab_enabled: false });
+    await env.flush();
+    assert.equal(env.syncStore[SYNC_META_KEY], undefined, 'the first publish failed');
+
+    // The same preference value again. The unchanged-payload short circuit
+    // must not treat the failed attempt as already mirrored.
+    await writeAs(env, { ytab_enabled: false });
+    await env.flush();
+    assert.ok(env.syncStore[SYNC_META_KEY], 'the retry must actually publish');
+    assert.equal(env.syncStore[SYNC_META_KEY].chunkCount, 1);
 });
 
 test('broker read adopts a newer snapshot from another device', async () => {

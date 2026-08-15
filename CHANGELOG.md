@@ -4,6 +4,17 @@ All notable changes to YoutubeAdblock are documented here.
 
 ## [Unreleased]
 
+### Fixed
+- **Settings sync no longer stops silently.** Two defects introduced with the
+  v0.7.0 preference split: chunks were sliced by UTF-16 length against a
+  byte-denominated quota, so a CJK, Cyrillic or emoji blocklist produced
+  items up to three times over Chrome's 8,192-byte per-item ceiling and the
+  write failed with nothing reported; and the "already mirrored" marker was
+  set before the write rather than after, so one quota error or offline
+  moment latched sync off for the life of the service worker. Chunking is now
+  byte-aware and splits on whole code points, and only a completed publish is
+  remembered, so a failed attempt is retried.
+
 ### Security
 - **The service worker now validates settings against a schema instead of
   storing whatever the page sends.** The v0.7.0 broker moved storage into

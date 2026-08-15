@@ -353,11 +353,27 @@ function syncChunkKeys(count, startAt = 0) {
     return keys;
 }
 
+// chrome.storage.sync counts an item's quota in UTF-8 bytes, so the split
+// has to count bytes too. Slicing by UTF-16 length silently produces items
+// up to 3x over the per-item ceiling for CJK or emoji blocklists, and the
+// write then fails with nothing surfaced. Iterating the string yields whole
+// code points, so a surrogate pair is never cut in half.
 function splitSyncPayload(text) {
     const chunks = [];
-    for (let i = 0; i < text.length; i += SYNC_CHUNK_BYTES) {
-        chunks.push(text.slice(i, i + SYNC_CHUNK_BYTES));
+    let current = '';
+    let bytes = 0;
+    for (const character of text) {
+        const code = character.codePointAt(0);
+        const size = code <= 0x7f ? 1 : code <= 0x7ff ? 2 : code <= 0xffff ? 3 : 4;
+        if (bytes + size > SYNC_CHUNK_BYTES && current) {
+            chunks.push(current);
+            current = '';
+            bytes = 0;
+        }
+        current += character;
+        bytes += size;
     }
+    if (current) chunks.push(current);
     return chunks;
 }
 
@@ -401,7 +417,10 @@ async function mirrorToSync(value, updatedAt) {
     // Runtime-only churn (stats ticking every couple of seconds) must not
     // consume the sync write quota when no preference actually changed.
     if (lastMirroredPreferences === serialized) return;
-    lastMirroredPreferences = serialized;
+    // Only a completed publish may be remembered. Marking it up front means
+    // a single quota error, offline moment or interrupted write latches sync
+    // off for the life of the service worker, with nothing surfaced.
+    lastMirroredPreferences = null;
     const byteLength = utf8ByteLength(serialized);
 
     const metaItems = await areaGet(sync, [SYNC_META_KEY]);
@@ -411,7 +430,7 @@ async function mirrorToSync(value, updatedAt) {
     // Oversized payloads stay local-only and leave a tombstone so a stale
     // cloud snapshot can never overwrite the larger local one.
     if (byteLength > SYNC_TOTAL_BYTES) {
-        await areaSet(sync, {
+        if (await areaSet(sync, {
             [SYNC_META_KEY]: {
                 version: PREFERENCE_SCHEMA_VERSION,
                 updatedAt,
@@ -420,12 +439,16 @@ async function mirrorToSync(value, updatedAt) {
                 checksum: checksumText(serialized),
                 oversized: true
             }
-        });
+        })) return;
         await removeStaleSyncChunks(previousMeta, 0);
+        lastMirroredPreferences = serialized;
         return;
     }
 
     const chunks = splitSyncPayload(serialized);
+    // The reader only ever looks for SYNC_MAX_CHUNKS keys, so publishing
+    // more would leave a snapshot that can never reassemble.
+    if (chunks.length > SYNC_MAX_CHUNKS) return;
     const chunkItems = {};
     chunks.forEach((chunk, index) => { chunkItems[`${SYNC_CHUNK_PREFIX}${index}`] = chunk; });
     // Chunks first, metadata last: the metadata write is the commit marker,
@@ -442,6 +465,7 @@ async function mirrorToSync(value, updatedAt) {
         }
     })) return;
     await removeStaleSyncChunks(previousMeta, chunks.length);
+    lastMirroredPreferences = serialized;
 }
 
 async function readSyncSnapshot() {

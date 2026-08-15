@@ -63,13 +63,6 @@ Start with the P1 sync-regression repair under Research-Driven Additions, then t
   Acceptance: in the extension build the worker performs the fetch and signature check and is the only writer of integrity state and the revision floor; a page that writes `filters_integrity` or `filters_cache` cannot cause unverified rules to be applied; the userscript build is unchanged; offline and failed-refresh behaviour still falls back to cached-then-built-in rules with the existing failure copy.
   Complexity: L
 
-- [ ] P1 — Repair the two silent sync regressions shipped in v0.7.0
-  Why: `splitSyncPayload` slices by UTF-16 length against a byte-denominated constant, so a CJK/Cyrillic/emoji blocklist yields chunks up to ~21.5 KB against Chrome's 8,192-byte per-item quota and the write fails silently; and `lastMirroredPreferences` is assigned before the write, so any failure path latches it and sync stops for the life of the service worker with nothing surfaced.
-  Evidence: extension/background.js:167-173 vs the byte gate at :216-224; extension/background.js:214-215 with early returns at :219, :236, :244, :254; tests/background-contract.test.mjs:596 uses 2,000 ASCII characters and cannot observe either.
-  Touches: extension/background.js; tests/background-contract.test.mjs.
-  Acceptance: chunks are split so that every item is under the per-item byte quota for non-ASCII payloads; the mirrored-state marker is only set after a fully successful commit and is cleared on any failure; a test with multi-byte characters asserts chunk sizes and a successful round trip, and a forced write failure followed by a retry asserts the retry actually writes.
-  Complexity: M
-
 - [ ] P1 — Replace last-writer-wins sync with a monotonic revision and a dirty-key merge
   Why: conflict resolution compares `Date.now()` and `lastWriteStamp` resets to 0 on every worker restart, so a device with a fast clock always wins and the other device's edits are accepted locally then silently overwritten. A stale remote snapshot can discard a channel blocklist edit made seconds earlier.
   Evidence: extension/background.js:121-128, compared at :306; Ghostery's implementation (revision integer + per-flush dirty-key diff, merging remote values only for keys not locally dirty) in ghostery-extension src/background/sync.js.
