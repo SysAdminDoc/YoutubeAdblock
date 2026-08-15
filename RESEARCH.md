@@ -1,257 +1,256 @@
 # Research — YoutubeAdblock
-Date: 2026-08-14 — replaces all prior research.
+Date: 2026-08-15 — replaces all prior research (supersedes the 2026-08-14 pass).
+
+Scope note: this is a differential pass. v0.7.0 shipped after the 2026-08-14 research, changing the storage architecture. Every prior finding was re-verified against HEAD `823dab7`; closed items are recorded as closed and are not repeated as work.
+
+**Product scope (fixed, 2026-08-15):** this project is a YouTube ad blocker delivered as a userscript plus a generated MV3 extension. That is the whole remit. Recommendations that would turn it into a general YouTube enhancer, a cosmetic/UX layer, or an alternative client are rejected on scope regardless of measured demand — see Rejected Ideas. Existing clutter and focus-filter features stay as they are; they are not a licence to expand.
+
+Confidence labels: **Verified** = confirmed in code at HEAD, measured locally, or read from a cited primary source. **Likely** = evidence-backed inference. **Assumption** = reasoned but unconfirmed. **Needs live validation** = requires a real service, manager, browser, device, account, or review outcome.
 
 ## Executive Summary
 
-Verified — YoutubeAdblock is a tightly scoped, dual-delivery YouTube intervention layer: one 9,014-line userscript generates the MV3 MAIN-world engine, while packaged DNR rules, signed refreshable filter/signature data, a Control Center, focus filters, and optional community services cover browser and page layers. Its strongest current shape is the one-site focus, canonical/generated parity, last-known-good fallbacks, defensive parser limits, privacy-bounded diagnostics, and a serious release gate. The highest-value direction is not more blocking surface area; it is closing trust and state-integrity gaps, making advertised delivery paths truthful, and turning recovery and accessibility into tested product behavior.
+YoutubeAdblock is a YouTube-only intervention layer: one 10,363-line canonical userscript generates an MV3 extension (`extension/main.js`), backed by 19 packaged declarativeNetRequest rules, Ed25519-signed refreshable filter data, an in-page Control Center, focus filters, and optional SponsorBlock/DeArrow/Return-YouTube-Dislike integration. Its real strengths are narrow scope, canonical→generated parity enforced by tests, an unusually good failure-message taxonomy, zero runtime dependencies, and a serious release gate (243 tests, signed-data verification, provenance). Its weakness is now clearly located: **the project has invested in interception breadth while its trust boundary, its upstream rule data, and its distribution channel have all fallen behind.**
 
-Confidence labels: **Verified** means confirmed in code or a cited primary source; **Likely** is an evidence-backed inference; **Needs live validation** requires a real service, manager, browser, device, account, or review outcome.
+Three facts frame the whole plan. First, the v0.7.0 broker moved the storage *call* into the service worker but did not close the trust *boundary* — a YouTube page script can still read and replace the entire settings object, and one of the nine keys it can set is the filter-list URL, which syncs to every signed-in device. Second, the filter data's upstream base is stamped `Last extracted: 2026-02-12` while uAssets' `quick-fixes.txt` — the de-facto YouTube bypass standard, vendored verbatim by Ghostery — was rewritten repeatedly between 2026-07-26 and 2026-08-12, and now disables a YouTube request pipeline this engine has no coverage for at all. Third, the latest published GitHub Release is v0.5.20 (2026-06-30): v0.6.0 and v0.7.0 exist only as local artifacts, so no user is running the security work of the last two releases.
 
 Top opportunities, in priority order:
 
-1. **Verified — Treat the existing trusted-context broker item as the most urgent boundary fix.** Any YouTube page script can currently dispatch ytab:page-request, read or replace the complete settings object, and observe the same object in page localStorage through extension/bridge.js:315-327 and 496-541. Do not duplicate the existing roadmap item; expand its implementation to remove page-originated persistence and expose only minimal runtime state to MAIN.
-2. **Verified — Require informed opt-in for community services.** SponsorBlock defaults on in YoutubeAdblock.user.js:815, while the generated fetch shim in Build-Extension.ps1:159-188 makes page-context CORS calls even when optional extension host permissions are absent. Hash-prefix lookups and segment-view UUID reports are browsing-derived data and need a real consent/revocation boundary.
-3. **Verified — Separate synchronized preferences from local runtime state.** Stats, caches, integrity state, and user preferences share one object; saveStats can persist every two seconds, and extension/bridge.js:187-227 performs a chunk write plus metadata write. That can exceed Chrome’s 1,800 writes/hour quota and makes whole-object last-write-wins capable of clobbering preferences or local-only state.
-4. **Verified — Correct the userscript execution-world contract while completing the existing real-manager validation item.** The metadata says @inject-into content at YoutubeAdblock.user.js:20, but Violentmonkey documents that this world cannot modify page JavaScript objects; the core depends on proxying page fetch, XHR, JSON.parse, and webpack. README.md:140 describes a page-script injection that is not present in the canonical source. Tampermonkey and Violentmonkey need explicit, tested manager-specific metadata/build behavior.
-5. **Verified — Make signed updates rollback- and freeze-resistant.** Ed25519 protects content authenticity, but the companion metadata has no signed monotonic revision, expiry, artifact role, or key identifier; an old valid filter/signature pair is accepted by YoutubeAdblock.user.js:1967-2055.
-6. **Verified — Bound and cache user-entered regular expressions.** parseBlocklist compiles unrestricted JavaScript regexes at YoutubeAdblock.user.js:4982-5003 and reruns them over renderer text at 5112-5125; a pathological expression can stall navigation.
-7. **Verified — Make settings import versioned, preflighted, and reversible.** Export emits app/version fields, but importSettingsPayload ignores them and applyImportedSettings performs sequential writes at YoutubeAdblock.user.js:7586-7692.
-8. **Verified — Minimize production permissions.** extension/manifest.json requests tabs even though YouTube host permissions cover the only sensitive URL access, and declarativeNetRequestFeedback only enables unpacked-extension debugging. Production diagnostics must degrade honestly or use a user-gesture grant.
-9. **Verified — Repair Control Center rail-navigation geometry and add an accessibility gate.** The captured browser-smoke section screenshots show preceding cards painted over destination headings; current tests only check viewport intersection, not obscuration, zoom, forced colors, or automated accessibility rules.
-10. **Likely — Add an auto-restoring recovery pause.** A tab/session/short timed pause that never syncs would make false-positive recovery safer than the current persistent global master switch; Ghostery’s temporary trust controls demonstrate the pattern.
-11. **Verified — Be ready for the 2026-08-31 Chrome MV2 store removal.** Chrome Web Store deletes all remaining MV2 extensions on 2026-08-31 and uBlock Origin 1.73 is expected to be its last CWS stable; displaced Chrome users’ full-strength options narrow to Firefox, uBO Lite, or userscript/MV3 blockers like this one. The Chrome install path (Tampermonkey 5.5.0’s new userscript-injection permission prompt, the Allow User Scripts toggle, the unpacked MV3 route) becomes the project’s front door and must be documented and tested before 2026-09-01.
-12. **Verified demand — Ship a YouTube-semantic element zapper.** July–August 2026 community threads repeatedly ask for hide-Shorts/hide-VODs/kill-hover-autoplay/hide-injected-recommendations controls and hand-write fragile uBO filters; no YouTube-specific blocker ships a picker that maps a clicked element to a stable semantic toggle. The existing bounded rules-playground roadmap item is the natural foundation.
+1. **Verified — Close the page→settings boundary for real.** `extension/bridge.js:311` allowlists only the *container* key `__ytab_ext_settings__` and never inspects the value; `extension/background.js:326-343` validates only type, array-ness, and a 512 KB cap. `isTrustedSettingsSender` (`background.js:347-357`) is satisfied by construction, since the sender *is* the extension's own bridge in a real YouTube tab. Worse, no event is needed for a session-scoped takeover: `Build-Extension.ps1:118-127` makes page-origin `localStorage` the sole read path for every `GM_getValue`. Worst outcome: set `ytab_filter_url` to an attacker host (accepted as `unsigned-custom`), or set `ytab_filters_cache` + `ytab_filters_integrity='verified'` to inject cosmetic selectors, prune keys and response-body `replaceKeys` with no fetch and no signature check.
+2. **Verified, measured — Fix the regex denial of service at the root.** `validateSafeRegexSource` (`YoutubeAdblock.user.js:5671-5728`) rejects quantified groups containing a quantifier or alternation, but never consults the root frame's own `hasQuantifier`. `/a*a*a*a*a*a*a*a*a*a*b/` passes. Measured locally on Node 24.18.1: 32 characters of input took **9,380 ms** on the main thread (n=24 → 711 ms, n=28 → 2,721 ms, n=32 → 9,381 ms). The haystack cap is 512 characters, matching is synchronous inside the `JSON.parse`/`fetch`/XHR proxies, and the pattern is settable from the page via opportunity 1.
+3. **Verified — Repair two silent sync regressions introduced in v0.7.0.** `splitSyncPayload` (`background.js:167-173`) slices by UTF-16 length against `SYNC_CHUNK_BYTES = 7*1024` while the total gate correctly counts UTF-8 bytes — a CJK/Cyrillic/emoji blocklist produces chunks up to ~21.5 KB against Chrome's documented 8,192-byte per-item quota, so the write fails and returns silently. And `lastMirroredPreferences = serialized` is set at `:215` *before* the write, so every failure path afterwards leaves it latched: one quota error or offline moment stops sync for the life of the service worker with no error surfaced anywhere. The existing test (`tests/background-contract.test.mjs:596`) uses 2,000 ASCII characters and cannot see either.
+4. **Verified — Refresh the upstream rule base and cover YouTube's new request pipeline, carefully.** `youtube-adblock-filters.txt` is 165 lines whose uBO-derived portion is stamped 2026-02-12. Current `quick-fixes.txt` sets `ytcfg.data_.EXPERIMENT_FLAGS.all_web_enable_network_machine = false` and `all_web_network_machine_raw_request = false`; this repo has **zero** occurrences of `EXPERIMENT_FLAGS` or `network_machine`. If YouTube routes `/player` through that pipeline, requests bypass the fetch/XHR surfaces this engine proxies. This is the single largest capability gap found. **Counter-evidence that must shape the work (sentiment, 2026-08):** the dominant July–August failure users report is a stop/start refresh loop where the timestamp flickers between 0:00 and full duration, across Firefox+uBO, Opera GX+uBO, Chrome+uBOL and Arc+uBOL — and the workaround that actually fixes it is **disabling uBO's "Quick fixes" list**. The better-supported explanation is aggressive quick-fix rules breaking playback, not YouTube punishing users. Ingest upstream behind a toggle with a fast off-switch, never as an unconditional default.
+5. **Verified (sentiment) — Detect and stand down on conflicts with the extensions this project duplicates.** Users report three separate YouTube extension conflicts: DeArrow + YouTube Anti-Translate producing duplicate titles, SponsorBlock + a custom-speed extension silently resetting playback rate on every skip, and stacked blockers *causing* anti-adblock detection rather than defeating it. This project ships its own SponsorBlock, DeArrow and RYD implementations, so a user running the real extensions alongside it is a first-class conflict case that nothing currently detects. Community guidance is unanimous that stacking is the top self-inflicted failure.
+6. **Verified — Ship the last two releases.** GitHub Releases stop at v0.5.20 (2026-06-30) while the repo, README badge, manifest and userscript all read 0.7.0, and `dist/` holds unpublished v0.7.0 artifacts. Userscript users self-update via `@updateURL`; extension users have no path to v0.6.0's least-privilege manifest or v0.7.0's broker. uBlock Origin began self-hosting a CRX auto-update manifest on 2026-08-07 — the same mechanism would make this project's existing `Build-CRX.ps1` output self-updating.
+7. **Verified — Restore Defaults does not restore.** `YoutubeAdblock.user.js:9156-9167` calls `updateCosmeticCSS()` but never `updateClutterCSS()` and never performs the volume-boost teardown that `setFeatureEnabled` does at `:9693-9705`. After a "restore", clutter hides stay applied while their toggles read off, and audio stays amplified indefinitely. The correct pattern exists 3,700 lines earlier: `applyPauseState()` (`:1465-1470`) calls both.
+8. **Verified — The pause cannot survive an MV3 worker eviction, and neither the pause nor the master switch stops the DNR layer.** `state.pauseTimer` is a `setTimeout` (`:1444`); there are zero `chrome.alarms` references in the repo. Separately, there are zero `updateEnabledRulesets` calls, so packaged network rules keep blocking while the UI says "Protection paused" — exactly defeating a user pausing to diagnose blocker-caused breakage.
+9. **Verified — The README documents an architecture that does not exist.** `README.md:151` and the diagram at `:128-149` describe injecting the engine into the page "via a `<script>` element at document-start" across two realms. There are zero `createElement('script')`, `unsafeWindow`, or `wrappedJSObject` occurrences in the canonical source; `installProxies` (`:6081-6135`) assigns onto the ambient realm directly. `extension/README.md` is worse: lines 49-55 state the bridge owns no storage code while lines 84-96 still describe the bridge doing chunking and conflict resolution — two mutually exclusive architectures 30 lines apart.
+10. **Verified — Three rendered accessibility defects, none reachable by the current test matrix.** The redesign CSS block re-declares `.ytab-panel`/`.ytab-layout`/`.ytab-settings-shell` *after* the `max-width:820px`/`560px` media queries at equal specificity, so every responsive override is dead and the 230 px rail has no small-width variant (1.4.10 Reflow, AA). `.ytab-btn-primary` is `#fff` on `--accent: #ff6a4d` = **2.83:1**, recomputed independently, failing 1.4.3 AA in both themes. There are zero `forced-colors`/`prefers-contrast` rules, and focus is a `box-shadow` ring with `outline: none`, so in Windows High Contrast no toggle's state is discernible. `tests/browser-smoke.test.mjs:22-29` only runs 1440 and 1920 wide, which is why all three are invisible.
+11. **Verified — Settings search fails on the names the UI itself displays.** Rail labels (`:285-296`) and section headings diverge for six of ten destinations, and "Interface Cleanup" is used as both the clutter rail label and the cleanup group's heading. `matchesSettingsQuery` (`:1570-1573`) is only ever passed group titles/descriptions and feature keys/labels/descriptions, so rail label strings cannot match by construction: "Anti-Interference", "Ad & Overlay Cleanup" and "Focus & Filters" return the empty state, and "Interface Cleanup" navigates to the wrong group.
+12. **Verified — Several toggles promise behavior the code does not deliver.** `nativeToStringMask` (`:3047`) and `webpackChunkHook` (`:4629`) are gated at install time only: toggling them post-load is a no-op that still fires a success toast. `hideHomeFeed` (`:520-522`) promises an empty-state layout and only emits `display:none`. `hideShortsTab` (`:528-530`) promises the navigation destination but only hides three selectors. `sponsorBlock` ships **on** (`:897`) while consent defaults to `unset` (`:1228`), so the headline community feature is inert on every new install with no blocked-state affordance on the row.
+13. **Verified — The extension cannot protect embedded players at all.** Both content scripts declare `all_frames: false` while `host_permissions` and `matches` include `youtube-nocookie.com`, which is used almost exclusively inside third-party iframes. The userscript has no `@noframes` and therefore does cover subframes, so the two builds silently diverge on the surface the README's platform table implies parity for. DuckDuckGo's YouTube-only MV3 extension uses `all_frames: true` plus `match_origin_as_fallback: true`.
+14. **Verified — YouTube enforces Trusted Types as of 2026-08-15, and this codebase is already clean.** A live `HEAD https://www.youtube.com/` on 2026-08-15 returned `require-trusted-types-for 'script'` in an enforcing `Content-Security-Policy` header. The repo has zero `innerHTML`, `outerHTML`, `insertAdjacentHTML`, `document.write`, `eval(`, or `new Function` occurrences. The existing "Trusted Types completion audit" roadmap item is therefore mostly already satisfied and should be rescoped from "wrap every sink" to "add a regression gate", which is far cheaper.
 
 ## Product Map
 
 ### Core workflows
 
-- **Early protection:** install page-world traps and proxies at document-start, prune player/browse payloads, block known requests, scrub ad media manifests, and clean rendered ad/upsell containers.
-- **Rule lifecycle:** load built-in rules immediately, fetch the recommended list and webpack signatures, verify Ed25519/hash/size metadata, parse a bounded subset, and retain cached/built-in protection on failure.
-- **Control and recovery:** use the in-page Control Center, toolbar/keyboard/context-menu actions, diagnostics, restore defaults, import/export, and the global protection switch.
-- **Focus controls:** block channels or keywords, allow selected channels, apply duration limits, and optionally alter clutter, titles, thumbnails, dislikes, and volume.
-- **Community augmentation:** query SponsorBlock by a four-hex hash prefix, optionally query DeArrow and Return YouTube Dislike, cache results in memory, and report SponsorBlock segment views.
+- **Early protection:** install page-realm traps and proxies at document-start, prune player/browse payloads, block known requests via DNR, scrub ad media manifests, clean rendered ad/upsell containers.
+- **Rule lifecycle:** load built-in rules immediately, fetch the recommended list and webpack signatures, verify Ed25519 signature + SHA-256 + byte count + role/revision/expiry, parse a bounded subset, retain cached or built-in protection on failure.
+- **Control and recovery:** in-page Control Center, toolbar/context-menu actions, diagnostics, temporary pause, restore defaults, import/export, global protection switch.
+- **Focus controls:** channel/keyword blocklists, ad allowlist, duration limits, clutter hiding, DeArrow titles/thumbnails, dislikes, volume boost.
+- **Community augmentation:** consent-gated SponsorBlock (4-hex hash prefix), DeArrow, Return YouTube Dislike, in-memory caches, optional segment-view reports.
 
 ### User personas
 
-- Privacy-conscious viewers who want one-site blocking without a general-purpose browser suite.
-- Power users who tune aggressive engines, custom rules, focus filters, and per-feature overrides.
-- Userscript users across Tampermonkey, Violentmonkey, and Safari/Android managers who need honest compatibility limits.
-- Maintainers who need reproducible userscript/ZIP/XPI/CRX artifacts, fast YouTube breakage response, and privacy-safe issue evidence.
+- Privacy-conscious viewers wanting one-site blocking without a general-purpose suite.
+- Power users tuning aggressive engines, custom rules, focus filters, per-feature overrides.
+- Userscript users across Tampermonkey/Violentmonkey/Safari managers who need honest compatibility limits.
+- Maintainers needing reproducible artifacts, fast breakage response, and privacy-safe issue evidence.
 
 ### Platforms and distribution
 
-- **Verified:** the canonical userscript targets desktop, mobile, Music, TV, Kids, and no-cookie YouTube hosts.
-- **Verified:** one generated MV3 package targets Chromium 121+ and Firefox 128+; persistent Firefox and stable-ID CRX distribution remain constrained by signing/identity.
-- **Needs live validation:** current Tampermonkey, Violentmonkey, Firefox Android, Safari Userscripts, real ad-serving cohorts, and store-review behavior. Violentmonkey shipped five MV3 releases 2026-07-29 → 2026-08-13 (v2.46.0–v2.47.1) including an off-by-default experimental “Alternative page mode” for document-start timing on MV3 Chromium — the manager matrix must state whether the engine wins the injection race under the default mode.
-- **Verified (2026-07-23):** Firefox 153 makes local `file://` access a separate off-by-default permission for all extensions and AMO policy restricts the `userScripts` API to user-script managers only — an AMO port of the generated extension must not use that API, and no workflow may depend on `file://` filter loads.
-- **Intentional limit:** no native mobile client, proxy frontend, system-wide blocker, or non-YouTube site support.
+- **Verified:** canonical userscript targets desktop/mobile/Music/TV/Kids/no-cookie hosts; the generated MV3 package targets Chromium 121+ and Firefox 128+.
+- **Verified:** distribution is currently broken in practice — latest GitHub Release is v0.5.20 (2026-06-30) against a v0.7.0 tree; the CRX has no update manifest; there is no store listing.
+- **Verified (2026-08-31):** Chrome Web Store removes all remaining MV2 extensions. uBlock Origin 1.73.0 (2026-08-05) is expected to be its last CWS stable, and uBO began self-hosting a CRX update manifest on 2026-08-07.
+- **Verified — the MV3 objection is obsolete:** uBOL now ships the full YouTube bypass through the `userScripts` API in MV3 (`userScripts` in its manifest permissions, `minimum_chrome_version 122`). "MV3 cannot do this" is no longer true.
+- **Needs live validation:** Tampermonkey 5.5.0's injection-permission prompt, Violentmonkey 2.47.x default vs experimental "Alternative page mode" document-start timing, Firefox Android, Safari Userscripts, real ad-serving cohorts, store review.
+- **Intentional limit:** no native mobile client, proxy frontend, system-wide blocker, or non-YouTube support. **Verified constraint:** a Safari App Store port is structurally incompatible with the project's no-code-signing rule; Safari is reachable only via the third-party Userscripts app consuming the userscript directly.
 
 ### Key integrations and data flows
 
-- GitHub Raw/jsDelivr → signed filter text and webpack signature data → WebCrypto verification → bounded parser → in-memory engines and device cache.
-- YouTube page data/network calls → MAIN-world proxies and cosmetic cleanup; browser requests → packaged DNR rules.
-- MAIN-world settings shim ↔ public DOM CustomEvents ↔ isolated bridge ↔ chrome.storage.local/sync; the current full-object path is the central trust and consistency problem.
-- Video-derived hash prefix → SponsorBlock bucket; segment UUID → SponsorBlock view endpoint; optional full video ID → Return YouTube Dislike; DeArrow uses a hash-prefix bucket in the userscript build.
-- Maintainer source → Build-Extension.ps1 → extension/main.js; release scripts verify source parity, store policy, signatures, DNR freshness, tests, and artifacts.
+- GitHub Raw/jsDelivr → signed filter text and webpack signatures → WebCrypto verification → bounded parser → in-memory engines and device cache.
+- YouTube page data/network → MAIN-realm proxies and cosmetic cleanup; browser requests → 19 packaged DNR block rules.
+- MAIN realm ↔ public DOM CustomEvents ↔ isolated bridge ↔ service worker ↔ `chrome.storage.local`, with nine allowlisted preference keys mirrored to `chrome.storage.sync`. **The page-facing half of this path is the central trust problem.**
+- Video-derived hash prefix → SponsorBlock/DeArrow buckets; full video ID → Return YouTube Dislike and DeArrow thumbnails (disclosed).
+- `YoutubeAdblock.user.js` → `Build-Extension.ps1` → `extension/main.js`; release scripts verify parity, store policy, signatures, DNR freshness, tests, artifacts.
 
 ## Competitive Landscape
 
-- **uBlock Origin and uAssets.** Does well: rapid quick-fix maintenance, broad declarative syntax, strict project scope, and mature breakage handling. Learn: reviewed upstream ingestion, known-good rollback, and visible stale-list state. Avoid: cloning the complete grammar, WASM engine, and all-site maintenance burden into a focused userscript. Verified 2026-08-14: Chrome Web Store deletes remaining MV2 extensions on 2026-08-31 and 1.73 is expected to be uBO’s last CWS stable — its displaced Chrome users are this project’s nearest adoption wave.
-- **AdGuard Browser Extension and filters.** Does well: multi-browser packaging, rule validation, user rules, and explicit product/privacy documentation. Learn: production/development manifest separation and compatibility matrices. Avoid: expanding into a general security/privacy suite.
-- **SponsorBlock.** Does well: category-aware community segments, privacy-reduced hash-prefix lookup, mature caching, and contribution workflows. Learn: explicit consent, independent cache controls, storage-pressure handling, and action modes. Avoid: submission/voting/moderation scope and automatic behavior when SSAI offsets are uncertain.
-- **DeArrow.** Does well: progressive title/thumbnail replacement, casual mode, and per-channel nuance. Learn: softer defaults and explainable per-surface overrides. Avoid: local thumbnail generation or silent media downloads in a lightweight blocker.
-- **BlockTube and FilterTube.** Do well: focused channel/title filtering and understandable visibility controls. Learn: compiled filter state, line-level invalid-pattern feedback, and a clear “why hidden” explanation. Avoid: arbitrary unbounded regex evaluation and an ever-growing content-classification product. FilterTube’s 2026 additions are whitelist mode, profiles with PIN, and P2P sync — still no element picker; no YouTube-specific blocker ships one (verified 2026-08-14), which is the zapper opportunity.
-- **YouTube Enhancer and ImprovedTube.** Do well: broad feature discovery and mature settings UIs. Their current issue histories also show lifecycle, consolidation, and UI-state costs. Learn: a single feature registry and explicit start/teardown contracts. Avoid: general enhancer scope and hundreds of loosely coupled toggles.
-- **Ghostery, Malwarebytes Browser Guard, AdGuard commercial products, Total Adblock, Surfshark CleanWeb, and Nord Threat Protection.** Do well: temporary trust/pause UX, onboarding, support surfaces, and packaging polish. Learn: recovery that auto-restores and permission/data explanations. Avoid: paywalls, account telemetry, VPN/antivirus bundling, and unsupported “always undetectable” claims. Verified 2026-07: AdBlock (getadblock.com) moved YouTube ad blocking behind “AdBlock Premium” (~€3.50/mo) to loud community backlash — a “free forever, no premium tier” README statement is a zero-cost differentiator while users are actively resentful of monetized blockers.
-- **YouTube Premium and Premium Lite.** Do well: platform-supported ad reduction with no interception race and clear billing/support. Learn: be explicit that an independent blocker cannot promise equivalent availability or terms. Avoid: competing on subscriptions, creator payments, downloads, or background-play entitlements.
-- **Tampermonkey, Violentmonkey, and Userscripts for Safari.** Do well: installation, update, storage, and cross-origin capability layers. Learn: manager-specific execution-world metadata, narrow connection grants, and a dated support matrix. Avoid: treating their sandbox, sync, CSP, and mobile behavior as interchangeable. Tampermonkey 5.5.0 (2026-05-08) added a required userscript-injection extension permission and a download-permission prompt on saves; Violentmonkey v2.46.0–v2.47.1 (2026-07-29 → 2026-08-13) added experimental MV3 “Alternative page mode”, a Chrome 146+ webRequest registration fix, and opt-in Firefox CSP bypass — both changes shift first-run friction and injection timing.
-- **Brave adblock-rust and AdNauseam.** Do well: high-performance parsing and, in AdNauseam’s case, a distinct anti-tracking philosophy. Learn: adversarial parser/performance tests. Avoid: a heavyweight general filter engine or automated ad interaction, which conflicts with this project’s scope and risk posture.
-- **FreeTube, NewPipe, Invidious, and Piped.** Do well: alternative-client privacy, mobile/native UX, subscriptions, and reduced dependence on YouTube’s web UI. Learn: honest degraded states and version-health signaling. Avoid: becoming a frontend, extractor, proxy service, or native app; their frequent upstream breakage illustrates the maintenance cost.
+- **uBlock Origin / uAssets.** Does well: the fastest YouTube breakage response in the field, plus a strategy ladder that degrades instead of failing. Learn: the `quick-fixes.txt` techniques this repo lacks entirely — disabling the `network_machine` experiment flags, tagging each player-request attempt into `INNERTUBE_CONTEXT.client.userAgent` so responses are attributable, an `UNPLAYABLE` self-heal that resumes at the original timestamp while deliberately excluding the `playerCaptchaViewModel` branch, and self-disabling for Premium accounts and `/tv#/` + `/embed/`. Avoid: cloning the full grammar, WASM engine, or all-site maintenance burden. Note: uAssets currently ships `clientScreen:"CHANNEL"` as ladder step one — the exact technique this repo retired in v0.4.1 after breaking the watch page (issue #2).
+- **uBO Lite (uBOL).** Does well: proves MV3 can carry the full bypass via `userScripts`, and ships a working MV3 element picker *and* zapper (`chromium/js/scripting/{picker,zapper,tool-overlay}.js`). Learn: the MV3 picker mechanics for this repo's zapper item. Avoid: its general-purpose scope.
+- **DuckDuckGo content-blocker-extension.** The closest peer that exists: a YouTube-only MV3 extension, created 2026-01-16, releasing weekly. Does well: automated pruning of the uBOL scriptlet bundle down to YouTube-only arguments (`scripts/prune-scriptlet.mjs`), and `all_frames: true` + `match_origin_as_fallback: true`. Learn: both, directly — the pruning script is the sustainable answer to a filter list that changes weekly. Avoid: nothing yet; it is the benchmark to watch.
+- **AdGuard (extension, filters, Scriptlets).** Does well: rule validation, `$urltransform`, and a filtering log that *accumulates* DNR `sourceRules` across matches rather than overwriting — this repo's aggregation has the same hazard. Learn: the decoy strategy is instructive but not adoptable as-is (below). Avoid: general security/privacy suite expansion.
+- **Ghostery.** Does well: three patterns worth copying outright — sync as monotonic `revision` + dirty-key diff so a stale remote cannot clobber a just-typed edit (`src/background/sync.js`), pause backed by `chrome.alarms` with `revokeAt` so it survives worker eviction (`src/background/paused.js`), and diagnostic reporting that reduces sensitive settings to boolean presence flags. Avoid: account/telemetry surface.
+- **SponsorBlock / DeArrow.** Does well: category-aware segments, hash-prefix privacy, mature caching. Both are effectively in maintenance (6.1.7 and 2.3.10, 2026-07-13, two trivial commits since). Learn: explicit consent, independent cache controls, action modes. Avoid: submission/voting/moderation scope.
+- **BlockTube / FilterTube.** BlockTube is abandoned in practice (last release 2026-02-07, 488 open issues); FilterTube is active but has done no ad-blocking work. Learn: compiled filter state and line-level invalid-pattern feedback. Avoid: unbounded regex and an ever-growing classification product. Neither ships an element picker — the zapper gap is still open.
+- **ImprovedTube / YouTube Enhancer.** Do well: breadth and mature settings UIs; ImprovedTube merged volume boost in 2026-08. Their issue volumes (1,452 and 369 open) are the cautionary evidence. Learn: a single feature registry with explicit start/teardown contracts. Avoid: general enhancer scope.
+- **AdguardAssistant.** The only element picker shipped *as a userscript*, and therefore the only one that fits this project's primary distribution channel. Learn: its specificity slider ("this element" → "all like it") and block-preview-before-commit. Note GPL-3.0 — study the design, do not vendor into an MIT repo.
+- **NullDev/YT-Anti-Anti-Adblock.** Does well: documents the current detector shape and forges playback pings so creators still get the view. Learn: the detection surface. Avoid: its `google_ad_status` decoy, which its own source comments out as possibly fingerprinted.
+- **Ghostery adblocker engine.** Vendors uBO's `quick-fixes.txt` verbatim — evidence that ingesting that list wholesale is the industry-normal, license-workable path.
+- **Commercial tier (AdBlock, Adblock Plus, Ghostery, Total Adblock).** **Verified correction to the prior research:** neither eyeo product monetizes YouTube blocking as of 2026-08-15 — Adblock Plus Premium ($40/yr) explicitly states it adds no ad blocking, and getadblock Premium lists cookie-consent, Distraction Control, Image Swap and VPN. The "AdBlock paywalled YouTube" framing from 2026-07 should not be repeated as a current differentiator. Learn: temporary-trust UX and onboarding. Avoid: paywalls and bundling.
+- **YouTube Premium Lite.** $8.99/mo in the US after an April 2026 increase, going worldwide in August 2026 (63 → 120 markets), still ad-supported on Shorts/music/search. Learn: be explicit that an independent blocker cannot promise equivalent availability. Avoid: competing on entitlements.
 
 ## Security, Privacy, and Reliability
 
-### Verified risks and missing guardrails
+### Open risks (all Verified at HEAD unless noted)
 
-- **Untrusted page → persistent storage capability:** extension/bridge.js:496-541 accepts get/set requests from public document events and checks only a storage key, rate, ID, and payload size. A page script can replace the whole object; extension/bridge.js:315-327 and 581-585 also copy it into origin localStorage. The existing trusted-context broker roadmap item should remove this boundary, not merely rename it.
-- **Consent boundary is non-functional in the extension:** SponsorBlock is enabled by default at YoutubeAdblock.user.js:815. state.communityApiPermission is diagnostic-only at 981 and 8737; no fetch path checks it. Build-Extension.ps1:159-188 uses page fetch, so optional_host_permissions do not gate calls. Segment-view POSTs at 3630-3641 need separate disclosure and revocation behavior.
-- **Sync schema, quota, and commit integrity:** extension/bridge.js:124-129 counts UTF-16 code units rather than storage bytes, 187-227 writes chunks then metadata without a generation checksum/commit marker, and 232-247 replaces the complete local snapshot by timestamp. YoutubeAdblock.user.js:1177-1190 can persist hot stats every two seconds. Chrome documents 120 writes/minute, 1,800/hour, about 100 KB total, and 8 KB/item.
-- **Authenticity without freshness:** the signatures cover content, not a versioned metadata envelope. youtube-adblock-filters.manifest.json and webpack-ad-signatures.manifest.json identify content/hash/bytes/date but provide no signed artifact role, monotonic revision, expiry, or rotation key. Persist the highest accepted revision, reject replay/mix-and-match candidates, and continue the last known good data offline with a stale warning.
-- **User regex denial of service:** parseBlocklist accepts any JavaScript regex and matches it synchronously during renderer pruning. Add a conservative documented subset, input/list caps, compile-on-change caching, explicit rejected-line feedback, and an adversarial runtime budget.
-- **Partial or misleading imports:** importSettingsPayload accepts top-level objects from any app/schema version, skips invalid fields, and writes sequentially. Validate the entire payload, show a diff, reject future schemas, snapshot current state, and roll back every write on failure.
-- **Overbroad/debug-only production permissions:** Chrome documents that most tabs operations need no tabs permission and that matching host permissions expose sensitive fields only for matching hosts. declarativeNetRequestFeedback enables unpacked debugging; a store build cannot promise its current matched-rule diagnostics.
-- **Advertised userscript world mismatch:** Violentmonkey documents that @inject-into content cannot access page JavaScript objects, while the engine’s core value depends on replacing them. Use manager-specific metadata/builds and keep the existing real-manager matrix as the release proof.
-- **Needs store-review validation — remotely refreshed directives:** parseUBOFilterList at YoutubeAdblock.user.js:1721-1858 maps only a packaged allowlist and rejects dangerous/unsupported scriptlets; no remote JavaScript is evaluated. Chrome permits remote configuration when all logic is packaged, but the submitted behavior must be fully reviewable. Compile the recommended list into an explicit constrained data schema before store submission rather than expanding runtime scriptlet interpretation.
-- **Visible recovery/accessibility defect:** dist/browser-smoke/userscript-www-watch-dark-section-core.png and section-rules.png show earlier cards obscuring later headings after rail navigation. scrollSectionIntoView at YoutubeAdblock.user.js:8466-8482 and browser-smoke geometry assertions need a non-obscuration contract.
-- **SABR-only delivery erodes URL-level classification (Verified mechanism; rollout % needs live validation):** yt-dlp issues #12482/#15689 and its SABR downloader work show 2026 player responses where `adaptiveFormats` URLs are removed in favor of `serverAbrStreamingUrl`, with non-compliant clients 403’d. The engine’s `isInlinePlaybackNoAd` injection targets SABR fake-buffering, but when ad and content share one server-negotiated stream, googlevideo `ctier` URL rules and manifest scrubbing lose signal. The engine must detect SABR-only responses and degrade gracefully — never misclassify or break playback.
-- **Auto-dismissal false-positive class — compliance dialogs (Verified user reports, 2026-07):** desktop YouTube is A/B-testing transient pre-playback overlays tied to AI age/identity verification (r/uBlockOrigin 2026-07-20; YouTube’s published age-estimation program). Any popup-dismissal or anti-detection heuristic that pattern-matches “unexpected overlay at player start” risks silently dismissing a compliance dialog with account consequences. Overlay handling needs an allowlist that surfaces-and-logs these instead of acting.
+- **Page-reachable settings authority.** `extension/bridge.js:305-350` accepts `op`/`key`/`value` from a public DOM event, checks only the container key, a 64-char id, a rate limit and a size cap. `extension/background.js:326-343` adds no schema or per-key validation. `Build-Extension.ps1:118-127` makes page localStorage the sole read path. Consequences: attacker-controlled unsigned filter URL (synced to all devices), forged "verified" filter cache, anti-rollback floor erased or frozen (`ytab_signed_revision_*`), consent silently granted, protection disabled.
+- **Regex DoS, measured.** See Executive Summary item 2. 9.4 s of main-thread hang from 32 input characters, reachable from the page through the boundary above.
+- **Silent sync failure (v0.7.0 regression).** UTF-16 chunk slicing against a byte quota, plus a `lastMirroredPreferences` latch set before the write. Both fail closed and silently.
+- **Sync conflict model can lose recent edits.** Resolution is last-writer-wins on `Date.now()` (`background.js:124-128`, compared at `:306`), with `lastWriteStamp` resetting to 0 on every worker restart. A device with a fast clock always wins; the other device's edits are accepted locally then overwritten with no divergence signal. Ghostery's revision + dirty-key merge is the fix.
+- **Cross-device chunk/meta race.** `chrome.storage.sync` reconciles items independently, so a remote device can observe new metadata with stale chunks; `readSyncSnapshot()` then returns `null` and the update is dropped with no retry, and `bridge.js:368` only re-hydrates on a `SYNC_META_KEY` change, so late chunks never trigger a second read.
+- **Pause and master switch do not stop DNR.** Zero `updateEnabledRulesets` calls anywhere. A user pausing to diagnose breakage gets no relief from the network layer.
+- **Pause dies with the service worker.** `setTimeout`-backed (`:1444`), zero `chrome.alarms` usage.
+- **`isEnabled()` is a mutating predicate.** `isPaused()` (`:1417-1427`) calls `clearRecoveryPause({silent:true})` on expiry → `applyPauseState()` → `updateCosmeticCSS()` + `updateClutterCSS()` + `refreshSettingsUI(true)` (a full panel rebuild) + `registerMenuCommands()`. `isEnabled()` is evaluated inside the `appendChild`/`insertBefore`/`replaceChild` proxy traps (`:3727`, `:3737`, `:3747`) and the `setTimeout` proxy, none of which wrap it in try/catch — so the first hot-path call after expiry runs hundreds of synchronous DOM operations re-entrantly inside a page's `appendChild`, and any throw escapes into `Node.prototype.appendChild` for the whole page.
+- **DOM-bypass neutralization runs after execution.** `:3730-3731` calls `Reflect.apply(target, …)` *before* `handleInsertion()` rewrites `node.textContent`. Appending an inline `<script>` executes it synchronously during `appendChild`, so the counter increments while the bypass succeeds.
+- **Webpack-signature path fails open.** `:4571-4574` maps every non-rollback/expiry manifest failure to `'unsigned'` and `:4602-4613` only throws on `'tampered'`/`'stale'` — a missing, 404, or truncated manifest results in the remote database being applied unverified and cached. The filters path throws in the same situation. (Likely — inferred from the two branches; worth a direct test.)
+- **In the extension build every integrity primitive lives in the attacker's realm.** `main.js` runs `world: "MAIN"`, so `crypto.subtle`, `atob` and `TextEncoder` used for Ed25519 verification are page-reachable; only `fetch` and `JSON.parse` are captured early, and only for the ad proxies. The manifest/revision/expiry design is sound but enforced on the wrong side of the boundary in this build.
+- **`externally_connectable` is absent**, which per Chrome's documentation means all other extensions may message the service worker while web pages may not. `{"ids": []}` closes it.
+- **Import paths without preview or undo.** JSON import is best-in-class (validate → diff → atomic apply → session undo, `:8539-8634`, `:8683-8714`). Channel-text (`:8978`) and migration (`:8989`) import have none of it, and both overwrite the user's pasted payload with the rejected-entry list on success (`:8997`) and failure (`:8991`) — destroying the source text with no way back, while `README.md:180` advertises preview and undo for "Settings Import".
+- **`@connect *`** (`YoutubeAdblock.user.js:26`) grants the userscript network access to any host, nullifying the narrow `@connect` list above it. This is *intentional* — `CLAUDE.md` records that custom filter URLs on non-GitHub hosts require it — but it is undisclosed in both READMEs, and combined with a page-settable `ytab_filter_url` it is the exfiltration half of the boundary problem.
+- **DNR rules 16 and 18 block `/youtubei/v1/log_event` (POST) and `/generate_204` wholesale**, while `CLAUDE.md`'s own 2026-08-13 lesson says not to extend short-circuiting to "mixed `log_event` or `generate_204` endpoints without request-specific evidence". `log_event` carries watch-history and resume-position signals. (Likely breakage; needs live validation.)
+- **Consent is enforced, permission theatre is not.** Consent gating is real and correct in both builds (`:4075`, `:4179`, `:4894`, `:5085`), defaults to `unset`, and revocation bumps a generation counter. But `state.communityApiPermission` is never consulted before any request and cannot matter: the extension's `GM_xmlhttpRequest` is plain MAIN-realm `fetch` (`Build-Extension.ps1:159-188`), which needs no host permission. "Grant Community API Access" therefore grants a capability the code does not use, and revoking it stops nothing — a misleading security control. `optional_host_permissions` and the `raw.githubusercontent.com` host permission are decorative for the same reason.
+
+### Closed since the prior research (do not re-open)
+
+- Signed-update freshness: `signedManifestSigningInput()` (`:2260-2277`) domain-separates by `ytab-manifest-v2:<role>:` and covers role, revision, expiry and keyId; the shipped manifest carries `revision: 4`, `expires: 2027-02-11`, `keyId: ytab-2026-08`. Rollback and freeze are rejected at `:2336-2342`. **Caveat:** the monotonic floor is stored via `getSetting('signed_revision_' + role)`, i.e. in the page-writable store — the design is right, its storage is not.
+- Community-service consent boundary (v0.6.0), partial-import validation for the JSON path, overbroad production permissions (`tabs` and `declarativeNetRequestFeedback` are correctly dev-only), and Control Center section overlap.
+- Trusted Types: nothing to wrap — the codebase has no string-to-HTML sinks.
+- Dependency posture: one dev dependency, `playwright-core` 1.61.1 with an integrity-pinned lockfile; `npm audit` reports zero vulnerabilities across all severities. 1.62.1 is current. Note CVE-2025-59288 / GHSA-7mvr-c777-76hp affects `playwright-core ≤ 1.55.0`; the `^1.61.1` range is safe.
 
 ### Existing strengths to preserve
 
-- Ed25519 verification, pinned public key, SHA-256/byte checks, size caps, request supersession, and last-known-good/built-in fallback already prevent silent protection loss on ordinary refresh failures.
-- The remote parser caps input and collections, validates dotted paths and selectors, reports unsupported/dangerous scriptlets, and does not use eval, new Function, innerHTML, or document.write.
-- Packaged DNR blocking is small and typed from extension/rules/network-rules-source.json; diagnostics redact URLs and bound IDs/counts.
-- The Control Center already has modal semantics, inert-background handling, focus trapping/return, reduced-motion behavior, semantic buttons, and live status text. The gap is systematic verification, not a wholesale accessibility rewrite.
-- The ignored signing-key pattern is enforced by .gitignore and repository contract tests; private signing material must remain outside version control and use documented custody/rotation.
+- Ed25519 verification with pinned key, SHA-256/byte checks, size caps, request supersession, last-known-good and built-in fallback.
+- A remote parser that caps input and collections, validates dotted paths and selectors, reports unsupported/dangerous scriptlets, and uses no eval/Function/innerHTML/document.write.
+- The failure-message taxonomy: 20+ distinct strings distinguishing unreachable, mirror-exhausted, oversized, unparseable, byte-mismatch, hash-mismatch, unsigned-manifest, rollback, expired and WebCrypto-unavailable, each ending with a "your current rules stayed active" reassurance. This is the best-designed surface in the project.
+- Honest DNR degradation: `background.js:379-384` classifies the error and the UI says "Network blocking stays active; only this diagnostic counter is unavailable."
+- Zero runtime dependencies; canonical→generated parity enforced by contract tests.
 
 ### Recovery and rollback needs
 
-- Preserve an immutable last-known-good remote generation and one previous generation; a failed, replayed, expired, or partially written update must never replace active data.
-- Add one-click import undo backed by a pre-import snapshot and make extension sync migrations idempotent across version upgrades.
-- Add an unsynced per-tab/session/timed pause with a visible countdown and automatic restoration; keep the persistent global switch for deliberate long-term changes. The pause/self-test should recognize YouTube’s 2026-08 progressive degradation ladder — repeated ads → throttling → autoplay stops → videos refuse to load (r/Adblock reports 2026-08-09/10) — not only binary enforcement popups, so users get a stage-appropriate recovery suggestion.
-- When DNR feedback, community APIs, sync, or signatures are unavailable, diagnostics must distinguish “protection unavailable” from “evidence unavailable” and never imply a successful browser-layer measurement.
+- Preserve an immutable last-known-good generation and one previous generation; a failed, replayed, expired or partially written update must never replace active data.
+- Extend import undo to the text and migration paths, and stop destroying the input payload.
+- Make the pause alarm-backed with a visible countdown, and have it actually disable the DNR ruleset.
+- Make the breakage self-test stage-aware. The existing test (`:10323-10349`) is binary — enforcement popup or ad elements. Community reports describe a *ladder*: repeated ads → throttling → autoplay stops → video refuses to load. `UNPLAYABLE` with the `answer/3037019` subreason is the machine-readable signal, and the `playerCaptchaViewModel` branch must be excluded to avoid an infinite retry loop.
 
 ## Architecture Assessment
 
-- **Preserve the canonical/generated boundary.** YoutubeAdblock.user.js is the source of truth and extension/main.js is generated; Build-Extension.ps1 and repo-contract tests already make drift detectable. Do not hand-edit or independently modularize the generated file.
-- **Land storage changes in dependency order.** First close the public page-write/read boundary through the existing broker item; then introduce a versioned preference schema and transactional sync generations; then migrate old full snapshots. Trying to repair sync while MAIN still owns the full object preserves the root flaw.
-- **Use one feature lifecycle registry later.** Defaults at YoutubeAdblock.user.js:805-827, copy/groups at 446-939, installation at 5308-5331, portability at 7448-7583, diagnostics, and teardown behavior are separate lists. A typed registry should drive default, group, sync/portable eligibility, start, teardown, and diagnostic metadata without splitting the project into a framework.
-- **Keep remote data declarative.** Convert reviewed upstream syntax during a maintainer build step into a versioned local schema whose runtime operations are exhaustively packaged. This strengthens the existing manual uAssets-ingestion and dynamic-DNR roadmap items; it is not a request for full uBO compatibility.
-- **Test the shipped environments, not only extracted functions.** Current unit/contract tests are strong for parser, signatures, bridge sanitization, source parity, and DNR freshness, but many execute VM-extracted functions or fixtures. Missing gates are real manager worlds, service-worker wake-from-idle, a production manifest without debug feedback, interrupted sync generations, real ad creative, section non-obscuration, axe/ARIA snapshots, forced colors, zoom, narrow viewports, and named mobile/Safari devices.
-- **Align documentation with executable contracts.** README.md’s page-injection explanation, community-permission meaning, sync-data description, browser support, DNR evidence, and store-readiness language must be generated or checked against the final build profiles. Distribution artwork/icons remain part of the existing blocked store item, not a new feature.
-- **Dependency posture is healthy.** package-lock.json resolves playwright-core 1.61.1. On 2026-08-14, npm audit and an exact OSV query reported no known vulnerability; 1.62.1 was the current release. Update after CI as routine maintenance, not as a roadmap feature, because browser provisioning and manager/platform coverage matter more than the minor version itself.
+- **The trust boundary must move before anything else is built on it.** Storage is now in the right process but the contract is still "any page script may replace the whole settings object". The fix is a typed per-key schema validated in the service worker, and demoting page localStorage from authority to cache. Every other state-integrity item — anti-rollback floor, consent, filter URL — is downstream of this.
+- **Sync needs a revision, not a timestamp.** Replace last-writer-wins with a monotonic revision plus a dirty-key diff, merging remote values only for keys not locally dirty. Fix the chunk-size unit bug and the failure latch in the same pass, and add a non-ASCII chunking test.
+- **The generated/canonical boundary is sound; its freshness gate is not.** `tests/repo-contract.test.mjs:316-353` compares `SCRIPT_VERSION` between the userscript and `extension/main.js`. A stale `main.js` at the same version passes — which is precisely the incident `CLAUDE.md` already logs ("Build-Extension.ps1 silently no-ops when chained in Bash"). Gate on a content hash instead.
+- **Several tests assert on data the test itself supplied.** `browser-smoke.test.mjs:453-462` reads back the storage the click just wrote; `:485-489` compares a nav button's `textContent` to itself; `engine-core.test.mjs:1181-1202` round-trips export output into import. The `@inject-into` test (`repo-contract.test.mjs:378-385`) asserts a *string* and cannot distinguish a working engine from a dead one. The `STRINGS` centralization guard is a regex that its own live stragglers evade (`:9542` `` `Toggle ${feature.label}` `` covers all 34 switch labels).
+- **Test the shipped environments.** Missing gates: real manager worlds, viewports below 1440, forced colors, zoom, automated accessibility rules, contrast, interrupted sync generations, non-ASCII sync payloads, runtime-toggle effectiveness, the rendered failure-state matrix, and the two `hidden`-attribute lifecycles that `CLAUDE.md` already records as a bug class.
+- **Keep remote inputs declarative.** The CWS line is "external resources must not contain any logic"; signed filter *data* is compliant, a filter DSL rich enough to be interpreted is not. Convert reviewed upstream syntax at maintainer build time into a versioned local schema.
+- **Two shipping channels pull in opposite directions and both should be kept.** All 19 DNR rules are `action: block`, i.e. entirely "safe rules", which makes the project eligible for the CWS skip-review channel (minutes to live) if a rules-only change touches nothing else. The signed remote file updates instantly with no store involvement but sits nearer the remote-logic line. Make static DNR the primary channel for network blocks and confine the remote file to declarative data.
+- **Align documentation with executable contracts.** The README's injection architecture, `extension/README.md`'s two contradictory storage sections, the "150+ selectors" claim (actual: ≤92 before dedupe), "eight" clutter toggles (actual: ten), six listed stats (actual: 7 rendered, 10 counted), eight intercepted endpoints (actual: 15) and seven pruned fields (actual: 25) should be generated or test-checked, not hand-maintained.
 
-Category audit:
-
-- **Security/privacy/reliability:** broker, consent, sync, update freshness, regex, imports, and least privilege are prioritized.
-- **Accessibility:** preserve the strong dialog base; fix obscuration and add an automated/manual release matrix.
-- **i18n/l10n:** the existing real-localization roadmap item is correct; MAIN-world UI needs compiled dictionaries because it cannot call extension APIs.
-- **Observability:** the existing privacy-scrubbed diagnostic bundle is the right scope; add version/storage/latency health inside it rather than a telemetry service.
-- **Testing/docs/distribution:** real-manager, live-ad, stable CRX identity, store listing, and support-matrix work already exists and was not duplicated.
-- **Plugin ecosystem:** consciously excluded until the fixed feature registry exists; arbitrary plugins would widen the most sensitive page-world boundary.
-- **Mobile:** validate Firefox Android and Safari Userscripts by named version/device; do not infer compatibility from desktop engines or gecko_android metadata.
-- **Offline/resilience:** retain cached/built-in protection and make remote/sync generations transactional; no offline video/download feature is in scope.
-- **Multi-user:** consciously excluded; browser-profile isolation and sync are sufficient for a local blocker, and a cloud account would create unnecessary identity/data obligations.
-- **Migration/upgrade:** versioned sync and atomic import must define idempotent legacy conversion, future-schema rejection, rollback, and explicit behavior when keys disappear.
+Category audit: **security/privacy** — boundary, regex, sync integrity, `externally_connectable` prioritized. **Accessibility** — three concrete rendered defects plus the existing release-gate item. **i18n** — `STRINGS` already centralizes ~478 entries, so this is extraction plus a userscript-side resolver, not a rewrite; six template-literal stragglers must be closed first. **Observability** — finish the diagnostic bundle using uBO's redaction taxonomy and Ghostery's boolean reduction. **Testing** — content-hash freshness, small viewports, runtime-toggle effectiveness. **Distribution** — publish v0.6.0/v0.7.0, add a CRX update manifest, structure releases for skip-review. **Plugin ecosystem** — still consciously excluded until a feature registry exists. **Mobile** — unchanged; needs real devices. **Offline/resilience** — cached/built-in fallback is good; sync generations need to be transactional. **Multi-user** — consciously excluded. **Migration** — versioned sync and atomic import must define idempotent legacy conversion and rollback.
 
 ## Rejected Ideas
 
-- **Full uBlock Origin grammar or adblock-rust/WASM engine** — uBlock Origin, uAssets, and Brave show the maintenance and binary complexity; the project should ingest a reviewed safe subset instead of becoming an all-site blocker.
-- **Remote executable emergency fixes** — uAssets quick-fix speed is attractive, but Chrome MV3 requires packaged logic whose complete functionality is reviewable; signed origin alone does not make remote code acceptable.
-- **Automatic SSAI/SABR seeking from heuristics** — Google DAI and current ecosystem reports confirm same-stream insertion; without authenticated live markers, auto-seek can destroy content and SponsorBlock offsets. Keep the existing warn-only/capture-first roadmap.
-- **General YouTube enhancer expansion** — ImprovedTube and YouTube Enhancer issue volume demonstrates lifecycle/UI debt; quality, themes, transcript, download, AI, and productivity features dilute the blocker/focus mission.
-- **Native app, extractor, proxy, or alternate frontend** — FreeTube, NewPipe, Invidious, and Piped solve a different distribution problem and carry continuous extractor/service breakage.
-- **SponsorBlock submissions, voting, or moderation** — SponsorBlock already owns that network and abuse surface; this project only needs consentful consumption and optional view reporting.
-- **Ad clicking or AdNauseam-style obfuscation** — it adds fraud, legal, performance, and privacy risk without improving the stated blocking workflow.
-- **Local or AI thumbnail generation** — DeArrow already supplies community alternatives; generating media introduces bandwidth, compute, model, copyright, and moderation obligations.
-- **Third-party plugin marketplace** — arbitrary page-world extensions would expand the current trust boundary and maintenance load; revisit only after a closed lifecycle registry and capability model exist.
-- **Multi-user cloud accounts** — no collaboration or server component exists, browser profiles already isolate users, and accounts would create unnecessary data-retention and security duties.
-- **Stacking blockers or claiming permanent undetectability** — community reports show extension interactions and rapidly changing YouTube experiments; support one owned configuration and make confidence limits explicit.
-- **Paywalling core protection** — commercial blockers validate demand for support/polish, not a fit with this MIT repository’s current philosophy and local-first design.
+- **Repositioning the project as a YouTube cosmetic/UX layer that assumes a general ad blocker is installed** — the community research argues the unserved demand sits in layout repair, channel/keyword/AI filtering and hide-watched rather than ad blocking, and that a site-specific blocker is met with default suspicion. **Rejected on scope: this project is a YouTube ad blocker and nothing else.** The finding is still useful in one narrow direction — users stack blockers and stacking *causes* detection — which is why conflict detection (opportunity 5) is in and feature expansion is out.
+- **The demand-ranked enhancer features that came with it** — hide watched/partially-watched videos, restoring YouTube UI regressions (sidebar logos, view-count row, old layout), hide by video age/duration/view count, comment word-filtering, playback defaults (default volume, persistent timecode, disabling hotkeys), and end-card restoration. All have real, repeated demand and none of them block ads. They belong in ImprovedTube, BlockTube or a dedicated userscript, not here. Recorded so a future pass does not re-harvest them as opportunities.
+- **Adopt uAssets' `clientScreen:"CHANNEL"` player-request spoof as-is** — this repo shipped exactly that and retired it in v0.4.1 after it broke the watch page (GitHub issue #2); a code comment at `:3183` still records why. Only a conditional re-evaluation gated on that repro belongs on the roadmap.
+- **AdGuard's `google_ad_status` decoy** — requires *un-blocking* `static.doubleclick.net/instream/ad_status.js` on youtube.com, contradicting the project's blocking posture, and NullDev's source comments the constant out as possibly fingerprinted. Source: AdGuard `BaseFilter/sections/antiadblock.txt`.
+- **Registering a pass-through `trustedTypes.createPolicy("default", …)`** — NullDev needs it because it injects HTML/scripts; this codebase has zero sinks, so the policy would only weaken a CSP the project currently satisfies for free.
+- **Premium playback-speed unlock (`granularVariableSpeedConfig`)** — circumventing a paid entitlement is a different act from blocking ads, and carries ToS and framing risk disproportionate to a speed slider. Source: uAssets `experimental.txt`.
+- **Forged playback pings to credit creators (`markVideoAsWatched`)** — re-enables the exact tracking endpoint the project deliberately blocks and depends on a synthesized CPN; a user who wants this can disable the block. Source: NullDev/YT-Anti-Anti-Adblock.
+- **Safari App Store port** — structurally incompatible with the project's no-code-signing rule; Safari is reachable only through the Userscripts app consuming the userscript.
+- **YouTube IP-range lists (`iplist-youtube`)** — DNR cannot match on IP ranges, and a continuously-refreshed network dataset is a maintenance burden disproportionate to the signal.
+- **Full uBO grammar or an adblock-rust/WASM engine; remote executable emergency fixes; automatic SSAI/SABR seeking from heuristics; general enhancer expansion; native app/extractor/proxy/alternate frontend; SponsorBlock submissions or moderation; ad clicking or AdNauseam-style obfuscation; local or AI thumbnail generation; a third-party plugin marketplace; multi-user cloud accounts; stacking blockers or claiming permanent undetectability; paywalling core protection** — all re-confirmed from the 2026-08-14 pass; reasons unchanged.
 
 ## Sources
 
 ### Project and repository
-
 - https://github.com/SysAdminDoc/YoutubeAdblock
 - https://github.com/SysAdminDoc/YoutubeAdblock/issues/1
 - https://github.com/SysAdminDoc/YoutubeAdblock/issues/2
 
-### Open-source blockers and adjacent projects
-
+### uBlock Origin, uAssets, uBOL
 - https://github.com/gorhill/uBlock/releases/tag/1.73.0
-- https://github.com/uBlockOrigin/uAssets/issues/30157
-- https://github.com/uBlockOrigin/uAssets/issues/30158
 - https://github.com/uBlockOrigin/uAssets/blob/master/filters/quick-fixes.txt
-- https://github.com/AdguardTeam/AdguardBrowserExtension
-- https://github.com/AdguardTeam/AdguardBrowserExtension/issues/3559
-- https://github.com/AdguardTeam/AdguardFilters/issues/203236
-- https://github.com/ajayyy/SponsorBlock/releases/tag/6.1.7
-- https://github.com/ajayyy/SponsorBlock/issues/2480
-- https://github.com/ajayyy/SponsorBlock/issues/2516
+- https://github.com/uBlockOrigin/uAssets/blob/master/filters/experimental.txt
+- https://github.com/uBlockOrigin/uAssets/issues/30157
+- https://github.com/gorhill/uBlock/blob/master/dist/chromium/update-dev.xml
+- https://github.com/gorhill/uBlock/commit/5e176aec5d7ce8a9a6c0c4f55be37fe20d3b76dc
+- https://github.com/gorhill/uBlock/commit/5c34167eb4970d46f4dee2a82d6bffc2de1d0537
+- https://github.com/gorhill/uBlock/blob/master/src/js/support.js
+- https://github.com/gorhill/uBlock/blob/master/src/js/scriptlets/epicker.js
+- https://github.com/uBlockOrigin/uBOL-home/tree/main/chromium/js/scripting
+- https://github.com/uBlockOrigin/uBOL-home/blob/main/chromium/manifest.json
+- https://github.com/uBlockOrigin/uBOL-home/releases
+
+### Peer and adjacent projects
+- https://github.com/duckduckgo/content-blocker-extension
+- https://github.com/duckduckgo/content-blocker-extension/blob/main/scripts/prune-scriptlet.mjs
+- https://github.com/NullDev/YT-Anti-Anti-Adblock
+- https://github.com/ghostery/ghostery-extension/blob/main/src/background/sync.js
+- https://github.com/ghostery/ghostery-extension/blob/main/src/background/paused.js
+- https://github.com/ghostery/ghostery-extension/blob/main/src/store/options.js
+- https://github.com/ghostery/adblocker
+- https://github.com/AdguardTeam/AdguardAssistant/tree/master/src
+- https://github.com/AdguardTeam/AdguardBrowserExtension/releases/tag/v5.5.0.4-beta
+- https://github.com/AdguardTeam/Scriptlets/blob/master/CHANGELOG.md
+- https://github.com/AdguardTeam/AdguardFilters/blob/master/BaseFilter/sections/antiadblock.txt
+- https://github.com/ajayyy/SponsorBlock/commits/master
 - https://github.com/ajayyy/DeArrow/releases/tag/2.3.10
-- https://github.com/ajayyy/DeArrow/issues/423
+- https://github.com/Anarios/return-youtube-dislike/commits/main
 - https://github.com/amitbl/blocktube
-- https://github.com/amitbl/blocktube/issues/681
-- https://github.com/varshneydevansh/FilterTube/issues/58
-- https://github.com/YouTube-Enhancer/extension/issues/1348
-- https://github.com/YouTube-Enhancer/extension/issues/1351
-- https://github.com/code-charity/youtube/releases/tag/v4.2027
-- https://github.com/brave/adblock-rust/issues/1
-- https://github.com/dhowe/AdNauseam
-- https://github.com/violentmonkey/violentmonkey/issues/1934
-- https://github.com/quoid/userscripts/issues/873
-- https://github.com/FreeTubeApp/FreeTube/releases/tag/v0.25.2-beta
-- https://github.com/iv-org/invidious/releases/tag/v2.20260804.1
-- https://github.com/TeamPiped/Piped/issues/4257
-- https://github.com/TeamNewPipe/NewPipeExtractor/issues/1444
-- https://github.com/yt-dlp/yt-dlp/issues/12482
-- https://github.com/yt-dlp/yt-dlp/issues/15689
-- https://github.com/yt-dlp/yt-dlp/pull/13515
+- https://github.com/varshneydevansh/FilterTube/commits/main
+- https://github.com/code-charity/youtube/commits/master
+- https://github.com/YouTube-Enhancer/extension/releases
+- https://github.com/awesome-scripts/awesome-userscripts
 
-### Landscape lists
+### Browser platform, store policy, userscript managers
+- https://developer.chrome.com/docs/extensions/develop/migrate/mv2-deprecation-timeline
+- https://developer.chrome.com/blog/cws-policy-updates-2026
+- https://developer.chrome.com/docs/webstore/skip-review
+- https://developer.chrome.com/docs/extensions/develop/migrate/mv3-remote-code
+- https://developer.chrome.com/docs/webstore/program-policies/policies
+- https://developer.chrome.com/docs/extensions/reference/api/declarativeNetRequest
+- https://developer.chrome.com/docs/extensions/reference/api/storage
+- https://developer.chrome.com/docs/extensions/reference/api/userScripts
+- https://developer.chrome.com/docs/extensions/reference/manifest/externally-connectable
+- https://developer.chrome.com/docs/extensions/develop/concepts/service-workers/lifecycle
+- https://developer.chrome.com/blog/trusted-types-on-youtube
+- https://developer.chrome.com/blog/chrome-two-week-release
+- https://developer.chrome.com/blog/structured-clone-messaging
+- https://developer.chrome.com/docs/extensions/reference/api/i18n
+- https://blog.mozilla.org/addons/2026/07/23/firefox-153-webextensions-api-updates/
+- https://extensionworkshop.com/documentation/publish/add-on-policies/
+- https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/API/storage/sync
+- https://github.com/mdn/browser-compat-data/blob/main/webextensions/api/declarativeNetRequest.json
+- https://developer.apple.com/videos/play/wwdc2026/216/
+- https://github.com/violentmonkey/violentmonkey/releases
+- https://www.tampermonkey.net/changelog.php
 
-- https://github.com/pluja/awesome-privacy
-- https://github.com/digitalblossom/alternative-frontends
+### Standards, security, accessibility, media
+- https://theupdateframework.github.io/specification/latest/
+- https://owasp.org/www-community/attacks/Regular_expression_Denial_of_Service_-_ReDoS
+- https://www.w3.org/WAI/standards-guidelines/wcag/new-in-22/
+- https://www.w3.org/WAI/WCAG22/quickref/
+- https://www.w3.org/WAI/ARIA/apg/patterns/dialog-modal/
+- https://w3c.github.io/webcrypto/#ed25519
+- https://api.webstatus.dev/v1/features/trusted-types
+- https://github.com/advisories/GHSA-7mvr-c777-76hp
+- https://nodejs.org/en/feed/vulnerability.xml
+- https://registry.npmjs.org/axe-core
+- https://developer.mozilla.org/docs/Web/API/Document/prerendering
+- https://github.com/mdn/browser-compat-data/blob/main/api/MediaSource.json
 
-### Commercial and platform-supported products
+### Commercial products and platform
+- https://adblockplus.org/en/premium
+- https://getadblock.com/en/premium/
+- https://adguard.com/en/blog/youtube-missing-comments-descriptions.html
+- https://adguard.com/en/blog/youtube-server-side-ad-insertion.html
+- https://blog.youtube/news-and-events/introducing-premium-lite/
+- https://www.afterdawn.com/news/article.cfm/2026/08/10/youtube-premium-lite-to-be-available-worldwide
 
-- https://adguard.com/en/adguard-youtube/overview.html
-- https://www.ghostery.com/blog/launching-ghostery-10-adblocker
-- https://www.malwarebytes.com/browserguard
-- https://help.totaladblock.com/en/tech/ab/-/block-ads-on-youtube
-- https://surfshark.com/features/clean-web
-- https://nordvpn.com/features/threat-protection/ad-blocker/
-- https://getadblock.com/en/video-plus/
-- https://support.google.com/youtube/answer/6308116
-- https://support.google.com/youtube/answer/15968883
-
-### Community signal
-
-- https://www.reddit.com/r/Adblock/comments/1v5bd30/adblock_is_now_charing_money_to_block_youtube_ads/
+### Community signal (sentiment, corroborate before acting)
 - https://www.reddit.com/r/uBlockOrigin/comments/1vg98o4/ublock_origin_ubo_173_announcement_thread/
 - https://www.reddit.com/r/Adblock/comments/1vka53b/is_ublock_origin_down_on_youtube_for_anyone_else/
 - https://www.reddit.com/r/uBlockOrigin/comments/1v1x09u/strange_youtube_pop_up_even_when_ublock_is_active/
 - https://www.reddit.com/r/uBlockOrigin/comments/1vfouqs/is_there_a_solution_in_ublock_origin_that/
-- https://www.reddit.com/r/uBlockOrigin/comments/1v6qoz6/how_to_remove_youtube_shorts_and_channel_posts/
-- https://www.reddit.com/r/uBlockOrigin/comments/1plo3du/ubo_has_made_my_youtube_sidebar_disappeargo_blank/
-- https://news.ycombinator.com/item?id=44329712
-- https://stackoverflow.com/questions/35397523/can-a-tampermonkey-userscript-save-data-into-a-synced-storage
-- https://addons.mozilla.org/en-US/firefox/addon/adguard-adblocker/reviews/?score=2
-
-### Browser standards, store policy, and userscript platforms
-
-- https://developer.chrome.com/docs/extensions/reference/api/storage
-- https://developer.chrome.com/docs/extensions/reference/api/tabs
-- https://developer.chrome.com/docs/extensions/reference/api/declarativeNetRequest
-- https://developer.chrome.com/docs/extensions/develop/concepts/content-scripts
-- https://developer.chrome.com/docs/extensions/develop/concepts/content-filtering
-- https://developer.chrome.com/docs/webstore/program-policies/mv3-requirements
-- https://developer.chrome.com/docs/webstore/program-policies/policies
-- https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/manifest.json/content_scripts
-- https://extensionworkshop.com/documentation/develop/firefox-builtin-data-consent/
-- https://extensionworkshop.com/documentation/publish/signing-and-distribution-overview/
-- https://developer.apple.com/documentation/safariservices/assessing-your-safari-web-extension-s-browser-compatibility
-- https://violentmonkey.github.io/api/metadata-block/
-- https://www.tampermonkey.net/documentation.php?locale=en&q=sandbox
-- https://greasyfork.org/en/help/code-rules
-- https://developer.chrome.com/docs/extensions/develop/migrate/mv2-deprecation-timeline
-- https://blog.mozilla.org/addons/2026/07/23/firefox-153-webextensions-api-updates/
-- https://blog.mozilla.org/addons/2026/04/23/webextensions-api-changes-firefox-149-152/
-- https://www.tampermonkey.net/changelog.php
-- https://github.com/violentmonkey/violentmonkey/releases
-
-### Security, accessibility, media, and research
-
-- https://theupdateframework.io/docs/metadata/
-- https://owasp.org/www-community/attacks/Regular_expression_Denial_of_Service_-_ReDoS
-- https://www.w3.org/WAI/WCAG22/Understanding/focus-not-obscured-minimum.html
-- https://www.w3.org/WAI/ARIA/apg/patterns/dialog-modal/
-- https://developers.google.com/ad-manager/dynamic-ad-insertion/api/full-service/video-pod-serving/hls-timed-metadata
-- https://support.google.com/youtube/answer/14129599
-- https://blog.youtube/news-and-events/extending-our-built-in-protections-to-more-teens-on-youtube/
-- https://www.usenix.org/conference/usenixsecurity25/presentation/el-hajj-chehade
-- https://arxiv.org/abs/2503.01000
-
-### Dependency and test tooling
-
-- https://github.com/microsoft/playwright/releases/tag/v1.62.1
-- https://playwright.dev/docs/chrome-extensions
-- https://osv.dev/
+- https://www.reddit.com/r/uBlockOrigin/comments/1vllunz/how_to_bring_back_youtuber_logos_for_sidebar/
+- https://www.reddit.com/r/uBlockOrigin/comments/1vo55bp/how_to_revert_this_youtube_new_view_count_and/
+- https://www.reddit.com/r/chrome_extensions/comments/1vffs5j/i_just_found_out_today_that_there_are_some_cases/
 
 ## Open Questions
 
-1. Which disposable account/region/experiment combinations will actually serve pre-roll, mid-roll, feed, Shorts, Music, TV, Kids, embed, and SSAI creative so privacy-scrubbed fixtures can be captured?
-2. What is the dated pass/fail result for current Chrome + Tampermonkey, Firefox + Violentmonkey, Firefox Android, and Safari Userscripts after applying explicit manager execution-world metadata — specifically including whether document-start injection wins the race under Violentmonkey 2.47.x MV3 default mode versus its experimental “Alternative page mode”?
-3. Is the private key for Chromium ID jpeojodihepmkpdhibnnbgamnakclnnj recoverable from the maintainer’s secure backup, or must identity/storage/update continuity be deliberately migrated?
-4. What fraction of logged-in desktop web sessions receive SABR-only player responses (no distinct `adaptiveFormats` URLs) as of 2026-08, and what does the engine currently do on such a response — needed before the SABR degradation contingency can be scoped?
+1. Does YouTube currently route `/player` through the `network_machine` pipeline for this project's users, and does disabling `all_web_enable_network_machine` / `all_web_network_machine_raw_request` at document-start restore proxy coverage without side effects? This gates the largest capability item.
+2. Under what conditions does uAssets' `clientScreen:"CHANNEL"` step succeed as of 2026-08-15, given that this repo's identical spoof broke the watch page in v0.4.1 (issue #2)? Needed before any player-request ladder work is safe.
+3. Do DNR rules 16 and 18 (`log_event` POST, `generate_204`) measurably break watch history, resume position, or QoE reporting? The repo's own 2026-08-13 lesson warns against exactly this.
+4. Which disposable account/region/experiment combinations actually serve pre-roll, mid-roll, feed, Shorts, Music, TV, Kids, embed and SSAI creative, so privacy-scrubbed fixtures can be captured? **Priority downgraded by a negative finding:** a 12-month sweep of r/uBlockOrigin returned a verified *zero* reports of SABR or server-stitched ads defeating a browser ad blocker; all substantive SABR discussion concerns downloading (yt-dlp), not ad delivery. Browser-side ad leakage is consistently attributed to stale filters and A/B rollouts. Keep the SSAI work warn-only and capture-first, and treat any "SABR is why ads get through" claim as unsupported until a primary source says otherwise.
+5. What is the dated pass/fail result for Chrome + Tampermonkey 5.5.0 and Firefox + Violentmonkey 2.47.x, including whether document-start injection wins the race under VM's default mode versus its experimental "Alternative page mode"? **Priority downgraded by a negative finding:** a 12-month community sweep found *zero* threads about Tampermonkey 5.5.x's permission prompt and *zero* about Violentmonkey's "Alternative page mode". The friction users actually hit is Chrome's own per-extension "Allow user scripts" toggle, which the install docs should name. Still worth validating, but it is not the live support burden the prior pass assumed.
+6. Is the private key for Chromium ID `jpeojodihepmkpdhibnnbgamnakclnnj` recoverable, or must identity/storage/update continuity be deliberately migrated? This now also gates the self-hosted CRX update manifest, which requires a stable ID.
+7. Is the maintainer willing to publish a store listing at all? Skip-review eligibility, the single-purpose rewrite and the disclosure work are only worth doing if the answer is yes.
