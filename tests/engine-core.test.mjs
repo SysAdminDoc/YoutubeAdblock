@@ -174,6 +174,7 @@ function createTestHarness(options = {}) {
         recordSabrOnlyStreaming,
         isPaused,
         isEnabled,
+        reconcilePauseExpiry,
         startRecoveryPause,
         clearRecoveryPause,
         pauseRemainingMs,
@@ -2151,12 +2152,34 @@ test('a timed pause suspends protection and restores itself on expiry', () => {
     assert.equal(h.isPaused(), true);
     assert.equal(h.isEnabled(), false, 'every engine gates on isEnabled, so a pause disables them all');
 
-    // Wind the clock past the deadline: the next check restores protection
-    // without needing the timer to fire.
+    // Wind the clock past the deadline. isEnabled() is read from inside the
+    // appendChild and setTimeout proxy traps, so the expiry check has to be
+    // pure — protection comes back immediately, and the state cleanup runs
+    // separately when the timer fires or on the next SPA navigation.
     h.state.pauseUntil = Date.now() - 1;
     assert.equal(h.isPaused(), false);
     assert.equal(h.isEnabled(), true);
-    assert.equal(h.state.pauseScope, '', 'expiry clears the pause scope');
+    assert.equal(h.state.pauseScope, 'timed', 'reading must not mutate pause state');
+
+    assert.equal(h.reconcilePauseExpiry(), true);
+    assert.equal(h.state.pauseScope, '', 'reconciliation clears the pause scope');
+    assert.equal(h.reconcilePauseExpiry(), false, 'reconciling twice is a no-op');
+});
+
+test('reading protection state never mutates it or touches the DOM', () => {
+    const h = createTestHarness({ storage: {} });
+    h.startRecoveryPause('5m');
+    h.state.pauseUntil = Date.now() - 1;
+
+    // buildContent/refreshSettingsUI must not run from a hot-path read: this
+    // is evaluated inside Node.prototype.appendChild.
+    const before = h.state.clutterStyleEl;
+    for (let i = 0; i < 5; i++) {
+        assert.equal(h.isEnabled(), true);
+        assert.equal(h.isPaused(), false);
+    }
+    assert.equal(h.state.pauseScope, 'timed');
+    assert.equal(h.state.clutterStyleEl, before, 'no stylesheet work from a read');
 });
 
 test('a session pause stays until explicitly resumed', () => {

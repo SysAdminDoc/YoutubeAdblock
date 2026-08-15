@@ -77,13 +77,6 @@ Start with the P1 sync-regression repair under Research-Driven Additions, then t
   Acceptance: a timed pause restores itself after a simulated worker restart; pausing and the master switch both disable the packaged ruleset and re-enable it on resume; a rendered test asserts the countdown is visible and that a blocked request succeeds while paused.
   Complexity: M
 
-- [ ] P1 — Stop `isEnabled()` mutating state and rebuilding the UI from inside proxy traps
-  Why: pause expiry is detected inside `isPaused()`, which calls `clearRecoveryPause()` → `applyPauseState()` → two CSS updates, a full panel rebuild and menu re-registration. `isEnabled()` is evaluated in the `appendChild`/`insertBefore`/`replaceChild` and `setTimeout` proxy traps with no try/catch, so the first hot-path call after expiry runs hundreds of synchronous DOM operations re-entrantly inside a page's `appendChild`, and any throw escapes into `Node.prototype.appendChild` for the whole page.
-  Evidence: YoutubeAdblock.user.js:1417-1427, :1465-1470, :1475-1477; trap sites at :3727, :3737, :3747 and the timer proxy at :4324.
-  Touches: YoutubeAdblock.user.js; tests/engine-core.test.mjs.
-  Acceptance: `isEnabled()` is a pure predicate; expiry is applied by the scheduled restore or a navigation tick, never by a read from a proxy trap; a test asserts that evaluating `isEnabled()` after a lapsed deadline performs no DOM work and cannot throw into the trap.
-  Complexity: S
-
 - [ ] P1 — Neutralize DOM-bypass script insertions before they execute
   Why: the proxy calls `Reflect.apply(target, …)` first and rewrites `node.textContent` afterwards. Appending an inline `<script>` executes it synchronously during `appendChild`, so the bypass succeeds while the counter records a block — the enforcement point is a no-op for the exact case the v0.7.0 detector was improved to catch.
   Evidence: YoutubeAdblock.user.js:3713-3720 (`handleInsertion`), :3730-3731, :3740-3741, :3750-3751.

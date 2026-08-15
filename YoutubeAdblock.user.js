@@ -1416,16 +1416,26 @@
         { id: 'session', ms: 0 }
     ];
 
+    // Pure: this is reached from the appendChild/insertBefore/replaceChild
+    // and setTimeout proxy traps by way of isEnabled(), so it must never
+    // mutate state or touch the DOM. Clearing an expired pause is
+    // reconciliation work and belongs in reconcilePauseExpiry().
     function isPaused() {
-        const until = state.pauseUntil || 0;
         if (state.pauseScope === 'session') return true;
+        const until = state.pauseUntil || 0;
         if (!until) return false;
-        if (Date.now() >= until) {
-            // Expired: restore automatically rather than waiting for a tick.
-            clearRecoveryPause({ silent: true });
-            return false;
-        }
-        return true;
+        return Date.now() < until;
+    }
+
+    /**
+     * Applies an expired pause: restores protection, refreshes the panel and
+     * re-registers menu commands. Driven by the pause timer, with SPA
+     * navigation as a safety net for a timer the page dropped.
+     */
+    function reconcilePauseExpiry() {
+        if (state.pauseScope !== 'timed') return false;
+        if (!state.pauseUntil || Date.now() < state.pauseUntil) return false;
+        return clearRecoveryPause({ silent: true });
     }
 
     function pauseRemainingMs() {
@@ -10473,7 +10483,10 @@
                 );
             }
         }, 10000);
-        document.addEventListener('yt-navigate-finish', () => { breakageToastFired = false; });
+        document.addEventListener('yt-navigate-finish', () => {
+            breakageToastFired = false;
+            try { reconcilePauseExpiry(); } catch (e) { /* ignore */ }
+        });
     }
 
     if (document.readyState === 'loading') {

@@ -5,6 +5,17 @@ All notable changes to YoutubeAdblock are documented here.
 ## [Unreleased]
 
 ### Fixed
+- **Reading protection state no longer rebuilds the Control Center.** An
+  expired recovery pause was cleared from inside `isPaused()`, which
+  `isEnabled()` calls — and `isEnabled()` is evaluated inside the
+  `appendChild`/`insertBefore`/`replaceChild` and `setTimeout` proxies. The
+  first hot-path read after a pause lapsed therefore ran two stylesheet
+  rebuilds, a full panel rebuild and menu re-registration synchronously
+  inside a page's `appendChild`, with no try/catch between it and
+  `Node.prototype.appendChild`. The check is now pure; the cleanup runs from
+  the pause timer, with SPA navigation as a safety net.
+
+### Fixed
 - **Restore Defaults now actually restores the page.** It reset the toggles
   and the cosmetic stylesheet but never the clutter stylesheet or the volume
   gain node, so hidden elements stayed hidden while their switches read off
