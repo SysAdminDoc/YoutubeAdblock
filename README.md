@@ -1,6 +1,6 @@
 # YoutubeAdblock
 
-![Version](https://img.shields.io/badge/version-0.5.23-58A6FF)
+![Version](https://img.shields.io/badge/version-0.6.0-58A6FF)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
 > A document-start YouTube ad blocker with a split-context proxy engine, remote rule support, and a premium Control Center for tuning protection.
@@ -158,7 +158,7 @@ All settings persist via `GM_setValue`. Open the userscript menu and choose `You
 
 ### Control Center
 
-![YoutubeAdblock v0.5.23 desktop Control Center diagnostics](design/screenshots/control-center-desktop-dark-v0.5.23.png)
+![YoutubeAdblock v0.6.0 desktop Control Center diagnostics](design/screenshots/control-center-desktop-dark-v0.6.0.png)
 
 The v0.5.23 Control Center keeps the selected ImageGen-led desktop shell and adds the tested Browser Network Layer evidence state shown above. The screenshot is the generated-extension implementation, not a standalone mockup.
 

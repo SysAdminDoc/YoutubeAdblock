@@ -4,6 +4,8 @@ All notable changes to YoutubeAdblock are documented here.
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-08-14
+
 ### Security
 - **Signed update freshness (schema v2)**: signed filter and webpack-signature
   metadata is now itself Ed25519-signed and carries an artifact role, a
