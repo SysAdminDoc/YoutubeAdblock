@@ -5,6 +5,14 @@ All notable changes to YoutubeAdblock are documented here.
 ## [Unreleased]
 
 ### Fixed
+- **DOM-bypass scripts are now neutralized before the browser runs them.**
+  The guard rewrote a matching inline `<script>` *after* calling the native
+  insertion — but appending an inline script executes it synchronously
+  inside `appendChild`, so the bypass had already succeeded and only the
+  counter moved. The check now runs before the native call, and also covers
+  scripts carried in inside a `DocumentFragment`.
+
+### Fixed
 - **Reading protection state no longer rebuilds the Control Center.** An
   expired recovery pause was cleared from inside `isPaused()`, which
   `isEnabled()` calls — and `isEnabled()` is evaluated inside the

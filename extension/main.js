@@ -3806,16 +3806,37 @@
                         }
                     } catch (e) { /* ignore */ }
                 }
-                // Block inline script injection that lifts pristine network
-                // APIs out of a fresh realm and reinstalls them globally.
-                if (node instanceof HTMLScriptElement) {
-                    if (detectFetchLiftPattern(node.textContent || '')) {
-                        node.textContent = '/* blocked by YoutubeAdblock */';
-                        state.stats.domBypassBlocked = (state.stats.domBypassBlocked || 0) + 1;
-                    }
-                }
             } catch (e) { /* fail silently */ }
             return result;
+        }
+
+        function neutralizeScriptNode(script) {
+            if (!detectFetchLiftPattern(script.textContent || '')) return;
+            script.textContent = '/* blocked by YoutubeAdblock */';
+            state.stats.domBypassBlocked = (state.stats.domBypassBlocked || 0) + 1;
+        }
+
+        /**
+         * Blocks inline script injection that lifts pristine network APIs out
+         * of a fresh realm and reinstalls them globally.
+         *
+         * This has to run BEFORE the native insertion: appending an inline
+         * <script> executes it synchronously inside appendChild, so rewriting
+         * its text afterwards increments the counter while the bypass has
+         * already succeeded.
+         */
+        function neutralizeBeforeInsertion(node) {
+            try {
+                if (node instanceof HTMLScriptElement) {
+                    neutralizeScriptNode(node);
+                    return;
+                }
+                // A fragment carries its scripts in on a single call.
+                if (node instanceof DocumentFragment && node.querySelectorAll) {
+                    const scripts = node.querySelectorAll('script');
+                    for (let i = 0; i < scripts.length; i++) neutralizeScriptNode(scripts[i]);
+                }
+            } catch (e) { /* fail silently */ }
         }
 
         const proxiedAppendChild = new Proxy(originalAppendChild, {
@@ -3823,6 +3844,7 @@
                 if (!isEnabled() || !state.features.domBypassPrevention) {
                     return Reflect.apply(target, thisArg, args);
                 }
+                neutralizeBeforeInsertion(args[0]);
                 const result = Reflect.apply(target, thisArg, args);
                 return handleInsertion(args[0], result);
             }
@@ -3833,6 +3855,7 @@
                 if (!isEnabled() || !state.features.domBypassPrevention) {
                     return Reflect.apply(target, thisArg, args);
                 }
+                neutralizeBeforeInsertion(args[0]);
                 const result = Reflect.apply(target, thisArg, args);
                 return handleInsertion(args[0], result);
             }
@@ -3843,6 +3866,7 @@
                 if (!isEnabled() || !state.features.domBypassPrevention) {
                     return Reflect.apply(target, thisArg, args);
                 }
+                neutralizeBeforeInsertion(args[0]);
                 const result = Reflect.apply(target, thisArg, args);
                 return handleInsertion(args[0], result);
             }

@@ -77,13 +77,6 @@ Start with the P1 sync-regression repair under Research-Driven Additions, then t
   Acceptance: a timed pause restores itself after a simulated worker restart; pausing and the master switch both disable the packaged ruleset and re-enable it on resume; a rendered test asserts the countdown is visible and that a blocked request succeeds while paused.
   Complexity: M
 
-- [ ] P1 — Neutralize DOM-bypass script insertions before they execute
-  Why: the proxy calls `Reflect.apply(target, …)` first and rewrites `node.textContent` afterwards. Appending an inline `<script>` executes it synchronously during `appendChild`, so the bypass succeeds while the counter records a block — the enforcement point is a no-op for the exact case the v0.7.0 detector was improved to catch.
-  Evidence: YoutubeAdblock.user.js:3713-3720 (`handleInsertion`), :3730-3731, :3740-3741, :3750-3751.
-  Touches: YoutubeAdblock.user.js; tests/engine-core.test.mjs; tests/browser-smoke.test.mjs.
-  Acceptance: a detected bypass node is neutralized or its insertion refused before the native call runs; a test appends a real inline script matching the pattern and asserts its side effect never occurs while the counter still increments.
-  Complexity: S
-
 - [ ] P1 — Publish the v0.6.0 and v0.7.0 releases
   Why: the latest GitHub Release is v0.5.20 (2026-06-30) while the tree, README badge, manifest and userscript all read 0.7.0 and `dist/` holds unpublished artifacts. No extension user is running v0.6.0's least-privilege manifest or v0.7.0's storage broker; the security work of two releases is undelivered.
   Evidence: `gh release list` (latest v0.5.20, 2026-06-30); package.json/manifest.json/userscript all 0.7.0; dist/YoutubeAdblock-extension-v0.7.0.zip present and unpublished.

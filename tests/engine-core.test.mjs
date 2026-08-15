@@ -24,6 +24,24 @@ function createTestHarness(options = {}) {
     // evaluate. Stubs must cover the init path (DOM reads, GM_*,
     // menu commands) without a real browser.
     const noop = () => {};
+    // Records each child as the native insertion saw it, so a test can tell
+    // whether the bypass guard ran before or after the DOM call.
+    const insertionLog = [];
+
+    // These must be real constructors: the engine gates on `instanceof`, and
+    // `x instanceof {}` throws, which the engine's try/catch would swallow —
+    // silently disabling the branch under test.
+    function NodeStub() {}
+    function record(child) {
+        insertionLog.push({ node: child, text: child && child.textContent });
+        return child;
+    }
+    NodeStub.prototype.appendChild = record;
+    NodeStub.prototype.insertBefore = record;
+    NodeStub.prototype.replaceChild = record;
+    function HTMLIFrameElementStub() {}
+    function HTMLScriptElementStub() {}
+    function DocumentFragmentStub() {}
     const noopEl = () => {
         const el = {
             className: '', id: '', textContent: '', innerHTML: '', type: '',
@@ -81,13 +99,15 @@ function createTestHarness(options = {}) {
         crypto: globalThis.crypto,
         atob: globalThis.atob,
         btoa: globalThis.btoa,
+        // Populated by the Node.prototype stubs below.
         Headers: function Headers() { this.get = () => ''; this.delete = noop; },
         Response: function Response(body, init) { this.body = body; this.status = init?.status || 200; },
         Request: function Request(url) { this.url = url; },
         XMLHttpRequest: function XMLHttpRequest() {},
-        Node: { prototype: {} },
-        HTMLIFrameElement: { prototype: {} },
-        HTMLScriptElement: { prototype: {} },
+        Node: NodeStub,
+        HTMLIFrameElement: HTMLIFrameElementStub,
+        HTMLScriptElement: HTMLScriptElementStub,
+        DocumentFragment: DocumentFragmentStub,
         MutationObserver: function MutationObserver() { this.observe = noop; this.disconnect = noop; },
         AudioContext: function AudioContext() { this.createMediaElementSource = () => ({ connect: noop }); this.createGain = () => ({ gain: { value: 1 }, connect: noop }); this.destination = {}; },
         Function,
@@ -179,6 +199,7 @@ function createTestHarness(options = {}) {
         clearRecoveryPause,
         pauseRemainingMs,
         detectFetchLiftPattern,
+        installDOMBypassPrevention,
         compareDearrowCandidates,
         getCommunityCacheStatus,
         clearCommunityCache,
@@ -223,6 +244,7 @@ function createTestHarness(options = {}) {
 
     let exported = null;
     sandbox.__ytab_test_export = (obj) => { exported = obj; };
+    sandbox.__ytab_insertion_log = insertionLog;
 
     const ctx = vm.createContext(sandbox);
     try {
@@ -233,6 +255,9 @@ function createTestHarness(options = {}) {
         if (!exported) throw new Error('Failed to extract test functions: ' + e.message + '\n' + e.stack);
     }
     exported.__storage = storage;
+    exported.__insertionLog = insertionLog;
+    exported.__Node = sandbox.Node;
+    exported.__HTMLScriptElement = sandbox.HTMLScriptElement;
     exported.__failWriteAfter = (n) => { writeFailureAfter = n; writesPerformed = 0; };
     return exported;
 }
@@ -2079,6 +2104,43 @@ test('cache ages render as coarse human durations', () => {
 });
 
 // ========== DOM bypass detection ==========
+
+test('a bypass script is neutralized before the DOM executes it', () => {
+    const h = createTestHarness({ storage: {} });
+    h.state.features.domBypassPrevention = true;
+    h.installDOMBypassPrevention();
+
+    const bypass = Object.create(h.__HTMLScriptElement.prototype);
+    bypass.textContent =
+        'var f=document.createElement("iframe");document.body.appendChild(f);' +
+        'window.fetch=f.contentWindow.fetch;';
+
+    const parent = Object.create(h.__Node.prototype);
+    parent.appendChild(bypass);
+
+    // Appending an inline <script> runs it synchronously inside appendChild,
+    // so the text the native call received is the only thing that matters.
+    // Rewriting it afterwards leaves the bypass already executed.
+    const seen = h.__insertionLog.find(entry => entry.node === bypass);
+    assert.ok(seen, 'the native appendChild should still run');
+    assert.equal(seen.text, '/* blocked by YoutubeAdblock */',
+        'the script must already be neutralized when the DOM sees it');
+    assert.equal(h.state.stats.domBypassBlocked, 1);
+});
+
+test('an innocent script reaches the DOM untouched', () => {
+    const h = createTestHarness({ storage: {} });
+    h.state.features.domBypassPrevention = true;
+    h.installDOMBypassPrevention();
+
+    const benign = Object.create(h.__HTMLScriptElement.prototype);
+    benign.textContent = 'console.log("hello");';
+    Object.create(h.__Node.prototype).appendChild(benign);
+
+    const seen = h.__insertionLog.find(entry => entry.node === benign);
+    assert.equal(seen.text, 'console.log("hello");');
+    assert.equal(h.state.stats.domBypassBlocked || 0, 0);
+});
 
 test('detects realm-lift bypasses across quoting and global-object variants', () => {
     const h = harness;
