@@ -33,25 +33,17 @@
     // Only the main-world script is allowed to write to this single key.
     // Any other key passed through EVT_PAGE_REQUEST is silently dropped.
     const ALLOWED_STORAGE_KEY = '__ytab_ext_settings__';
-    const LOCAL_META_KEY = '__ytab_ext_settings_meta__';
     const SYNC_META_KEY = '__ytab_ext_settings_sync_meta__';
-    const SYNC_CHUNK_PREFIX = '__ytab_ext_settings_sync_chunk_';
     // 512 KB is an order of magnitude more than the real settings need
     // (they measure in the low single-digit KB) but still well under the
     // chrome.storage.local per-item quota.
     const MAX_PAYLOAD_BYTES = 512 * 1024;
-    // chrome.storage.sync limits are 8 KB per item and 100 KB total. Keep
-    // chunk payloads below the item ceiling and reserve headroom for keys
-    // plus metadata.
-    const SYNC_CHUNK_BYTES = 7 * 1024;
-    const SYNC_TOTAL_BYTES = 95 * 1024;
     // Collapse rapid-fire writes into a single storage.local.set. Most
     // realistic workloads (toggle a few switches) coalesce nicely at 150 ms.
     const WRITE_DEBOUNCE_MS = 150;
 
     let pendingWrite = null;
     let pendingTimer = null;
-    let lastWriteStamp = 0;
 
     const inflight = new Set();
     let pendingGetIds = null;
@@ -78,14 +70,6 @@
     let dnrDiagnosticsCacheAt = 0;
     let dnrDiagnosticsInFlight = false;
 
-    function storageArea(name) {
-        try {
-            return chrome && chrome.storage && chrome.storage[name];
-        } catch (e) {
-            return null;
-        }
-    }
-
     function lastErrorText() {
         try {
             const err = chrome.runtime && chrome.runtime.lastError;
@@ -95,217 +79,53 @@
         }
     }
 
-    function nextWriteStamp() {
-        const now = Date.now();
-        lastWriteStamp = Math.max(now, lastWriteStamp + 1);
-        return lastWriteStamp;
-    }
-
-    function normalizeMeta(meta) {
-        if (!meta || typeof meta !== 'object') return { updatedAt: 0 };
-        const updatedAt = Number(meta.updatedAt);
-        return {
-            updatedAt: Number.isFinite(updatedAt) && updatedAt > 0 ? updatedAt : 0,
-            chunkCount: Number(meta.chunkCount) || 0,
-            byteLength: Number(meta.byteLength) || 0,
-            oversized: Boolean(meta.oversized)
-        };
-    }
-
-    function syncChunkKeys(count, startAt = 0) {
-        const keys = [];
-        const safeCount = Math.max(0, Math.min(Number(count) || 0, 64));
-        for (let i = startAt; i < safeCount; i++) {
-            keys.push(`${SYNC_CHUNK_PREFIX}${i}`);
-        }
-        return keys;
-    }
-
-    function splitSyncPayload(text) {
-        const chunks = [];
-        for (let i = 0; i < text.length; i += SYNC_CHUNK_BYTES) {
-            chunks.push(text.slice(i, i + SYNC_CHUNK_BYTES));
-        }
-        return chunks;
-    }
-
-    function removeStaleSyncChunks(previousMeta, keepCount) {
-        const sync = storageArea('sync');
-        if (!sync || !previousMeta) return;
-        const meta = normalizeMeta(previousMeta);
-        if (!meta.chunkCount || meta.chunkCount <= keepCount) return;
-        const staleKeys = syncChunkKeys(meta.chunkCount, keepCount);
-        if (!staleKeys.length) return;
-        try { sync.remove(staleKeys); } catch (e) { /* sync unavailable */ }
-    }
-
-    function readSyncSnapshot(callback) {
-        const sync = storageArea('sync');
-        if (!sync) { callback(null); return; }
-        try {
-            sync.get([SYNC_META_KEY], (metaItems) => {
-                if (lastErrorText()) { callback(null); return; }
-                const rawMeta = metaItems && metaItems[SYNC_META_KEY];
-                const meta = normalizeMeta(rawMeta);
-                if (!meta.updatedAt) { callback(null); return; }
-                if (meta.oversized) {
-                    callback({ meta, value: undefined, oversized: true });
-                    return;
-                }
-                if (!Number.isInteger(meta.chunkCount) || meta.chunkCount < 1 || meta.chunkCount > 64) {
-                    callback(null);
-                    return;
-                }
-                const keys = syncChunkKeys(meta.chunkCount);
-                sync.get(keys, (chunkItems) => {
-                    if (lastErrorText()) { callback(null); return; }
-                    let serialized = '';
-                    for (const key of keys) {
-                        const chunk = chunkItems && chunkItems[key];
-                        if (typeof chunk !== 'string') { callback(null); return; }
-                        serialized += chunk;
-                    }
-                    if (meta.byteLength && serialized.length !== meta.byteLength) {
-                        callback(null);
-                        return;
-                    }
-                    try {
-                        const value = JSON.parse(serialized);
-                        callback(value && typeof value === 'object'
-                            ? { meta, value, oversized: false }
-                            : null);
-                    } catch (e) {
-                        callback(null);
-                    }
-                });
-            });
-        } catch (e) {
-            callback(null);
-        }
-    }
-
-    function mirrorToSync(value, updatedAt) {
-        const sync = storageArea('sync');
-        if (!sync || !value || typeof value !== 'object') return;
-        let serialized = '';
-        try { serialized = JSON.stringify(value); } catch (e) { return; }
-        try {
-            sync.get([SYNC_META_KEY], (metaItems) => {
-                const previousMeta = metaItems && metaItems[SYNC_META_KEY];
-                if (lastErrorText()) return;
-                if (serialized.length > SYNC_TOTAL_BYTES) {
-                    const meta = {
-                        version: 1,
-                        updatedAt,
-                        chunkCount: 0,
-                        byteLength: serialized.length,
-                        oversized: true
-                    };
-                    sync.set({ [SYNC_META_KEY]: meta }, () => {
-                        removeStaleSyncChunks(previousMeta, 0);
-                    });
-                    return;
-                }
-                const chunks = splitSyncPayload(serialized);
-                const chunkItems = {};
-                chunks.forEach((chunk, index) => {
-                    chunkItems[`${SYNC_CHUNK_PREFIX}${index}`] = chunk;
-                });
-                const meta = {
-                    version: 1,
-                    updatedAt,
-                    chunkCount: chunks.length,
-                    byteLength: serialized.length,
-                    oversized: false
-                };
-                sync.set(chunkItems, () => {
-                    if (lastErrorText()) return;
-                    sync.set({ [SYNC_META_KEY]: meta }, () => {
-                        if (lastErrorText()) return;
-                        removeStaleSyncChunks(previousMeta, chunks.length);
-                    });
-                });
-            });
-        } catch (e) { /* sync mirror is best effort */ }
-    }
-
-    function applySyncIfNewer(localUpdatedAt) {
-        readSyncSnapshot((snapshot) => {
-            if (!snapshot || snapshot.oversized || !snapshot.value) return;
-            const remoteUpdatedAt = normalizeMeta(snapshot.meta).updatedAt;
-            if (!remoteUpdatedAt || remoteUpdatedAt <= localUpdatedAt) return;
-            const local = storageArea('local');
-            if (!local) return;
+    // The service worker owns chrome.storage for settings. The bridge only
+    // relays a two-verb protocol on the page's behalf, so nothing reachable
+    // from the page world can write persistence directly.
+    function sendToBroker(message) {
+        return new Promise((resolve) => {
+            let settled = false;
+            const finish = (response) => {
+                if (settled) return;
+                settled = true;
+                resolve(response && typeof response === 'object'
+                    ? response
+                    : { ok: false, error: 'broker unavailable' });
+            };
             try {
-                local.set({
-                    [ALLOWED_STORAGE_KEY]: snapshot.value,
-                    [LOCAL_META_KEY]: { updatedAt: remoteUpdatedAt }
-                }, () => {
-                    if (!lastErrorText()) pushSettingsSnapshot(snapshot.value);
+                const maybePromise = chrome.runtime.sendMessage(message, (response) => {
+                    if (lastErrorText()) { finish(null); return; }
+                    finish(response);
                 });
-            } catch (e) { /* ignore */ }
-        });
-    }
-
-    function hydrateLocalThenSync() {
-        const local = storageArea('local');
-        if (!local) return;
-        try {
-            local.get([ALLOWED_STORAGE_KEY, LOCAL_META_KEY], (items) => {
-                if (lastErrorText()) return;
-                const value = items && items[ALLOWED_STORAGE_KEY];
-                const meta = normalizeMeta(items && items[LOCAL_META_KEY]);
-                if (value && typeof value === 'object') {
-                    pushSettingsSnapshot(value);
-                    if (!meta.updatedAt) {
-                        const updatedAt = nextWriteStamp();
-                        local.set({ [LOCAL_META_KEY]: { updatedAt } }, () => {
-                            if (!lastErrorText()) mirrorToSync(value, updatedAt);
-                        });
-                        return;
-                    }
+                if (maybePromise && typeof maybePromise.then === 'function') {
+                    maybePromise.then(finish, () => finish(null));
                 }
-                applySyncIfNewer(meta.updatedAt);
-            });
-        } catch (e) { /* ignore */ }
+            } catch (e) {
+                finish(null);
+            }
+        });
     }
 
     function flushPendingWrite() {
         if (!pendingWrite) return;
-        const { value, ids, updatedAt } = pendingWrite;
+        const { value, ids } = pendingWrite;
         pendingWrite = null;
         pendingTimer = null;
         const snapshotIds = ids.slice();
-        try {
-            chrome.storage.local.set({
-                [ALLOWED_STORAGE_KEY]: value,
-                [LOCAL_META_KEY]: { updatedAt }
-            }, () => {
-                const err = lastErrorText();
-                if (!err) mirrorToSync(value, updatedAt);
-                for (const id of snapshotIds) {
-                    inflight.delete(id);
-                    document.dispatchEvent(new CustomEvent(EVT_PAGE_RESPONSE, {
-                        detail: err
-                            ? { id, error: err }
-                            : { id, ok: true }
-                    }));
-                }
-            });
-        } catch (e) {
+        sendToBroker({ type: 'ytab:settings-write', value }).then((response) => {
+            const err = response.ok ? '' : (response.error || 'settings write failed');
             for (const id of snapshotIds) {
                 inflight.delete(id);
                 document.dispatchEvent(new CustomEvent(EVT_PAGE_RESPONSE, {
-                    detail: { id, error: String(e && e.message || e) }
+                    detail: err ? { id, error: err } : { id, ok: true }
                 }));
             }
-        }
+        });
     }
 
     function scheduleWrite(id, value) {
         pendingWrite = {
             value,
-            updatedAt: nextWriteStamp(),
             ids: pendingWrite ? pendingWrite.ids.concat(id) : [id]
         };
         if (pendingTimer) clearTimeout(pendingTimer);
@@ -460,26 +280,15 @@
         const ids = pendingGetIds;
         pendingGetIds = null;
         pendingGetTimer = null;
-        try {
-            chrome.storage.local.get([ALLOWED_STORAGE_KEY], (items) => {
-                const err = lastErrorText();
-                for (const rid of ids) {
-                    inflight.delete(rid);
-                    document.dispatchEvent(new CustomEvent(EVT_PAGE_RESPONSE, {
-                        detail: err
-                            ? { id: rid, error: err }
-                            : { id: rid, value: items ? items[ALLOWED_STORAGE_KEY] : undefined }
-                    }));
-                }
-            });
-        } catch (e) {
+        sendToBroker({ type: 'ytab:settings-read' }).then((response) => {
+            const err = response.ok ? '' : (response.error || 'settings read failed');
             for (const rid of ids) {
                 inflight.delete(rid);
                 document.dispatchEvent(new CustomEvent(EVT_PAGE_RESPONSE, {
-                    detail: { id: rid, error: String(e && e.message || e) }
+                    detail: err ? { id: rid, error: err } : { id: rid, value: response.value }
                 }));
             }
-        }
+        });
     }
 
     function isRateLimited() {
@@ -548,24 +357,27 @@
     try {
         chrome.storage.onChanged.addListener((changes, area) => {
             if (!changes) return;
-            if (area === 'local') {
-                if (!(ALLOWED_STORAGE_KEY in changes)) return;
+            // Only the allowlisted key is forwarded, so no unrelated
+            // extension storage shape can leak into MAIN-world code.
+            if (area === 'local' && (ALLOWED_STORAGE_KEY in changes)) {
                 pushSettingsSnapshot(changes[ALLOWED_STORAGE_KEY].newValue);
                 return;
             }
+            // A sync change means another device published a snapshot. The
+            // broker decides whether it wins; the bridge just asks again.
             if (area === 'sync' && (SYNC_META_KEY in changes)) {
-                const local = storageArea('local');
-                if (!local) return;
-                try {
-                    local.get([LOCAL_META_KEY], (items) => {
-                        if (lastErrorText()) return;
-                        const localMeta = normalizeMeta(items && items[LOCAL_META_KEY]);
-                        applySyncIfNewer(localMeta.updatedAt);
-                    });
-                } catch (e) { /* ignore */ }
+                hydrateFromBroker();
             }
         });
     } catch (e) { /* ignore */ }
+
+    function hydrateFromBroker() {
+        sendToBroker({ type: 'ytab:settings-read' }).then((response) => {
+            if (response.ok && response.value && typeof response.value === 'object') {
+                pushSettingsSnapshot(response.value);
+            }
+        });
+    }
 
     function checkApiPermissions() {
         try {
@@ -582,7 +394,7 @@
     // localStorage as its synchronous read path, so we copy the mirrored
     // settings into localStorage immediately, then apply a newer
     // chrome.storage.sync snapshot if another signed-in browser wrote one.
-    hydrateLocalThenSync();
+    hydrateFromBroker();
     checkApiPermissions();
 
     try {

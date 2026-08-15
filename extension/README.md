@@ -46,6 +46,14 @@ on `document`, and `main.js` invokes the matching in-page action. The bounded
 reverse path handles settings and diagnostics: page events can access only the
 allowlisted settings object or request a sanitized current-tab DNR summary.
 
+Settings persistence lives entirely in the service worker. `bridge.js` owns no
+storage code; it validates the page request (single allowlisted key, size cap,
+rate limit, debounce) and relays `ytab:settings-read` / `ytab:settings-write`
+over `chrome.runtime`. `background.js` re-validates the sender (this extension,
+a real tab, a YouTube URL) plus the payload before writing, then mirrors
+eligible settings to `chrome.storage.sync` in 7 KB chunks with the metadata
+write as the commit marker.
+
 Matched-rule evidence needs the `declarativeNetRequestFeedback` permission,
 which Chrome documents for unpacked-extension debugging. It therefore lives in
 `manifest.dev.json` — a development-only profile — and is absent from the

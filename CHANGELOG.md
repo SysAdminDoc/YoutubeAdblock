@@ -4,6 +4,19 @@ All notable changes to YoutubeAdblock are documented here.
 
 ## [Unreleased]
 
+### Security
+- **Settings moved behind a trusted-context broker**: the MV3 service worker
+  is now the only component that touches `chrome.storage` for settings. The
+  isolated bridge relays a bounded two-verb protocol (`ytab:settings-read` /
+  `ytab:settings-write`) and can no longer write storage itself, so page-world
+  code cannot reach persistence even if it defeats the bridge's own
+  validation. The broker re-validates every request against the sender —
+  same extension, real tab, YouTube URL — and independently re-checks payload
+  shape and size. Sync chunking, the oversized-payload tombstone, commit
+  ordering (chunks first, metadata last), partial-snapshot rejection, and
+  newest-wins conflict resolution all moved into the worker with contract
+  tests.
+
 ## [0.6.0] - 2026-08-14
 
 ### Security

@@ -11,6 +11,248 @@
 
 const YT_ORIGIN_MATCH = /^https?:\/\/([^/]*\.)?(youtube\.com|youtube-nocookie\.com|youtubekids\.com)\//i;
 const DNR_RULESET_ID = 'ytab-network-blocks';
+
+/* =========================================================================
+ * SETTINGS BROKER (trusted context)
+ * =========================================================================
+ * The service worker is the only component that touches chrome.storage for
+ * settings. The isolated bridge relays a two-verb message protocol on
+ * behalf of the page world and cannot write storage itself, so a hostile
+ * page script cannot reach persistence even if it defeats the bridge's own
+ * validation. Every request is re-validated here against the sender: it
+ * must come from this extension, from a real tab, on a YouTube URL.
+ * ===================================================================== */
+
+const SETTINGS_KEY = '__ytab_ext_settings__';
+const LOCAL_META_KEY = '__ytab_ext_settings_meta__';
+const SYNC_META_KEY = '__ytab_ext_settings_sync_meta__';
+const SYNC_CHUNK_PREFIX = '__ytab_ext_settings_sync_chunk_';
+// Generous relative to real settings (single-digit KB) but far below the
+// chrome.storage.local per-item ceiling.
+const MAX_SETTINGS_BYTES = 512 * 1024;
+// chrome.storage.sync allows 8 KB per item and 100 KB total; keep chunks
+// under the item ceiling with headroom for keys and metadata.
+const SYNC_CHUNK_BYTES = 7 * 1024;
+const SYNC_TOTAL_BYTES = 95 * 1024;
+const SYNC_MAX_CHUNKS = 64;
+
+let lastWriteStamp = 0;
+
+function nextWriteStamp() {
+    const now = Date.now();
+    lastWriteStamp = Math.max(now, lastWriteStamp + 1);
+    return lastWriteStamp;
+}
+
+function storageArea(name) {
+    try {
+        return chrome && chrome.storage && chrome.storage[name];
+    } catch (e) {
+        return null;
+    }
+}
+
+function lastErrorText() {
+    try {
+        const err = chrome.runtime && chrome.runtime.lastError;
+        return err ? String(err.message || err) : '';
+    } catch (e) {
+        return '';
+    }
+}
+
+function normalizeSettingsMeta(meta) {
+    if (!meta || typeof meta !== 'object') return { updatedAt: 0, chunkCount: 0, byteLength: 0, oversized: false };
+    const updatedAt = Number(meta.updatedAt);
+    return {
+        updatedAt: Number.isFinite(updatedAt) && updatedAt > 0 ? updatedAt : 0,
+        chunkCount: Number(meta.chunkCount) || 0,
+        byteLength: Number(meta.byteLength) || 0,
+        oversized: Boolean(meta.oversized)
+    };
+}
+
+function syncChunkKeys(count, startAt = 0) {
+    const keys = [];
+    const safeCount = Math.max(0, Math.min(Number(count) || 0, SYNC_MAX_CHUNKS));
+    for (let i = startAt; i < safeCount; i++) keys.push(`${SYNC_CHUNK_PREFIX}${i}`);
+    return keys;
+}
+
+function splitSyncPayload(text) {
+    const chunks = [];
+    for (let i = 0; i < text.length; i += SYNC_CHUNK_BYTES) {
+        chunks.push(text.slice(i, i + SYNC_CHUNK_BYTES));
+    }
+    return chunks;
+}
+
+function areaGet(area, keys) {
+    return new Promise((resolve) => {
+        try {
+            area.get(keys, (items) => resolve(lastErrorText() ? null : (items || {})));
+        } catch (e) {
+            resolve(null);
+        }
+    });
+}
+
+function areaSet(area, items) {
+    return new Promise((resolve) => {
+        try {
+            area.set(items, () => resolve(lastErrorText()));
+        } catch (e) {
+            resolve(String(e && e.message || e));
+        }
+    });
+}
+
+async function removeStaleSyncChunks(previousMeta, keepCount) {
+    const sync = storageArea('sync');
+    if (!sync || !previousMeta) return;
+    const meta = normalizeSettingsMeta(previousMeta);
+    if (!meta.chunkCount || meta.chunkCount <= keepCount) return;
+    const staleKeys = syncChunkKeys(meta.chunkCount, keepCount);
+    if (!staleKeys.length) return;
+    try { sync.remove(staleKeys); } catch (e) { /* sync unavailable */ }
+}
+
+async function mirrorToSync(value, updatedAt) {
+    const sync = storageArea('sync');
+    if (!sync || !value || typeof value !== 'object') return;
+    let serialized = '';
+    try { serialized = JSON.stringify(value); } catch (e) { return; }
+
+    const metaItems = await areaGet(sync, [SYNC_META_KEY]);
+    if (!metaItems) return;
+    const previousMeta = metaItems[SYNC_META_KEY];
+
+    // Oversized payloads stay local-only and leave a tombstone so a stale
+    // cloud snapshot can never overwrite the larger local one.
+    if (serialized.length > SYNC_TOTAL_BYTES) {
+        await areaSet(sync, {
+            [SYNC_META_KEY]: {
+                version: 1,
+                updatedAt,
+                chunkCount: 0,
+                byteLength: serialized.length,
+                oversized: true
+            }
+        });
+        await removeStaleSyncChunks(previousMeta, 0);
+        return;
+    }
+
+    const chunks = splitSyncPayload(serialized);
+    const chunkItems = {};
+    chunks.forEach((chunk, index) => { chunkItems[`${SYNC_CHUNK_PREFIX}${index}`] = chunk; });
+    // Chunks first, metadata last: the metadata write is the commit marker,
+    // so an interrupted write never publishes a half-written snapshot.
+    if (await areaSet(sync, chunkItems)) return;
+    if (await areaSet(sync, {
+        [SYNC_META_KEY]: {
+            version: 1,
+            updatedAt,
+            chunkCount: chunks.length,
+            byteLength: serialized.length,
+            oversized: false
+        }
+    })) return;
+    await removeStaleSyncChunks(previousMeta, chunks.length);
+}
+
+async function readSyncSnapshot() {
+    const sync = storageArea('sync');
+    if (!sync) return null;
+    const metaItems = await areaGet(sync, [SYNC_META_KEY]);
+    if (!metaItems) return null;
+    const meta = normalizeSettingsMeta(metaItems[SYNC_META_KEY]);
+    if (!meta.updatedAt) return null;
+    if (meta.oversized) return { meta, value: undefined, oversized: true };
+    if (!Number.isInteger(meta.chunkCount) || meta.chunkCount < 1 || meta.chunkCount > SYNC_MAX_CHUNKS) return null;
+
+    const keys = syncChunkKeys(meta.chunkCount);
+    const chunkItems = await areaGet(sync, keys);
+    if (!chunkItems) return null;
+    let serialized = '';
+    for (const key of keys) {
+        const chunk = chunkItems[key];
+        if (typeof chunk !== 'string') return null;
+        serialized += chunk;
+    }
+    if (meta.byteLength && serialized.length !== meta.byteLength) return null;
+    try {
+        const value = JSON.parse(serialized);
+        return value && typeof value === 'object' ? { meta, value, oversized: false } : null;
+    } catch (e) {
+        return null;
+    }
+}
+
+function settingsByteLength(value) {
+    try { return JSON.stringify(value).length; } catch (e) { return Infinity; }
+}
+
+async function readSettings() {
+    const local = storageArea('local');
+    if (!local) return { ok: false, error: 'storage unavailable' };
+    const items = await areaGet(local, [SETTINGS_KEY, LOCAL_META_KEY]);
+    if (!items) return { ok: false, error: 'storage read failed' };
+    const localMeta = normalizeSettingsMeta(items[LOCAL_META_KEY]);
+    let value = items[SETTINGS_KEY];
+
+    // A newer snapshot from another signed-in device wins, and is written
+    // back locally so the page world sees one consistent source.
+    const remote = await readSyncSnapshot();
+    if (remote && !remote.oversized && remote.value && remote.meta.updatedAt > localMeta.updatedAt) {
+        const error = await areaSet(local, {
+            [SETTINGS_KEY]: remote.value,
+            [LOCAL_META_KEY]: { updatedAt: remote.meta.updatedAt }
+        });
+        if (!error) value = remote.value;
+    } else if (value && typeof value === 'object' && !localMeta.updatedAt) {
+        // First run after an upgrade from a pre-metadata build: stamp it so
+        // conflict resolution has something to compare.
+        const updatedAt = nextWriteStamp();
+        if (!await areaSet(local, { [LOCAL_META_KEY]: { updatedAt } })) {
+            await mirrorToSync(value, updatedAt);
+        }
+    }
+    return { ok: true, value };
+}
+
+async function writeSettings(value) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+        return { ok: false, error: 'invalid settings payload' };
+    }
+    if (settingsByteLength(value) > MAX_SETTINGS_BYTES) {
+        return { ok: false, error: 'payload too large' };
+    }
+    const local = storageArea('local');
+    if (!local) return { ok: false, error: 'storage unavailable' };
+    const updatedAt = nextWriteStamp();
+    const error = await areaSet(local, {
+        [SETTINGS_KEY]: value,
+        [LOCAL_META_KEY]: { updatedAt }
+    });
+    if (error) return { ok: false, error };
+    await mirrorToSync(value, updatedAt);
+    return { ok: true };
+}
+
+// A settings message is only honored when it comes from this extension's
+// own content script running in a real YouTube tab.
+function isTrustedSettingsSender(sender) {
+    if (!sender || typeof sender !== 'object') return false;
+    try {
+        if (sender.id && chrome.runtime && chrome.runtime.id && sender.id !== chrome.runtime.id) return false;
+    } catch (e) {
+        return false;
+    }
+    const tabId = Number(sender.tab && sender.tab.id);
+    if (!Number.isSafeInteger(tabId) || tabId < 0) return false;
+    return isYouTubeUrl(sender.url || (sender.tab && sender.tab.url));
+}
 const DNR_DIAGNOSTICS_WINDOW_MS = 5 * 60 * 1000;
 const DNR_DIAGNOSTICS_CACHE_MS = 30 * 1000;
 const DNR_DIAGNOSTICS_MAX_CACHE_TABS = 32;
@@ -311,6 +553,19 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (msg.type === 'ytab:check-api-permissions') {
         chrome.permissions.contains({ origins: COMMUNITY_API_ORIGINS }, (result) => {
             sendResponse({ granted: !!result });
+        });
+        return true;
+    }
+    if (msg.type === 'ytab:settings-read' || msg.type === 'ytab:settings-write') {
+        if (!isTrustedSettingsSender(sender)) {
+            sendResponse({ ok: false, error: 'untrusted context' });
+            return;
+        }
+        const work = msg.type === 'ytab:settings-read'
+            ? readSettings()
+            : writeSettings(msg.value);
+        work.then(sendResponse, (e) => {
+            sendResponse({ ok: false, error: String(e && e.message || e) });
         });
         return true;
     }

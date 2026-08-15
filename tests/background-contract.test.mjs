@@ -20,7 +20,45 @@ function createBackgroundEnv(options = {}) {
         status: 'complete'
     };
 
+    const localStore = { ...(options.localStorage || {}) };
+    const syncStore = { ...(options.syncStorage || {}) };
+    const storageCalls = [];
+
+    function makeArea(store, name) {
+        return {
+            get(keys, cb) {
+                storageCalls.push(`${name}.get`);
+                const list = Array.isArray(keys) ? keys : [keys];
+                const out = {};
+                for (const key of list) if (key in store) out[key] = store[key];
+                cb(out);
+            },
+            set(items, cb) {
+                storageCalls.push(`${name}.set`);
+                if (options.failWrites) {
+                    mockChrome.runtime.lastError = { message: 'QUOTA_BYTES quota exceeded' };
+                    if (cb) cb();
+                    mockChrome.runtime.lastError = null;
+                    return;
+                }
+                Object.assign(store, items);
+                if (cb) cb();
+            },
+            remove(keys, cb) {
+                storageCalls.push(`${name}.remove`);
+                const list = Array.isArray(keys) ? keys : [keys];
+                for (const key of list) delete store[key];
+                if (cb) cb();
+            }
+        };
+    }
+
     const mockChrome = {
+        storage: {
+            local: makeArea(localStore, 'local'),
+            sync: options.syncUnavailable ? undefined : makeArea(syncStore, 'sync'),
+            onChanged: { addListener() {} }
+        },
         action: {
             onClicked: { addListener(fn) { listeners.actionClicked = fn; } }
         },
@@ -33,6 +71,7 @@ function createBackgroundEnv(options = {}) {
             onClicked: { addListener(fn) { listeners.contextClicked = fn; } }
         },
         runtime: {
+            id: 'ytab-test-extension',
             lastError: null,
             onInstalled: { addListener(fn) { listeners.installed = fn; } },
             onStartup: { addListener(fn) { listeners.startup = fn; } },
@@ -85,12 +124,23 @@ function createBackgroundEnv(options = {}) {
 
     vm.runInContext(backgroundSource, sandbox, { filename: 'background.js' });
 
+    function sendSettingsMessage(message, sender) {
+        return new Promise((resolve) => {
+            const returned = listeners.message(message, sender, resolve);
+            if (returned !== true) resolve(undefined);
+        });
+    }
+
     return {
         listeners,
         sentMessages,
         createdMenus,
         dnrMatchedRuleCalls,
-        flush: () => new Promise(resolve => setTimeout(resolve, 0))
+        localStore,
+        syncStore,
+        storageCalls,
+        sendSettingsMessage,
+        flush: () => new Promise(resolve => setTimeout(resolve, 20))
     };
 }
 
@@ -215,4 +265,186 @@ test('Block This Channel context menu dispatches ytab:block-channel to active Yo
     assert.equal(env.sentMessages.length, 1);
     assert.equal(env.sentMessages[0].tabId, 42);
     assert.equal(env.sentMessages[0].payload.type, 'ytab:block-channel');
+});
+
+// ========== settings broker (trusted context) ==========
+
+const SETTINGS_KEY = '__ytab_ext_settings__';
+const LOCAL_META_KEY = '__ytab_ext_settings_meta__';
+const SYNC_META_KEY = '__ytab_ext_settings_sync_meta__';
+const SYNC_CHUNK_PREFIX = '__ytab_ext_settings_sync_chunk_';
+
+const trustedSender = {
+    id: 'ytab-test-extension',
+    url: 'https://www.youtube.com/watch?v=test',
+    tab: { id: 7, url: 'https://www.youtube.com/watch?v=test' }
+};
+
+function buildSyncStore(value, updatedAt) {
+    const serialized = JSON.stringify(value);
+    const chunkCount = Math.ceil(serialized.length / (7 * 1024));
+    const store = {
+        [SYNC_META_KEY]: { version: 1, updatedAt, chunkCount, byteLength: serialized.length, oversized: false }
+    };
+    for (let i = 0; i < chunkCount; i++) {
+        store[`${SYNC_CHUNK_PREFIX}${i}`] = serialized.slice(i * 7 * 1024, (i + 1) * 7 * 1024);
+    }
+    return store;
+}
+
+function readSyncedValue(env) {
+    const meta = env.syncStore[SYNC_META_KEY];
+    if (!meta || meta.oversized) return null;
+    let serialized = '';
+    for (let i = 0; i < meta.chunkCount; i++) serialized += env.syncStore[`${SYNC_CHUNK_PREFIX}${i}`];
+    return JSON.parse(serialized);
+}
+
+test('broker rejects settings messages from an untrusted sender', async () => {
+    const env = createBackgroundEnv();
+    for (const sender of [
+        undefined,
+        {},
+        { id: 'ytab-test-extension', url: 'https://evil.example/' },
+        { id: 'ytab-test-extension', url: 'https://www.youtube.com/', tab: undefined },
+        { id: 'some-other-extension', url: 'https://www.youtube.com/', tab: { id: 3 } },
+        { id: 'ytab-test-extension', url: 'https://notyoutube.com/watch', tab: { id: 3 } }
+    ]) {
+        const response = await env.sendSettingsMessage(
+            { type: 'ytab:settings-write', value: { enabled: false } }, sender);
+        assert.equal(response.ok, false, JSON.stringify(sender));
+        assert.match(response.error, /untrusted context/);
+    }
+    assert.equal(env.localStore[SETTINGS_KEY], undefined, 'no untrusted write may reach storage');
+});
+
+test('broker writes settings locally and stamps monotonic metadata', async () => {
+    const env = createBackgroundEnv();
+    const first = await env.sendSettingsMessage(
+        { type: 'ytab:settings-write', value: { enabled: true } }, trustedSender);
+    assert.equal(first.ok, true);
+    assert.deepEqual(env.localStore[SETTINGS_KEY], { enabled: true });
+    const firstStamp = env.localStore[LOCAL_META_KEY].updatedAt;
+    assert.ok(firstStamp > 0);
+
+    const second = await env.sendSettingsMessage(
+        { type: 'ytab:settings-write', value: { enabled: false } }, trustedSender);
+    assert.equal(second.ok, true);
+    assert.ok(env.localStore[LOCAL_META_KEY].updatedAt > firstStamp,
+        'each accepted write must advance the stamp so conflict resolution is deterministic');
+});
+
+test('broker rejects malformed and oversized payloads before touching storage', async () => {
+    const env = createBackgroundEnv();
+    for (const value of [null, 'string', 42, ['array']]) {
+        const response = await env.sendSettingsMessage({ type: 'ytab:settings-write', value }, trustedSender);
+        assert.equal(response.ok, false);
+        assert.match(response.error, /invalid settings payload/);
+    }
+    const huge = { channel_blocklist: 'x'.repeat(600 * 1024) };
+    const response = await env.sendSettingsMessage({ type: 'ytab:settings-write', value: huge }, trustedSender);
+    assert.equal(response.ok, false);
+    assert.match(response.error, /payload too large/);
+    assert.equal(env.localStore[SETTINGS_KEY], undefined);
+});
+
+test('broker mirrors accepted writes to sync in bounded chunks, metadata last', async () => {
+    const env = createBackgroundEnv();
+    const value = {
+        channel_blocklist: 'Channel '.repeat(1200),
+        feature_overrides: { channelBlocker: true }
+    };
+    const response = await env.sendSettingsMessage({ type: 'ytab:settings-write', value }, trustedSender);
+    assert.equal(response.ok, true);
+    await env.flush();
+
+    const meta = env.syncStore[SYNC_META_KEY];
+    assert.ok(meta, 'sync metadata should be published');
+    assert.equal(meta.oversized, false);
+    assert.ok(meta.chunkCount >= 2, 'payload should span multiple chunks');
+    assert.deepEqual(readSyncedValue(env), value);
+    const syncSets = env.storageCalls.filter(c => c === 'sync.set');
+    assert.ok(syncSets.length >= 2, 'chunks and metadata are separate writes');
+});
+
+test('broker keeps oversized payloads local-only and publishes a tombstone', async () => {
+    const env = createBackgroundEnv();
+    const value = { channel_blocklist: 'x'.repeat(110 * 1024) };
+    const response = await env.sendSettingsMessage({ type: 'ytab:settings-write', value }, trustedSender);
+    assert.equal(response.ok, true);
+    await env.flush();
+
+    assert.deepEqual(env.localStore[SETTINGS_KEY], value, 'oversized settings still persist locally');
+    const meta = env.syncStore[SYNC_META_KEY];
+    assert.equal(meta.oversized, true);
+    assert.equal(meta.chunkCount, 0);
+    assert.equal(env.syncStore[`${SYNC_CHUNK_PREFIX}0`], undefined);
+});
+
+test('broker read adopts a newer snapshot from another device', async () => {
+    const remote = { enabled: false, keyword_blocklist: 'promo' };
+    const env = createBackgroundEnv({
+        localStorage: { [SETTINGS_KEY]: { enabled: true }, [LOCAL_META_KEY]: { updatedAt: 1000 } },
+        syncStorage: buildSyncStore(remote, 2000)
+    });
+    const response = await env.sendSettingsMessage({ type: 'ytab:settings-read' }, trustedSender);
+    assert.equal(response.ok, true);
+    assert.deepEqual(JSON.parse(JSON.stringify(response.value)), remote);
+    assert.deepEqual(JSON.parse(JSON.stringify(env.localStore[SETTINGS_KEY])), remote,
+        'the winning snapshot is written back locally');
+    assert.equal(env.localStore[LOCAL_META_KEY].updatedAt, 2000);
+});
+
+test('broker read keeps local settings when the local stamp is newer', async () => {
+    const local = { enabled: true, channel_blocklist: 'local' };
+    const env = createBackgroundEnv({
+        localStorage: { [SETTINGS_KEY]: local, [LOCAL_META_KEY]: { updatedAt: 3000 } },
+        syncStorage: buildSyncStore({ enabled: false, channel_blocklist: 'remote' }, 2000)
+    });
+    const response = await env.sendSettingsMessage({ type: 'ytab:settings-read' }, trustedSender);
+    assert.deepEqual(response.value, local);
+    assert.deepEqual(env.localStore[SETTINGS_KEY], local);
+});
+
+test('broker read ignores an oversized remote tombstone', async () => {
+    const local = { enabled: true, channel_blocklist: 'local' };
+    const env = createBackgroundEnv({
+        localStorage: { [SETTINGS_KEY]: local, [LOCAL_META_KEY]: { updatedAt: 1000 } },
+        syncStorage: { [SYNC_META_KEY]: { version: 1, updatedAt: 5000, chunkCount: 0, byteLength: 999999, oversized: true } }
+    });
+    const response = await env.sendSettingsMessage({ type: 'ytab:settings-read' }, trustedSender);
+    assert.deepEqual(response.value, local, 'a tombstone must never replace richer local settings');
+});
+
+test('broker read rejects a partially written remote snapshot', async () => {
+    const local = { enabled: true };
+    const partial = buildSyncStore({ enabled: false, channel_blocklist: 'y'.repeat(9000) }, 4000);
+    delete partial[`${SYNC_CHUNK_PREFIX}1`];
+    const env = createBackgroundEnv({
+        localStorage: { [SETTINGS_KEY]: local, [LOCAL_META_KEY]: { updatedAt: 1000 } },
+        syncStorage: partial
+    });
+    const response = await env.sendSettingsMessage({ type: 'ytab:settings-read' }, trustedSender);
+    assert.deepEqual(response.value, local, 'an incomplete chunk set must be discarded, not partially applied');
+});
+
+test('broker still serves settings when sync is unavailable', async () => {
+    const env = createBackgroundEnv({
+        syncUnavailable: true,
+        localStorage: { [SETTINGS_KEY]: { enabled: true }, [LOCAL_META_KEY]: { updatedAt: 10 } }
+    });
+    const read = await env.sendSettingsMessage({ type: 'ytab:settings-read' }, trustedSender);
+    assert.equal(read.ok, true);
+    assert.deepEqual(read.value, { enabled: true });
+    const write = await env.sendSettingsMessage(
+        { type: 'ytab:settings-write', value: { enabled: false } }, trustedSender);
+    assert.equal(write.ok, true, 'sync being unavailable must not fail a local save');
+});
+
+test('broker reports a failed local write instead of claiming success', async () => {
+    const env = createBackgroundEnv({ failWrites: true });
+    const response = await env.sendSettingsMessage(
+        { type: 'ytab:settings-write', value: { enabled: true } }, trustedSender);
+    assert.equal(response.ok, false);
+    assert.match(response.error, /quota/i);
 });

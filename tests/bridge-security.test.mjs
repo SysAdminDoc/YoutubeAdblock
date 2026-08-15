@@ -75,16 +75,30 @@ function createBridgeEnv(options = {}) {
             },
             sendMessage(message, cb) {
                 runtimeMessages.push(message);
-                const response = message?.type === 'ytab:get-dnr-diagnostics'
-                    ? (options.dnrResponse || {
+                let response;
+                if (message?.type === 'ytab:get-dnr-diagnostics') {
+                    response = options.dnrResponse || {
                         status: 'unavailable',
                         reason: 'api-unavailable',
                         windowMinutes: 5,
                         total: 0,
                         matches: [],
                         lastMatchedAt: 0
-                    })
-                    : { granted: false };
+                    };
+                } else if (message?.type === 'ytab:settings-read') {
+                    response = options.brokerReadError
+                        ? { ok: false, error: options.brokerReadError }
+                        : { ok: true, value: storageData[ALLOWED_KEY] };
+                } else if (message?.type === 'ytab:settings-write') {
+                    if (options.brokerWriteError) {
+                        response = { ok: false, error: options.brokerWriteError };
+                    } else {
+                        storageData[ALLOWED_KEY] = message.value;
+                        response = { ok: true };
+                    }
+                } else {
+                    response = { granted: false };
+                }
                 if (cb) cb(response);
             }
         },
@@ -251,14 +265,8 @@ test('accepts valid set within size limit', async () => {
     assert.deepEqual(env.storageData[ALLOWED_KEY], { enabled: true });
 });
 
-test('GET coalescing: multiple GETs produce one storage.local.get call', async () => {
-    const storageGetCalls = [];
+test('GET coalescing: multiple GETs produce one broker read', async () => {
     const env = createBridgeEnv();
-    const origGet = env.mockChrome.storage.local.get;
-    env.mockChrome.storage.local.get = function (keys, cb) {
-        storageGetCalls.push(keys);
-        origGet(keys, cb);
-    };
     env.storageData[ALLOWED_KEY] = { test: true };
 
     env.sendRequest({ id: 'g1', op: 'get', key: ALLOWED_KEY });
@@ -267,14 +275,14 @@ test('GET coalescing: multiple GETs produce one storage.local.get call', async (
 
     await env.flush();
 
-    assert.equal(storageGetCalls.length, 1);
-    const g1 = env.responses.find(r => r.id === 'g1');
-    const g2 = env.responses.find(r => r.id === 'g2');
-    const g3 = env.responses.find(r => r.id === 'g3');
-    assert.ok(g1 && g1.value);
-    assert.ok(g2 && g2.value);
-    assert.ok(g3 && g3.value);
-    assert.deepEqual(g1.value, { test: true });
+    const reads = env.runtimeMessages.filter(m => m.type === 'ytab:settings-read');
+    // One hydration read at startup plus exactly one coalesced read.
+    assert.equal(reads.length, 2, 'three page GETs must coalesce into a single broker read');
+    for (const id of ['g1', 'g2', 'g3']) {
+        const response = env.responses.find(r => r.id === id);
+        assert.ok(response, `missing response for ${id}`);
+        assert.deepEqual(response.value, { test: true });
+    }
 });
 
 test('duplicate request IDs are silently dropped', async () => {
@@ -297,96 +305,78 @@ test('rate limiting kicks in after 30 ops in one second', () => {
     assert.ok(rateLimited.length <= 5);
 });
 
-test('write debouncing: rapid writes coalesce into one storage.local.set call', async () => {
-    const setCalls = [];
+test('write debouncing: rapid writes coalesce into one broker write', async () => {
     const env = createBridgeEnv();
-    const origSet = env.mockChrome.storage.local.set;
-    env.mockChrome.storage.local.set = function (items, cb) {
-        setCalls.push(items);
-        origSet(items, cb);
-    };
 
     env.sendRequest({ id: 'w1', op: 'set', key: ALLOWED_KEY, value: { a: 1 } });
     env.sendRequest({ id: 'w2', op: 'set', key: ALLOWED_KEY, value: { a: 2 } });
 
     await env.flush();
 
-    assert.equal(setCalls.length, 1);
-    assert.deepEqual(setCalls[0][ALLOWED_KEY], { a: 2 });
+    const writes = env.runtimeMessages.filter(m => m.type === 'ytab:settings-write');
+    assert.equal(writes.length, 1);
+    assert.deepEqual(writes[0].value, { a: 2 });
 });
 
-test('valid writes mirror to chrome.storage.sync using bounded chunks', async () => {
+test('the bridge never touches chrome.storage for settings', async () => {
     const env = createBridgeEnv();
-    const value = {
-        channel_blocklist: 'Channel '.repeat(1200),
-        feature_overrides: { channelBlocker: true, keywordBlocker: true }
-    };
+    const touched = [];
+    for (const area of ['local', 'sync']) {
+        for (const op of ['get', 'set', 'remove']) {
+            const original = env.mockChrome.storage[area][op];
+            if (typeof original !== 'function') continue;
+            env.mockChrome.storage[area][op] = function (...args) {
+                touched.push(`${area}.${op}`);
+                return original.apply(this, args);
+            };
+        }
+    }
 
-    env.sendRequest({ id: 'sync1', op: 'set', key: ALLOWED_KEY, value });
-
+    env.sendRequest({ id: 'nostore1', op: 'set', key: ALLOWED_KEY, value: { a: 1 } });
+    env.sendRequest({ id: 'nostore2', op: 'get', key: ALLOWED_KEY });
     await env.flush();
 
-    const r = env.responses.find(r => r.id === 'sync1');
-    assert.ok(r);
-    assert.equal(r.ok, true);
-    assert.deepEqual(env.storageData[ALLOWED_KEY], value);
-    assert.ok(env.storageData[LOCAL_META_KEY].updatedAt > 0);
-    const meta = env.syncStorageData[SYNC_META_KEY];
-    assert.ok(meta);
-    assert.equal(meta.oversized, false);
-    assert.ok(meta.chunkCount >= 2, 'expected payload to span multiple sync chunks');
-    assert.deepEqual(readSyncedPayload(env), value);
+    assert.deepEqual(touched, [],
+        `bridge must delegate storage to the broker, but called: ${touched.join(', ')}`);
+    assert.ok(env.runtimeMessages.some(m => m.type === 'ytab:settings-write'));
 });
 
-test('oversized sync payloads still save locally and write an oversized sync tombstone', async () => {
-    const env = createBridgeEnv();
-    const value = { channel_blocklist: 'x'.repeat(110 * 1024) };
-
-    env.sendRequest({ id: 'big1', op: 'set', key: ALLOWED_KEY, value });
-
+test('a failing broker write surfaces an error to the page instead of silently succeeding', async () => {
+    const env = createBridgeEnv({ brokerWriteError: 'untrusted context' });
+    env.sendRequest({ id: 'fail1', op: 'set', key: ALLOWED_KEY, value: { a: 1 } });
     await env.flush();
-
-    const r = env.responses.find(r => r.id === 'big1');
-    assert.ok(r);
-    assert.equal(r.ok, true);
-    assert.deepEqual(env.storageData[ALLOWED_KEY], value);
-    const meta = env.syncStorageData[SYNC_META_KEY];
-    assert.ok(meta);
-    assert.equal(meta.oversized, true);
-    assert.equal(meta.chunkCount, 0);
-    assert.equal(env.syncStorageData[`${SYNC_CHUNK_PREFIX}0`], undefined);
+    const response = env.responses.find(r => r.id === 'fail1');
+    assert.ok(response);
+    assert.equal(response.ok, undefined);
+    assert.match(response.error, /untrusted context/);
 });
 
-test('startup hydration applies a newer chrome.storage.sync snapshot', async () => {
-    const remote = { enabled: false, keyword_blocklist: 'promo\nsponsored' };
-    const env = createBridgeEnv({
-        syncStorage: buildSyncStorage(remote, 2000)
-    });
-
+test('a failing broker read surfaces an error to the page', async () => {
+    const env = createBridgeEnv({ brokerReadError: 'storage unavailable' });
+    env.sendRequest({ id: 'failread', op: 'get', key: ALLOWED_KEY });
     await env.flush();
+    const response = env.responses.find(r => r.id === 'failread');
+    assert.ok(response);
+    assert.match(response.error, /storage unavailable/);
+});
 
-    assert.deepEqual(env.storageData[ALLOWED_KEY], remote);
-    assert.equal(env.storageData[LOCAL_META_KEY].updatedAt, 2000);
-    assert.equal(env.localStorageData[ALLOWED_KEY], JSON.stringify(remote));
+test('startup hydration asks the broker and projects the result to the page', async () => {
+    const env = createBridgeEnv({ localStorage: { [ALLOWED_KEY]: { enabled: false, channel_blocklist: 'x' } } });
+    await env.flush();
+    assert.ok(env.runtimeMessages.some(m => m.type === 'ytab:settings-read'));
+    assert.equal(env.localStorageData[ALLOWED_KEY], JSON.stringify({ enabled: false, channel_blocklist: 'x' }));
     const syncEvents = env.dispatched.filter(d => d.type === EVT_SYNC);
-    assert.ok(syncEvents.some(d => d.detail[ALLOWED_KEY].keyword_blocklist === remote.keyword_blocklist));
+    assert.ok(syncEvents.length > 0, 'page world must be told about hydrated settings');
 });
 
-test('startup hydration keeps local settings when local metadata is newer than sync', async () => {
-    const localValue = { enabled: true, channel_blocklist: 'local' };
-    const remote = { enabled: false, channel_blocklist: 'remote' };
-    const env = createBridgeEnv({
-        localStorage: {
-            [ALLOWED_KEY]: localValue,
-            [LOCAL_META_KEY]: { updatedAt: 3000 }
-        },
-        syncStorage: buildSyncStorage(remote, 2000)
-    });
-
+test('a sync-area change re-asks the broker rather than reconciling locally', async () => {
+    const env = createBridgeEnv();
     await env.flush();
-
-    assert.deepEqual(env.storageData[ALLOWED_KEY], localValue);
-    assert.equal(env.localStorageData[ALLOWED_KEY], JSON.stringify(localValue));
+    const before = env.runtimeMessages.filter(m => m.type === 'ytab:settings-read').length;
+    env.storageChangedCb({ [SYNC_META_KEY]: { newValue: { updatedAt: 9000 } } }, 'sync');
+    await env.flush();
+    const after = env.runtimeMessages.filter(m => m.type === 'ytab:settings-read').length;
+    assert.equal(after, before + 1);
 });
 
 test('service-worker message relay dispatches correct event types', () => {
