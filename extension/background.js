@@ -36,7 +36,90 @@ const SYNC_CHUNK_BYTES = 7 * 1024;
 const SYNC_TOTAL_BYTES = 95 * 1024;
 const SYNC_MAX_CHUNKS = 64;
 
+/* -------------------------------------------------------------------------
+ * Preference / runtime split
+ * -------------------------------------------------------------------------
+ * Only user-authored preferences are eligible for chrome.storage.sync.
+ * Device-local runtime state (hot counters, rule and signature caches,
+ * integrity results, replay floors, onboarding flags) stays on the device:
+ *   - stats persist every couple of seconds; mirroring them would blow
+ *     through Chrome's 1,800 writes/hour sync quota on its own,
+ *   - caches and integrity state describe *this* device's last refresh,
+ *   - signed-update revision floors are anti-rollback state and must never
+ *     be lowered by another device,
+ *   - consent is deliberately per-install: allowing a third-party service
+ *     on one machine must not silently allow it everywhere.
+ * A remote snapshot therefore merges over local preferences and can never
+ * erase a local-only key.
+ * ---------------------------------------------------------------------- */
+
+const PREFERENCE_SCHEMA_VERSION = 2;
+const SYNCABLE_PREFERENCE_KEYS = Object.freeze([
+    'ytab_enabled',
+    'ytab_feature_overrides',
+    'ytab_channel_blocklist',
+    'ytab_keyword_blocklist',
+    'ytab_ad_allowlist',
+    'ytab_duration_min',
+    'ytab_duration_max',
+    'ytab_filter_url',
+    'ytab_volume_boost'
+]);
+const SYNCABLE_PREFERENCE_SET = new Set(SYNCABLE_PREFERENCE_KEYS);
+
+function projectSyncablePreferences(settings) {
+    const out = {};
+    if (!settings || typeof settings !== 'object') return out;
+    for (const key of SYNCABLE_PREFERENCE_KEYS) {
+        if (Object.prototype.hasOwnProperty.call(settings, key)) out[key] = settings[key];
+    }
+    return out;
+}
+
+// Remote preferences win over local preferences; every key the allowlist
+// does not cover is local-only and is preserved untouched.
+function mergeRemotePreferences(localSettings, remoteSnapshot) {
+    const merged = (localSettings && typeof localSettings === 'object') ? { ...localSettings } : {};
+    const remote = (remoteSnapshot && typeof remoteSnapshot === 'object') ? remoteSnapshot : {};
+    // A version-1 snapshot carried the whole settings object; take only its
+    // preference keys so legacy payloads cannot reintroduce foreign runtime
+    // state. Applying it twice yields the same result.
+    for (const key of SYNCABLE_PREFERENCE_KEYS) {
+        if (Object.prototype.hasOwnProperty.call(remote, key)) merged[key] = remote[key];
+    }
+    return merged;
+}
+
+// chrome.storage quotas are counted in UTF-8 bytes, not UTF-16 code units,
+// so a blocklist full of non-ASCII channel names must not be undercounted.
+function utf8ByteLength(text) {
+    if (typeof TextEncoder === 'function') {
+        try { return new TextEncoder().encode(text).length; } catch (e) { /* fall through */ }
+    }
+    let bytes = 0;
+    for (let i = 0; i < text.length; i++) {
+        const code = text.codePointAt(i);
+        if (code <= 0x7f) bytes += 1;
+        else if (code <= 0x7ff) bytes += 2;
+        else if (code <= 0xffff) bytes += 3;
+        else { bytes += 4; i++; }
+    }
+    return bytes;
+}
+
+// Cheap, stable checksum so a reader can reject a snapshot whose chunks do
+// not reassemble into what the writer committed.
+function checksumText(text) {
+    let hash = 0x811c9dc5;
+    for (let i = 0; i < text.length; i++) {
+        hash ^= text.charCodeAt(i);
+        hash = Math.imul(hash, 0x01000193) >>> 0;
+    }
+    return hash.toString(16);
+}
+
 let lastWriteStamp = 0;
+let lastMirroredPreferences = null;
 
 function nextWriteStamp() {
     const now = Date.now();
@@ -68,6 +151,8 @@ function normalizeSettingsMeta(meta) {
         updatedAt: Number.isFinite(updatedAt) && updatedAt > 0 ? updatedAt : 0,
         chunkCount: Number(meta.chunkCount) || 0,
         byteLength: Number(meta.byteLength) || 0,
+        checksum: typeof meta.checksum === 'string' ? meta.checksum : '',
+        version: Number(meta.version) || 1,
         oversized: Boolean(meta.oversized)
     };
 }
@@ -120,8 +205,15 @@ async function removeStaleSyncChunks(previousMeta, keepCount) {
 async function mirrorToSync(value, updatedAt) {
     const sync = storageArea('sync');
     if (!sync || !value || typeof value !== 'object') return;
+    // Only user-authored preferences leave the device.
+    const preferences = projectSyncablePreferences(value);
     let serialized = '';
-    try { serialized = JSON.stringify(value); } catch (e) { return; }
+    try { serialized = JSON.stringify(preferences); } catch (e) { return; }
+    // Runtime-only churn (stats ticking every couple of seconds) must not
+    // consume the sync write quota when no preference actually changed.
+    if (lastMirroredPreferences === serialized) return;
+    lastMirroredPreferences = serialized;
+    const byteLength = utf8ByteLength(serialized);
 
     const metaItems = await areaGet(sync, [SYNC_META_KEY]);
     if (!metaItems) return;
@@ -129,13 +221,14 @@ async function mirrorToSync(value, updatedAt) {
 
     // Oversized payloads stay local-only and leave a tombstone so a stale
     // cloud snapshot can never overwrite the larger local one.
-    if (serialized.length > SYNC_TOTAL_BYTES) {
+    if (byteLength > SYNC_TOTAL_BYTES) {
         await areaSet(sync, {
             [SYNC_META_KEY]: {
-                version: 1,
+                version: PREFERENCE_SCHEMA_VERSION,
                 updatedAt,
                 chunkCount: 0,
-                byteLength: serialized.length,
+                byteLength,
+                checksum: checksumText(serialized),
                 oversized: true
             }
         });
@@ -151,10 +244,11 @@ async function mirrorToSync(value, updatedAt) {
     if (await areaSet(sync, chunkItems)) return;
     if (await areaSet(sync, {
         [SYNC_META_KEY]: {
-            version: 1,
+            version: PREFERENCE_SCHEMA_VERSION,
             updatedAt,
             chunkCount: chunks.length,
-            byteLength: serialized.length,
+            byteLength,
+            checksum: checksumText(serialized),
             oversized: false
         }
     })) return;
@@ -180,7 +274,12 @@ async function readSyncSnapshot() {
         if (typeof chunk !== 'string') return null;
         serialized += chunk;
     }
-    if (meta.byteLength && serialized.length !== meta.byteLength) return null;
+    // A version-1 writer counted UTF-16 code units; accept either accounting
+    // so an older device's snapshot still validates.
+    if (meta.byteLength &&
+        utf8ByteLength(serialized) !== meta.byteLength &&
+        serialized.length !== meta.byteLength) return null;
+    if (meta.checksum && checksumText(serialized) !== meta.checksum) return null;
     try {
         const value = JSON.parse(serialized);
         return value && typeof value === 'object' ? { meta, value, oversized: false } : null;
@@ -205,11 +304,14 @@ async function readSettings() {
     // back locally so the page world sees one consistent source.
     const remote = await readSyncSnapshot();
     if (remote && !remote.oversized && remote.value && remote.meta.updatedAt > localMeta.updatedAt) {
+        // Merge, never replace: a remote snapshot carries preferences only,
+        // so device-local runtime state must survive the update.
+        const merged = mergeRemotePreferences(value, remote.value);
         const error = await areaSet(local, {
-            [SETTINGS_KEY]: remote.value,
+            [SETTINGS_KEY]: merged,
             [LOCAL_META_KEY]: { updatedAt: remote.meta.updatedAt }
         });
-        if (!error) value = remote.value;
+        if (!error) value = merged;
     } else if (value && typeof value === 'object' && !localMeta.updatedAt) {
         // First run after an upgrade from a pre-metadata build: stamp it so
         // conflict resolution has something to compare.

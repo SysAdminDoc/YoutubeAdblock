@@ -4,6 +4,22 @@ All notable changes to YoutubeAdblock are documented here.
 
 ## [Unreleased]
 
+### Fixed
+- **Synced preferences separated from device-local state**: only a versioned
+  allowlist of user-authored preferences (protection switch, feature
+  overrides, blocklists, allowlist, duration bounds, filter URL, volume
+  boost) reaches `chrome.storage.sync`. Stats, rule and signature caches,
+  integrity results, signed-update revision floors, consent decisions, and
+  onboarding flags stay on the device. Stats tick every couple of seconds and
+  previously dragged the whole object into sync on each save; runtime-only
+  changes now produce no sync write at all, which keeps the extension clear
+  of Chrome's 1,800 writes/hour quota. A remote snapshot merges over local
+  preferences instead of replacing the object, so a second device can no
+  longer erase local-only state, downgrade an anti-rollback floor, or import
+  another machine's consent. Sync metadata carries a schema version and
+  checksum, byte accounting is UTF-8, and legacy version-1 snapshots
+  contribute only their preference keys.
+
 ### Security
 - **Settings moved behind a trusted-context broker**: the MV3 service worker
   is now the only component that touches `chrome.storage` for settings. The

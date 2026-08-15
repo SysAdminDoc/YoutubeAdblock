@@ -446,3 +446,41 @@ test('release publication guard verifies GitHub release assets and checksums', (
     assert.match(buildRelease, /VerifyPublication/);
     assert.match(buildRelease, /--verify-publication/);
 });
+
+
+test('sync allowlist covers only user-authored preferences', () => {
+    const background = read(path.join('extension', 'background.js'));
+    const match = background.match(/const SYNCABLE_PREFERENCE_KEYS = Object\.freeze\(\[([\s\S]*?)\]\)/);
+    assert.ok(match, 'expected a frozen sync allowlist in background.js');
+    const allowlisted = [...match[1].matchAll(/'([^']+)'/g)].map(m => m[1]);
+
+    // Device-local runtime state must never appear in the allowlist.
+    const forbidden = [
+        'ytab_stats',
+        'ytab_filters_cache',
+        'ytab_filters_cache_time',
+        'ytab_filters_cache_url',
+        'ytab_filters_integrity',
+        'ytab_filters_integrity_message',
+        'ytab_webpack_signature_cache',
+        'ytab_webpack_signature_cache_time',
+        'ytab_community_consent',
+        'ytab_community_consent_notified',
+        'ytab_welcomed'
+    ];
+    for (const key of forbidden) {
+        assert.equal(allowlisted.includes(key), false,
+            `${key} is device-local runtime state and must not sync`);
+    }
+    // Anti-rollback floors are written with a computed key; guard the prefix.
+    assert.equal(allowlisted.some(k => k.startsWith('ytab_signed_revision')), false,
+        'signed-update revision floors must never sync');
+
+    // Every allowlisted key must be a real setting the userscript writes.
+    const userscript = read('YoutubeAdblock.user.js');
+    for (const key of allowlisted) {
+        const bare = key.replace(/^ytab_/, '');
+        assert.match(userscript, new RegExp(`['\`]${bare}['\`]`),
+            `allowlisted sync key ${key} does not correspond to a known setting`);
+    }
+});

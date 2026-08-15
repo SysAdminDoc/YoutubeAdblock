@@ -54,6 +54,15 @@ a real tab, a YouTube URL) plus the payload before writing, then mirrors
 eligible settings to `chrome.storage.sync` in 7 KB chunks with the metadata
 write as the commit marker.
 
+Only a versioned allowlist of user-authored preferences is eligible for sync:
+the protection switch, feature overrides, channel/keyword blocklists, the ad
+allowlist, duration bounds, the filter URL, and volume boost. Everything else
+is device-local — stats, rule and signature caches, integrity state,
+signed-update revision floors, community-service consent, and onboarding
+flags. Consent is deliberately per-install so allowing a third-party service
+on one machine does not allow it everywhere. Incoming snapshots merge over
+local preferences and never remove a local-only key.
+
 Matched-rule evidence needs the `declarativeNetRequestFeedback` permission,
 which Chrome documents for unpacked-extension debugging. It therefore lives in
 `manifest.dev.json` — a development-only profile — and is absent from the

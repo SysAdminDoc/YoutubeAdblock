@@ -77,13 +77,6 @@ Incomplete, actionable work only. Completed work belongs in `CHANGELOG.md`. Ever
 
 ### P0
 
-- [ ] P0 — Separate synchronized preferences from device-local runtime state
-  Why: After the existing trusted-context broker closes the page boundary, the extension still mirrors one whole settings object, including hot stats and caches, so two-part sync writes can exceed Chrome’s 1,800 writes/hour quota and a newer snapshot can overwrite preferences or local-only state.
-  Evidence: YoutubeAdblock.user.js:1177-1190; Build-Extension.ps1:118-154; extension/bridge.js:124-129,187-247,273-285; Chrome Storage API.
-  Touches: YoutubeAdblock.user.js; Build-Extension.ps1; extension/background.js; extension/bridge.js; tests/bridge-security.test.mjs; tests/repo-contract.test.mjs; README.md; extension/README.md.
-  Acceptance: a versioned allowlist syncs only user-authored preferences; stats, rule/signature caches, integrity state, cooldowns, and onboarding state remain local or session-only; UTF-8 byte accounting respects per-item/total quotas; generation IDs, checksum, and a final commit marker prevent partial reads; concurrent-device merges cannot erase local-only keys; migration from the current version-1 snapshot is idempotent; tests cover sustained stats, quota errors, Unicode boundaries, interrupted writes, and competing device updates.
-  Complexity: L
-
 ### P1
 
 ### P2
