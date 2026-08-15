@@ -14,6 +14,15 @@ All notable changes to YoutubeAdblock are documented here.
   rules. `tools/sign-filter-manifest.mjs` emits and verifies the new
   envelope plus a detached `.manifest.json.sig`.
 
+### Added
+- **SABR-only response detection**: player responses that advertise formats
+  without per-format URLs and deliver media through `serverAbrStreamingUrl`
+  are detected and counted. On those sessions ad and content bytes share one
+  server-negotiated stream, so Diagnostics now states that URL-shaped
+  classification has no signal instead of implying it succeeded. JSON
+  pruning and cosmetic cleanup continue unchanged, and no playback-affecting
+  guess is made.
+
 ### Security
 - **Compliance dialogs are never hidden or dismissed**: YouTube's
   pre-playback age/identity verification prompts look structurally like the

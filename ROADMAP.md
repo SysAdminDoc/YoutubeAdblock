@@ -116,13 +116,6 @@ Incomplete, actionable work only. Completed work belongs in `CHANGELOG.md`. Ever
   Acceptance: users can pause the current tab/session or choose a short timed pause with a visible scope and countdown; the state is stored only in memory, sessionStorage, or chrome.storage.session and is excluded from sync/export; expiry, tab close, extension restart, and an explicit Resume restore the documented engine set; persistent global disable remains a separate deliberate action; tests prove a pause cannot silently become permanent or leak to another tab/device.
   Complexity: M
 
-- [ ] P2 — Detect SABR-only player responses and degrade gracefully
-  Why: 2026 enforcement removes distinct adaptiveFormats URLs from web player responses in favor of serverAbrStreamingUrl, eroding URL-level ad classification (googlevideo ctier rules, manifest scrubbing) and 403ing non-compliant clients; the engine must never misclassify or break playback on such a response.
-  Evidence: yt-dlp issues 12482 and 15689; yt-dlp SABR downloader PR 13515; existing isInlinePlaybackNoAd SABR fake-buffering counter in YoutubeAdblock.user.js. Related: Roadmap_Blocked.md SSAI item (server-stitched ads are the adjacent unsolved problem; this item is only detection + safe degradation, not seeking).
-  Touches: YoutubeAdblock.user.js player-response handling and diagnostics; tests/engine-core.test.mjs with a SABR-only player-response fixture.
-  Acceptance: a fixture player response lacking adaptiveFormats URLs is detected and counted in diagnostics; JSON pruning and cosmetic engines stay active; URL-dependent engines (ctier rules, manifest scrub) report "no signal" rather than false success; playback-affecting interventions are suppressed for that session; behavior is covered by a regression test. Rollout measurement stays in RESEARCH.md Open Question 4.
-  Complexity: M
-
 - [ ] P2 — YouTube-semantic element zapper (picker → stable named toggle)
   Why: July–August 2026 threads show sustained unmet demand for hide-Shorts/hide-VODs/kill-hover-autoplay/hide-injected-recommendations controls; users hand-write fragile uBO filters, and no YouTube-specific blocker ships a picker — a leapfrog feature this repo's existing filter/clutter infrastructure can carry.
   Evidence: r/uBlockOrigin threads 1v5lajc (2026-07-24), 1v6qoz6 (2026-07-26), 1vfouqs (2026-08-04), 1viss98 (2026-08-08); FilterTube 2026 additions lack a picker (AMO listing); uBO element zapper is generic and its CWS host dies 2026-08-31. Builds on the existing P2 Rules playground item — the playground's bounded-preview/confirm flow is the zapper's commit step.

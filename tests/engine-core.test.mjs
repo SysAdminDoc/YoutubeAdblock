@@ -170,6 +170,8 @@ function createTestHarness(options = {}) {
         scanForComplianceDialogs,
         hasVisibleComplianceDialog,
         COMPLIANCE_MARK_ATTR,
+        detectSabrOnlyStreaming,
+        recordSabrOnlyStreaming,
         validateSafeRegexSource,
         updateCosmeticCSS,
         verifySignedManifest,
@@ -1759,4 +1761,108 @@ test('cosmetic CSS exempts marked compliance dialogs from every hiding rule', ()
         assert.ok(rule.includes(':not([data-ytab-compliance])'),
             `every cosmetic rule must exempt compliance dialogs: ${rule}`);
     }
+});
+
+
+// ========== SABR-only player responses ==========
+
+test('a SABR-only player response is detected when formats carry no URLs', () => {
+    const h = harness;
+    const response = {
+        videoDetails: { videoId: 'dQw4w9WgXcQ' },
+        streamingData: {
+            serverAbrStreamingUrl: 'https://rr1---sn-x.googlevideo.com/videoplayback?sabr=1',
+            adaptiveFormats: [{ itag: 137, mimeType: 'video/mp4' }, { itag: 140, mimeType: 'audio/mp4' }],
+        },
+    };
+    const signal = h.detectSabrOnlyStreaming(response);
+    assert.ok(signal, 'SABR-only response should be detected');
+    assert.equal(signal.videoId, 'dQw4w9WgXcQ');
+    assert.equal(signal.formatCount, 2);
+});
+
+test('a classic response with per-format URLs is not flagged as SABR-only', () => {
+    const h = harness;
+    const response = {
+        videoDetails: { videoId: 'dQw4w9WgXcQ' },
+        streamingData: {
+            serverAbrStreamingUrl: 'https://rr1---sn-x.googlevideo.com/videoplayback?sabr=1',
+            adaptiveFormats: [{ itag: 137, url: 'https://rr1---sn-x.googlevideo.com/videoplayback?itag=137' }],
+        },
+    };
+    assert.equal(h.detectSabrOnlyStreaming(response), null);
+});
+
+test('signatureCipher formats count as playable URLs, not SABR-only', () => {
+    const h = harness;
+    const response = {
+        videoDetails: { videoId: 'abc' },
+        streamingData: {
+            serverAbrStreamingUrl: 'https://example.googlevideo.com/sabr',
+            adaptiveFormats: [{ itag: 137, signatureCipher: 's=abc&url=https%3A%2F%2Fexample' }],
+        },
+    };
+    assert.equal(h.detectSabrOnlyStreaming(response), null);
+});
+
+test('responses without a server-ABR endpoint are not flagged even when URLs are absent', () => {
+    const h = harness;
+    const response = {
+        videoDetails: { videoId: 'abc' },
+        streamingData: { adaptiveFormats: [{ itag: 137, mimeType: 'video/mp4' }] },
+    };
+    assert.equal(h.detectSabrOnlyStreaming(response), null);
+});
+
+test('nested player responses are inspected for SABR-only streaming', () => {
+    const h = harness;
+    const wrapped = {
+        response: {
+            playerResponse: {
+                videoDetails: { videoId: 'nested1' },
+                streamingData: {
+                    serverAbrStreamingUrl: 'https://example.googlevideo.com/sabr',
+                    adaptiveFormats: [{ itag: 140 }],
+                },
+            },
+        },
+    };
+    assert.ok(h.detectSabrOnlyStreaming(wrapped));
+});
+
+test('SABR-only detection counts once per video and marks the session', () => {
+    const h = createTestHarness({ storage: {} });
+    const response = {
+        videoDetails: { videoId: 'sabr-video' },
+        streamingData: {
+            serverAbrStreamingUrl: 'https://example.googlevideo.com/sabr',
+            adaptiveFormats: [{ itag: 140 }],
+        },
+    };
+    assert.equal(h.recordSabrOnlyStreaming(response, 'https://www.youtube.com/youtubei/v1/player'), true);
+    assert.equal(h.state.stats.sabrOnlyResponses, 1);
+    assert.equal(h.state.sabrOnlyActive, true);
+    // Repeat parses of the same video/endpoint do not inflate the counter.
+    h.recordSabrOnlyStreaming(response, 'https://www.youtube.com/youtubei/v1/player');
+    assert.equal(h.state.stats.sabrOnlyResponses, 1);
+});
+
+test('SABR-only sessions still prune ad payloads rather than bailing out', () => {
+    const h = createTestHarness({ storage: {} });
+    const response = {
+        videoDetails: { videoId: 'sabr-video' },
+        adPlacements: [{ adPlacementRenderer: {} }],
+        playerAds: [{}],
+        streamingData: {
+            serverAbrStreamingUrl: 'https://example.googlevideo.com/sabr',
+            adaptiveFormats: [{ itag: 140 }],
+        },
+    };
+    const pruned = h.pruneObject(response, 'https://www.youtube.com/youtubei/v1/player');
+    assert.equal(pruned, true, 'JSON pruning must keep working on SABR-only responses');
+    assert.equal('adPlacements' in response, false);
+    assert.equal('playerAds' in response, false);
+    assert.equal(h.state.stats.sabrOnlyResponses, 1, 'and the session is still recorded');
+    // Playback data itself is untouched.
+    assert.equal(response.streamingData.serverAbrStreamingUrl, 'https://example.googlevideo.com/sabr');
 });

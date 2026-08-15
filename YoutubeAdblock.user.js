@@ -96,7 +96,8 @@
         dearrowReplaced: 0,
         feedFiltered: 0,
         ssaiDetected: 0,
-        complianceDialogs: 0
+        complianceDialogs: 0,
+        sabrOnlyResponses: 0
     };
     const SPONSORBLOCK_API = 'https://sponsor.ajay.app/api/skipSegments';
     const SPONSORBLOCK_CATEGORIES = [
@@ -734,6 +735,7 @@
             rejectedDangerousScriptlets: 'Rejected dangerous scriptlets',
             ssaiSignals: 'SSAI signals',
             complianceDialogs: 'Compliance dialogs',
+            sabrOnly: 'SABR-only responses',
             dnrMatchedRules: 'DNR matched rules',
             communityApiPermission: 'Community API permission',
             communityConsent: 'Community data consent',
@@ -1038,6 +1040,9 @@
         webpackSignatureIntegrity: 'built-in',
         webpackSignatureSyncing: false,
         complianceDialogLastSeen: 0,
+        sabrLastSeen: 0,
+        sabrLastKey: '',
+        sabrOnlyActive: false,
         communityApiPermission: IS_EXTENSION_BUILD ? 'pending' : 'granted',
         // Bumped per service on consent revocation so in-flight community
         // API resolutions from before the revoke are dropped instead of
@@ -2581,6 +2586,62 @@
         }
     }
 
+    /* =========================================================================
+     * SABR-ONLY PLAYER RESPONSES
+     * =========================================================================
+     * YouTube increasingly returns player responses whose adaptiveFormats
+     * carry no per-format URLs, delivering media through a single
+     * server-negotiated `serverAbrStreamingUrl` instead. Ad and content
+     * bytes then share one stream, so URL-shaped classification
+     * (googlevideo ctier rules, DASH/HLS manifest scrubbing) has nothing
+     * left to match. Detect that shape explicitly so diagnostics can say
+     * "no signal" honestly instead of implying those layers succeeded, and
+     * so no playback-affecting guess is made on such a session.
+     * ===================================================================== */
+
+    function detectSabrOnlyStreaming(obj) {
+        if (!obj || typeof obj !== 'object') return null;
+        const candidates = [];
+        if (looksLikePlayerResponse(obj)) candidates.push(obj);
+        if (looksLikePlayerResponse(obj.playerResponse)) candidates.push(obj.playerResponse);
+        if (looksLikePlayerResponse(obj.response?.playerResponse)) candidates.push(obj.response.playerResponse);
+
+        for (const candidate of candidates) {
+            const streaming = candidate.streamingData;
+            if (!streaming || typeof streaming !== 'object') continue;
+            const formats = []
+                .concat(Array.isArray(streaming.formats) ? streaming.formats : [])
+                .concat(Array.isArray(streaming.adaptiveFormats) ? streaming.adaptiveFormats : []);
+            if (!formats.length) continue;
+            const withUrl = formats.filter(f => f && (typeof f.url === 'string' || typeof f.signatureCipher === 'string'));
+            const hasSabrUrl = typeof streaming.serverAbrStreamingUrl === 'string' && !!streaming.serverAbrStreamingUrl;
+            // SABR-only means: formats are advertised, none of them carry a
+            // playable URL, and a server-ABR endpoint is present instead.
+            if (!withUrl.length && hasSabrUrl) {
+                return {
+                    videoId: extractPlayerVideoId(candidate),
+                    formatCount: formats.length
+                };
+            }
+        }
+        return null;
+    }
+
+    function recordSabrOnlyStreaming(obj, context) {
+        const signal = detectSabrOnlyStreaming(obj);
+        if (!signal) return false;
+        const now = Date.now();
+        const url = summarizeRequestContext(context);
+        const key = `${signal.videoId || 'unknown'}|${url || 'unknown'}`;
+        if (state.sabrLastKey !== key || now - state.sabrLastSeen > SSAI_SIGNAL_DEDUPE_MS) {
+            incrementStat('sabrOnlyResponses');
+        }
+        state.sabrLastSeen = now;
+        state.sabrLastKey = key;
+        state.sabrOnlyActive = true;
+        return true;
+    }
+
     function recordServerStitchedAdSignal(obj, context) {
         const signal = detectServerStitchedAdSignal(obj);
         if (!signal) return false;
@@ -2600,6 +2661,7 @@
     function pruneObject(obj, context) {
         if (!obj || typeof obj !== 'object') return false;
         recordServerStitchedAdSignal(obj, context);
+        recordSabrOnlyStreaming(obj, context);
         if (state.features.adAllowlist && obj.videoDetails && (obj.videoDetails.author || obj.videoDetails.channelId)) {
             if (isChannelAdAllowed({
                 name: obj.videoDetails.author || '',
@@ -9660,6 +9722,7 @@
             `${report.unsupportedScriptlets}: ${formatScriptletCoverage(coverage.unsupportedScriptlets)}`,
             `${report.rejectedDangerousScriptlets}: ${formatScriptletCoverage(coverage.rejectedDangerousScriptlets)}`,
             `${report.ssaiSignals}: detected=${state.stats.ssaiDetected || 0}, lastSeen=${state.ssaiLastSeen ? new Date(state.ssaiLastSeen).toISOString() : STRINGS.common.never}, lastUrl=${redactUrl(state.ssaiLastUrl) || STRINGS.common.none}`,
+            `${report.sabrOnly}: detected=${state.stats.sabrOnlyResponses || 0}, lastSeen=${state.sabrLastSeen ? new Date(state.sabrLastSeen).toISOString() : STRINGS.common.never}${state.sabrOnlyActive ? ' — URL-shaped ad classification has no signal on these sessions; JSON pruning and cosmetic cleanup still apply' : ''}`,
             `${report.complianceDialogs}: detected=${state.stats.complianceDialogs || 0}, lastSeen=${state.complianceDialogLastSeen ? new Date(state.complianceDialogLastSeen).toISOString() : STRINGS.common.never} (never hidden or dismissed)`,
             `${report.dnrMatchedRules}: ${formatDnrDiagnosticsReport()}`,
             `${report.communityApiPermission}: ${state.communityApiPermission || STRINGS.common.unknown}`,
