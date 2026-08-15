@@ -4,6 +4,25 @@ All notable changes to YoutubeAdblock are documented here.
 
 ## [Unreleased]
 
+### Security
+- **The service worker now validates settings against a schema instead of
+  storing whatever the page sends.** The v0.7.0 broker moved storage into
+  the worker but still accepted any value under the allowlisted container
+  key. Because the engine runs in the MAIN world — the same realm as
+  YouTube's own scripts — the worker cannot prove *which* page-realm code
+  produced a value, so it now checks the value itself: an allowlist of
+  known keys, per-key types, size caps, enum shapes for consent, and a
+  refusal of `__proto__`/`constructor`/`prototype`. A malformed write keeps
+  the last good value rather than clobbering it, and refused keys are
+  reported back to the caller instead of failing silently.
+- **Anti-rollback floors are now monotonic in the worker.** A signed-update
+  revision may rise but never fall, and omitting the key no longer erases
+  it — the stored floor is carried forward. This is the one class of check
+  that still holds when the sender cannot be authenticated.
+- **The rule-library URL is restricted to credential-free HTTPS.** A
+  page-authored `filter_url` was previously accepted as-is and syncs to
+  every signed-in device.
+
 ### Fixed
 - **Blocklist regex patterns can no longer stall the page.** The safety
   validator rejected nested quantifiers but never checked its own root

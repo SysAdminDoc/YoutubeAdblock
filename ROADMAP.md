@@ -4,7 +4,7 @@ Incomplete, actionable work only. Completed work belongs in `CHANGELOG.md`. Ever
 
 ## Now / Next — Top Five
 
-Start with the two P0 items under Research-Driven Additions (page→settings boundary, then the regex denial of service), then the P1 sync-regression repair. Those three are root-cause fixes and the boundary item gates several others. The item below remains the top non-security piece of work.
+Start with the P1 sync-regression repair under Research-Driven Additions, then the remaining P1 root-cause fixes. The item below remains the top non-security piece of work.
 
 - [ ] **P2 — Export a privacy-scrubbed diagnostic bundle**
   Why: copied text now includes browser-layer DNR evidence, but issue triage still lacks a structured bundle of bounded recent engine events and integrity state.
@@ -54,14 +54,14 @@ Start with the two P0 items under Research-Driven Additions (page→settings bou
 
 ### P0
 
-- [ ] P0 — Validate settings per key in the service worker and demote page localStorage to a cache
-  Why: the v0.7.0 broker moved the storage call but not the trust boundary. A YouTube page script can replace the entire settings object, and `GM_getValue` reads page-origin localStorage as its sole authority — so a page can point `ytab_filter_url` at an attacker host (accepted as `unsigned-custom` and synced to every device), forge `ytab_filters_cache` + `ytab_filters_integrity='verified'` to inject selectors/prune keys/`replaceKeys` with no fetch and no signature check, or erase the anti-rollback floor.
-  Evidence: extension/bridge.js:305-350 (only the container key is checked, value never inspected); extension/background.js:326-343 (type + 512 KB cap only); extension/background.js:347-357 (`isTrustedSettingsSender` is satisfied by construction for a real YouTube tab); Build-Extension.ps1:118-127 (`__ytabReadAll`).
-  Touches: extension/background.js; extension/bridge.js; Build-Extension.ps1; YoutubeAdblock.user.js (settings accessors); tests/background-contract.test.mjs; tests/bridge-security.test.mjs.
-  Acceptance: the worker rejects any key outside a typed schema and any value failing its per-key validator, with URL keys restricted to an explicit scheme/host policy; integrity, revision-floor and consent keys are not writable from a page-originated message at all; the worker's copy is authoritative on every read and localStorage is refreshed from it rather than trusted; a test drives a hostile page payload for each key class and asserts persistence is unchanged.
-  Complexity: L
-
 ### P1
+
+- [ ] P1 — Move signed-filter verification into the service worker
+  Why: the settings schema now bounds what a page can store, but two guarantees still cannot be enforced from the worker because the engine itself runs in the MAIN world: a page can set `filters_integrity` to `verified` and hand over a matching `filters_cache`, and it can grant community consent. Both are decisions, not shapes, so no validator can distinguish the engine from page code. The fix is to stop asking the page for a verdict — the worker fetches the list, verifies the Ed25519 signature and the manifest role/revision/expiry itself, and hands MAIN the result. The extension already holds the `raw.githubusercontent.com` host permission this needs, and the worker has `crypto.subtle`.
+  Evidence: extension/manifest.json content_scripts `world: "MAIN"`; Build-Extension.ps1:159-188 (GM_xmlhttpRequest is the page's own fetch, so host permissions never apply); YoutubeAdblock.user.js:2260-2342 (verification runs in the page realm, against page-reachable `crypto.subtle` and `atob`); extension/background.js `SETTINGS_VALIDATORS` (shape rules only).
+  Touches: extension/background.js (fetch + verify + cache ownership); extension/bridge.js (request/response for verified rules); YoutubeAdblock.user.js (extension build asks the worker instead of verifying locally; the userscript build keeps verifying in-process); Build-Extension.ps1; tests/background-contract.test.mjs.
+  Acceptance: in the extension build the worker performs the fetch and signature check and is the only writer of integrity state and the revision floor; a page that writes `filters_integrity` or `filters_cache` cannot cause unverified rules to be applied; the userscript build is unchanged; offline and failed-refresh behaviour still falls back to cached-then-built-in rules with the existing failure copy.
+  Complexity: L
 
 - [ ] P1 — Repair the two silent sync regressions shipped in v0.7.0
   Why: `splitSyncPayload` slices by UTF-16 length against a byte-denominated constant, so a CJK/Cyrillic/emoji blocklist yields chunks up to ~21.5 KB against Chrome's 8,192-byte per-item quota and the write fails silently; and `lastMirroredPreferences` is assigned before the write, so any failure path latches it and sync stops for the life of the service worker with nothing surfaced.

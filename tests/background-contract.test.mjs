@@ -119,7 +119,8 @@ function createBackgroundEnv(options = {}) {
         clearTimeout: globalThis.clearTimeout,
         Promise: globalThis.Promise,
         Error: globalThis.Error,
-        console: globalThis.console
+        console: globalThis.console,
+        URL: globalThis.URL
     });
 
     vm.runInContext(backgroundSource, sandbox, { filename: 'background.js' });
@@ -321,14 +322,19 @@ test('broker rejects settings messages from an untrusted sender', async () => {
 test('broker writes settings locally and stamps monotonic metadata', async () => {
     const env = createBackgroundEnv();
     const first = await env.sendSettingsMessage(
-        { type: 'ytab:settings-write', value: { enabled: true } }, trustedSender);
+        { type: 'ytab:settings-write', value: { ytab_enabled: true } }, trustedSender);
     assert.equal(first.ok, true);
-    assert.deepEqual(env.localStore[SETTINGS_KEY], { enabled: true });
+    // The worker rebuilds the object while validating it, so compare
+    // structurally across the VM realm boundary.
+    assert.deepEqual(
+        JSON.parse(JSON.stringify(env.localStore[SETTINGS_KEY])),
+        { ytab_enabled: true }
+    );
     const firstStamp = env.localStore[LOCAL_META_KEY].updatedAt;
     assert.ok(firstStamp > 0);
 
     const second = await env.sendSettingsMessage(
-        { type: 'ytab:settings-write', value: { enabled: false } }, trustedSender);
+        { type: 'ytab:settings-write', value: { ytab_enabled: false } }, trustedSender);
     assert.equal(second.ok, true);
     assert.ok(env.localStore[LOCAL_META_KEY].updatedAt > firstStamp,
         'each accepted write must advance the stamp so conflict resolution is deterministic');
@@ -369,16 +375,151 @@ test('broker mirrors accepted writes to sync in bounded chunks, metadata last', 
 
 test('broker keeps oversized payloads local-only and publishes a tombstone', async () => {
     const env = createBackgroundEnv();
-    const value = { ytab_channel_blocklist: 'x'.repeat(110 * 1024) };
+    const value = {
+        ytab_channel_blocklist: 'x'.repeat(60 * 1024),
+        ytab_keyword_blocklist: 'y'.repeat(60 * 1024)
+    };
     const response = await env.sendSettingsMessage({ type: 'ytab:settings-write', value }, trustedSender);
     assert.equal(response.ok, true);
     await env.flush();
 
-    assert.deepEqual(env.localStore[SETTINGS_KEY], value, 'oversized settings still persist locally');
+    assert.deepEqual(
+        JSON.parse(JSON.stringify(env.localStore[SETTINGS_KEY])),
+        value,
+        'oversized settings still persist locally'
+    );
     const meta = env.syncStore[SYNC_META_KEY];
     assert.equal(meta.oversized, true);
     assert.equal(meta.chunkCount, 0);
     assert.equal(env.syncStore[`${SYNC_CHUNK_PREFIX}0`], undefined);
+});
+
+// ========== settings schema (page-originated payloads) ==========
+//
+// The settings object reaches the worker from the MAIN world, which on
+// youtube.com shares a realm with YouTube's own scripts. These tests drive
+// the payloads a hostile page could send and assert what survives.
+
+async function writeAs(env, value) {
+    return env.sendSettingsMessage({ type: 'ytab:settings-write', value }, trustedSender);
+}
+
+function storedSettings(env) {
+    return JSON.parse(JSON.stringify(env.localStore[SETTINGS_KEY] || {}));
+}
+
+test('schema drops keys the extension does not define', async () => {
+    const env = createBackgroundEnv();
+    const response = await writeAs(env, {
+        ytab_enabled: true,
+        ytab_not_a_real_setting: 'anything',
+        totally_invented: { nested: true }
+    });
+    assert.equal(response.ok, true);
+    assert.deepEqual(storedSettings(env), { ytab_enabled: true });
+    assert.deepEqual(
+        JSON.parse(JSON.stringify(response.rejected)).sort(),
+        ['totally_invented', 'ytab_not_a_real_setting']
+    );
+});
+
+test('schema refuses prototype-walking keys', async () => {
+    const env = createBackgroundEnv();
+    await writeAs(env, {
+        ytab_enabled: true,
+        __proto__: { polluted: true },
+        constructor: 'x',
+        prototype: 'y'
+    });
+    const stored = storedSettings(env);
+    assert.deepEqual(stored, { ytab_enabled: true });
+    assert.equal({}.polluted, undefined, 'nothing may reach Object.prototype');
+});
+
+test('a malformed value keeps the last good one instead of clobbering it', async () => {
+    const env = createBackgroundEnv();
+    await writeAs(env, { ytab_channel_blocklist: 'realchannel' });
+    // Type confusion: a string setting handed an object.
+    const response = await writeAs(env, { ytab_channel_blocklist: { evil: true } });
+    assert.equal(response.ok, true);
+    assert.deepEqual(storedSettings(env), { ytab_channel_blocklist: 'realchannel' });
+    assert.deepEqual(JSON.parse(JSON.stringify(response.rejected)), ['ytab_channel_blocklist']);
+});
+
+test('schema bounds the size of text settings', async () => {
+    const env = createBackgroundEnv();
+    await writeAs(env, { ytab_keyword_blocklist: 'x'.repeat(65 * 1024) });
+    assert.deepEqual(storedSettings(env), {});
+});
+
+test('filter URL accepts only credential-free https', async () => {
+    const env = createBackgroundEnv();
+    for (const bad of [
+        'http://example.com/list.txt',
+        'javascript:fetch("//evil")',
+        'data:text/plain,rule',
+        'https://user:pass@example.com/list.txt',
+        'not a url'
+    ]) {
+        await writeAs(env, { ytab_filter_url: bad });
+        assert.deepEqual(storedSettings(env), {}, bad);
+    }
+    const good = 'https://raw.githubusercontent.com/SysAdminDoc/YoutubeAdblock/main/list.txt';
+    await writeAs(env, { ytab_filter_url: good });
+    assert.deepEqual(storedSettings(env), { ytab_filter_url: good });
+});
+
+test('an anti-rollback floor may rise but never fall', async () => {
+    const env = createBackgroundEnv({
+        localStorage: { [SETTINGS_KEY]: { ytab_signed_revision_filters: 7 } }
+    });
+    // Lowering it is the whole point of the attack: an old but validly
+    // signed manifest becomes acceptable again.
+    const lowered = await writeAs(env, { ytab_signed_revision_filters: 0 });
+    assert.equal(lowered.ok, true);
+    assert.equal(storedSettings(env).ytab_signed_revision_filters, 7);
+    assert.deepEqual(JSON.parse(JSON.stringify(lowered.rejected)), ['ytab_signed_revision_filters']);
+
+    const raised = await writeAs(env, { ytab_signed_revision_filters: 9 });
+    assert.equal(storedSettings(env).ytab_signed_revision_filters, 9);
+    assert.equal(raised.rejected, undefined);
+});
+
+test('an anti-rollback floor cannot be erased by omitting it', async () => {
+    const env = createBackgroundEnv({
+        localStorage: {
+            [SETTINGS_KEY]: {
+                'ytab_signed_revision_filters': 4,
+                'ytab_signed_revision_webpack-signatures': 4
+            }
+        }
+    });
+    await writeAs(env, { ytab_enabled: true });
+    const stored = storedSettings(env);
+    assert.equal(stored.ytab_signed_revision_filters, 4);
+    assert.equal(stored['ytab_signed_revision_webpack-signatures'], 4);
+    assert.equal(stored.ytab_enabled, true);
+});
+
+test('consent is stored only in the shape the engine reads back', async () => {
+    const env = createBackgroundEnv();
+    await writeAs(env, {
+        ytab_community_consent: {
+            version: 1,
+            services: { sponsorBlock: 'granted', dearrow: 'nonsense', rogue: 'granted' }
+        }
+    });
+    const stored = storedSettings(env);
+    assert.deepEqual(stored.ytab_community_consent, {
+        version: 1,
+        services: { sponsorBlock: 'granted', rogue: 'granted' }
+    }, 'unknown states are dropped; unknown service names are left to the engine to ignore');
+
+    // A consent blob that is not even the right shape is refused, and the
+    // last valid consent stands rather than being clobbered by it.
+    const response = await writeAs(env, { ytab_community_consent: 'granted' });
+    assert.deepEqual(JSON.parse(JSON.stringify(response.rejected)), ['ytab_community_consent']);
+    assert.deepEqual(storedSettings(env).ytab_community_consent.services, { sponsorBlock: 'granted', rogue: 'granted' });
 });
 
 test('broker read adopts a newer snapshot from another device', async () => {

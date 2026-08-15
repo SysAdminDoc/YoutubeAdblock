@@ -90,6 +90,195 @@ function mergeRemotePreferences(localSettings, remoteSnapshot) {
     return merged;
 }
 
+/* -------------------------------------------------------------------------
+ * Settings schema
+ * -------------------------------------------------------------------------
+ * The settings object arrives from the MAIN world, which on youtube.com is
+ * the same realm as YouTube's own scripts. The bridge can prove a message
+ * came from our content script in a real YouTube tab; it cannot prove our
+ * engine — rather than page code — produced the value. So the worker
+ * validates the object itself rather than trusting its origin.
+ *
+ * Two kinds of rule live here:
+ *   - Shape rules (key allowlist, type, size, enum) drop malformed or
+ *     invented state. These stop type confusion, prototype pollution and
+ *     unbounded growth.
+ *   - Relation rules compare the incoming value against what is already
+ *     stored. These are the only checks that still mean something when the
+ *     sender cannot be authenticated: a signed-update revision floor may
+ *     rise but never fall, and cannot be dropped by omitting the key.
+ * ---------------------------------------------------------------------- */
+
+const SIGNED_REVISION_PREFIX = 'ytab_signed_revision_';
+const MAX_TEXT_SETTING = 64 * 1024;
+const MAX_CACHE_SETTING = 256 * 1024;
+const MAX_SETTING_OBJECT_KEYS = 200;
+const MAX_FILTER_URL_LENGTH = 2048;
+// Keys that would walk the prototype chain if ever assigned onto a plain
+// object downstream.
+const FORBIDDEN_SETTING_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+const CONSENT_STATES = new Set(['unset', 'granted', 'denied']);
+
+function isPlainObject(value) {
+    return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function boundedText(value, max) {
+    return typeof value === 'string' && value.length <= max ? value : undefined;
+}
+
+function finiteNumber(value, min, max) {
+    if (typeof value !== 'number' || !Number.isFinite(value)) return undefined;
+    if (value < min || value > max) return undefined;
+    return value;
+}
+
+function boundedObject(value, maxKeys, checkValue) {
+    if (!isPlainObject(value)) return undefined;
+    const keys = Object.keys(value);
+    if (keys.length > maxKeys) return undefined;
+    const out = {};
+    for (const key of keys) {
+        if (FORBIDDEN_SETTING_KEYS.has(key)) continue;
+        const checked = checkValue(value[key]);
+        if (checked === undefined) continue;
+        out[key] = checked;
+    }
+    return out;
+}
+
+function booleanValue(value) {
+    return typeof value === 'boolean' ? value : undefined;
+}
+
+// Durations are typed into number inputs and have been persisted as both
+// strings and numbers across versions; accept either, bounded.
+function durationValue(value) {
+    if (value === '' || value === null || value === undefined) return '';
+    if (typeof value === 'number') return finiteNumber(value, 0, 1e7);
+    return boundedText(value, 16);
+}
+
+// The rule library fetches this URL on every refresh. A page-authored value
+// reaching it is the difference between a signed list and an attacker's, so
+// keep the accepted shape as narrow as the feature allows.
+function filterUrlValue(value) {
+    const text = boundedText(value, MAX_FILTER_URL_LENGTH);
+    if (text === undefined) return undefined;
+    if (text === '') return '';
+    let parsed;
+    try {
+        parsed = new URL(text);
+    } catch (e) {
+        return undefined;
+    }
+    if (parsed.protocol !== 'https:') return undefined;
+    if (parsed.username || parsed.password) return undefined;
+    return text;
+}
+
+function consentValue(value) {
+    if (!isPlainObject(value)) return undefined;
+    const version = finiteNumber(value.version, 0, 1e6);
+    if (version === undefined) return undefined;
+    const services = boundedObject(value.services, 32, (state) =>
+        (typeof state === 'string' && CONSENT_STATES.has(state)) ? state : undefined);
+    if (services === undefined) return undefined;
+    return { version, services };
+}
+
+const SETTINGS_VALIDATORS = Object.freeze({
+    ytab_enabled: booleanValue,
+    ytab_welcomed: booleanValue,
+    ytab_community_consent_notified: booleanValue,
+    ytab_feature_overrides: (v) => boundedObject(v, MAX_SETTING_OBJECT_KEYS, booleanValue),
+    ytab_stats: (v) => boundedObject(v, MAX_SETTING_OBJECT_KEYS,
+        (n) => finiteNumber(n, 0, Number.MAX_SAFE_INTEGER)),
+    ytab_community_consent: consentValue,
+    ytab_channel_blocklist: (v) => boundedText(v, MAX_TEXT_SETTING),
+    ytab_keyword_blocklist: (v) => boundedText(v, MAX_TEXT_SETTING),
+    ytab_ad_allowlist: (v) => boundedText(v, MAX_TEXT_SETTING),
+    ytab_duration_min: durationValue,
+    ytab_duration_max: durationValue,
+    ytab_volume_boost: (v) => finiteNumber(v, 0, 100),
+    ytab_filter_url: filterUrlValue,
+    ytab_filters_cache: (v) => boundedText(v, MAX_CACHE_SETTING),
+    ytab_filters_cache_url: (v) => boundedText(v, MAX_FILTER_URL_LENGTH),
+    ytab_filters_cache_time: (v) => finiteNumber(v, 0, Number.MAX_SAFE_INTEGER),
+    ytab_filters_integrity: (v) => boundedText(v, 32),
+    ytab_filters_integrity_message: (v) => boundedText(v, 4096),
+    ytab_webpack_signature_cache: (v) => boundedText(v, MAX_CACHE_SETTING),
+    ytab_webpack_signature_cache_time: (v) => finiteNumber(v, 0, Number.MAX_SAFE_INTEGER)
+});
+
+function isSignedRevisionKey(key) {
+    return key.startsWith(SIGNED_REVISION_PREFIX) && key.length > SIGNED_REVISION_PREFIX.length;
+}
+
+/**
+ * Validates a page-originated settings object against the schema, using the
+ * stored object to enforce the relation rules. Returns the object to persist
+ * plus the keys that were refused, so the caller can report rather than fail
+ * silently.
+ */
+function sanitizeSettingsObject(candidate, previous) {
+    const stored = isPlainObject(previous) ? previous : {};
+    const out = {};
+    const rejected = [];
+
+    for (const key of Object.keys(candidate)) {
+        if (FORBIDDEN_SETTING_KEYS.has(key)) {
+            rejected.push(key);
+            continue;
+        }
+        const value = candidate[key];
+
+        if (isSignedRevisionKey(key)) {
+            // Anti-rollback floor: monotonic, and never removable.
+            const next = finiteNumber(value, 0, Number.MAX_SAFE_INTEGER);
+            const floor = finiteNumber(stored[key], 0, Number.MAX_SAFE_INTEGER) || 0;
+            if (next === undefined || next < floor) {
+                rejected.push(key);
+                if (floor) out[key] = floor;
+            } else {
+                out[key] = next;
+            }
+            continue;
+        }
+
+        const validator = SETTINGS_VALIDATORS[key];
+        if (!validator) {
+            // An unknown key is either a rename we have not shipped or
+            // something the page invented. Neither belongs in storage.
+            rejected.push(key);
+            continue;
+        }
+        const checked = validator(value);
+        if (checked === undefined) {
+            rejected.push(key);
+            // Keep whatever was already valid rather than dropping the
+            // user's real setting because one write was malformed.
+            if (Object.prototype.hasOwnProperty.call(stored, key)) out[key] = stored[key];
+            continue;
+        }
+        out[key] = checked;
+    }
+
+    // Omitting a floor must not erase it, so carry forward every stored one
+    // the candidate left out.
+    for (const key of Object.keys(stored)) {
+        if (!isSignedRevisionKey(key)) continue;
+        if (Object.prototype.hasOwnProperty.call(out, key)) continue;
+        const floor = finiteNumber(stored[key], 0, Number.MAX_SAFE_INTEGER);
+        if (floor !== undefined) {
+            out[key] = floor;
+            rejected.push(key);
+        }
+    }
+
+    return { value: out, rejected };
+}
+
 // chrome.storage quotas are counted in UTF-8 bytes, not UTF-16 code units,
 // so a blocklist full of non-ASCII channel names must not be undercounted.
 function utf8ByteLength(text) {
@@ -332,14 +521,21 @@ async function writeSettings(value) {
     }
     const local = storageArea('local');
     if (!local) return { ok: false, error: 'storage unavailable' };
+
+    // The stored object is the reference for every relation rule, so it is
+    // read here rather than taken from the sender.
+    const current = await areaGet(local, [SETTINGS_KEY]);
+    if (!current) return { ok: false, error: 'storage unavailable' };
+    const { value: sanitized, rejected } = sanitizeSettingsObject(value, current[SETTINGS_KEY]);
+
     const updatedAt = nextWriteStamp();
     const error = await areaSet(local, {
-        [SETTINGS_KEY]: value,
+        [SETTINGS_KEY]: sanitized,
         [LOCAL_META_KEY]: { updatedAt }
     });
     if (error) return { ok: false, error };
-    await mirrorToSync(value, updatedAt);
-    return { ok: true };
+    await mirrorToSync(sanitized, updatedAt);
+    return rejected.length ? { ok: true, rejected } : { ok: true };
 }
 
 // A settings message is only honored when it comes from this extension's
