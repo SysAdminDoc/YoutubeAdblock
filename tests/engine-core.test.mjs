@@ -172,6 +172,7 @@ function createTestHarness(options = {}) {
         COMPLIANCE_MARK_ATTR,
         detectSabrOnlyStreaming,
         recordSabrOnlyStreaming,
+        compareDearrowCandidates,
         validateSafeRegexSource,
         updateCosmeticCSS,
         verifySignedManifest,
@@ -1865,4 +1866,42 @@ test('SABR-only sessions still prune ad payloads rather than bailing out', () =>
     assert.equal(h.state.stats.sabrOnlyResponses, 1, 'and the session is still recorded');
     // Playback data itself is untouched.
     assert.equal(response.streamingData.serverAbrStreamingUrl, 'https://example.googlevideo.com/sabr');
+});
+
+// ========== DeArrow candidate ordering ==========
+
+test('locked DeArrow submissions outrank unlocked ones regardless of votes', () => {
+    const h = harness;
+    const candidates = [
+        { title: 'unlocked high votes', locked: false, votes: 500 },
+        { title: 'locked low votes', locked: true, votes: 1 },
+        { title: 'unlocked mid votes', locked: false, votes: 50 }
+    ];
+    const sorted = candidates.slice().sort(h.compareDearrowCandidates);
+    assert.equal(sorted[0].title, 'locked low votes');
+    assert.equal(sorted[1].title, 'unlocked high votes');
+    assert.equal(sorted[2].title, 'unlocked mid votes');
+});
+
+test('votes break ties within the same lock state, descending', () => {
+    const h = harness;
+    const sorted = [
+        { title: 'a', locked: true, votes: 2 },
+        { title: 'b', locked: true, votes: 9 },
+        { title: 'c', locked: true, votes: 5 }
+    ].sort(h.compareDearrowCandidates);
+    assert.deepEqual(sorted.map(x => x.title), ['b', 'c', 'a']);
+});
+
+test('DeArrow ordering tolerates missing or non-numeric fields', () => {
+    const h = harness;
+    const sorted = [
+        { title: 'no votes' },
+        { title: 'string votes', votes: '7' },
+        { title: 'locked but voteless', locked: true }
+    ].sort(h.compareDearrowCandidates);
+    assert.equal(sorted[0].title, 'locked but voteless');
+    // A numeric string still sorts above an absent count.
+    assert.equal(sorted[1].title, 'string votes');
+    assert.equal(sorted.length, 3);
 });

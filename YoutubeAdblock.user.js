@@ -4714,6 +4714,21 @@
         });
     }
 
+    /**
+     * Ordering for DeArrow submissions: a locked (moderator-confirmed) entry
+     * always outranks an unlocked one, and within the same lock state the
+     * higher vote count wins. `locked` arrives as a boolean, so compare it
+     * explicitly rather than relying on boolean-to-number coercion.
+     */
+    function compareDearrowCandidates(a, b) {
+        const aLocked = !!(a && a.locked);
+        const bLocked = !!(b && b.locked);
+        if (aLocked !== bLocked) return aLocked ? -1 : 1;
+        const aVotes = Number(a && a.votes) || 0;
+        const bVotes = Number(b && b.votes) || 0;
+        return bVotes - aVotes;
+    }
+
     async function dearrowResolve(videoId) {
         if (!videoId) return null;
         const cached = dearrowCacheGet(videoId);
@@ -4734,10 +4749,10 @@
         }
         const title = (Array.isArray(entry.titles) ? entry.titles : [])
             .filter(t => t && typeof t.title === 'string' && t.votes >= 0)
-            .sort((a, b) => (b.locked - a.locked) || (b.votes - a.votes))[0];
+            .sort(compareDearrowCandidates)[0];
         const thumb = (Array.isArray(entry.thumbnails) ? entry.thumbnails : [])
             .filter(t => t && (t.locked || t.votes >= 0))
-            .sort((a, b) => (b.locked - a.locked) || (b.votes - a.votes))[0];
+            .sort(compareDearrowCandidates)[0];
         const result = {
             title: title ? String(title.title) : null,
             thumbnailUrl: (thumb && thumb.timestamp != null)

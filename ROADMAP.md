@@ -67,9 +67,6 @@ Incomplete, actionable work only. Completed work belongs in `CHANGELOG.md`. Ever
 - [ ] **P3 — Enterprise managed defaults**
   Add a managed schema only after the settings broker exists, with diagnostics showing which values are policy-controlled.
 
-- [ ] **P3 — Clarify DeArrow locked-item ordering**
-  Replace boolean arithmetic with explicit comparison and add an ordering unit test.
-
 - [ ] **P3 — Strengthen DOM bypass detection**
   Replace simple source-string matching with narrowly scoped structural detection that recognizes equivalent fetch-lift patterns without blocking legitimate scripts.
 
