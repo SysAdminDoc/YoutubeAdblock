@@ -504,6 +504,7 @@
                     backreference: 'regex backreferences are not supported',
                     lookaround: 'regex lookarounds are not supported',
                     nestedQuantifier: 'a quantified regex group may not contain another quantifier or alternation',
+                adjacentQuantifier: 'two unbounded regex quantifiers (* + {n,}) may not run together; separate them with required text',
                     syntax: 'invalid regex syntax'
                 },
                 blockedChannels: 'Blocked Channels',
@@ -5745,69 +5746,157 @@
     const BLOCKLIST_MAX_REGEX_LENGTH = 256;
     const BLOCKLIST_MAX_MATCH_INPUT = 512;
 
+    function newRegexFrame() {
+        return { hasQuantifier: false, hasAlternation: false, unboundedRun: false };
+    }
+
+    /**
+     * Reads a quantifier at `index`. `{n,m}` is bounded, `{n,}` is not, and
+     * a brace that is not a well-formed quantifier is an ordinary literal.
+     */
+    function readRegexQuantifier(src, index) {
+        const ch = src[index];
+        if (ch === '*') return { length: 1, kind: 'unbounded', min: 0 };
+        if (ch === '+') return { length: 1, kind: 'unbounded', min: 1 };
+        if (ch === '?') return { length: 1, kind: 'bounded', min: 0 };
+        if (ch !== '{') return { length: 0, kind: 'none', min: 0 };
+        const close = src.indexOf('}', index + 1);
+        if (close === -1) return { length: 0, kind: 'none', min: 0 };
+        const body = src.slice(index + 1, close);
+        if (!/^\d+(,\d*)?$/.test(body)) return { length: 0, kind: 'none', min: 0 };
+        const min = parseInt(body, 10) || 0;
+        return {
+            length: close - index + 1,
+            kind: body.endsWith(',') ? 'unbounded' : 'bounded',
+            min
+        };
+    }
+
     /**
      * Conservative regex safety validator. Accepts a documented subset:
-     * no backreferences, no lookarounds, and a group may only be
-     * quantified when its contents contain neither another quantifier nor
-     * an alternation. That rejects the classic exponential families
-     * ((a+)+, (a|aa)+, (.*a)*) while keeping common blocklist patterns.
+     * no backreferences, no lookarounds, a group may only be quantified
+     * when its contents contain neither another quantifier nor an
+     * alternation, and two unbounded quantifiers may not run together
+     * without a mandatory atom between them.
+     *
+     * The first rule rejects the exponential families ((a+)+, (a|aa)+,
+     * (.*a)*). The last rule is what bounds the *polynomial* ones: /a*a*b/
+     * contains no nested quantifier, so the group rule alone accepts it,
+     * and every additional run multiplies the work the engine does before
+     * it can fail. Measured before this rule existed:
+     * /a*a*a*a*a*a*a*a*a*a*b/ against 32 characters took 9.4 seconds on the
+     * main thread, inside the prune path.
      */
     function validateSafeRegexSource(src) {
         if (typeof src !== 'string' || !src) return { ok: false, reason: 'syntax' };
         if (src.length > BLOCKLIST_MAX_REGEX_LENGTH) return { ok: false, reason: 'tooLong' };
-        // Frame for the pattern root plus one per open group. Tracks
-        // whether the frame's own contents contain a quantifier or an
-        // alternation (nested groups propagate their flags on close).
-        const stack = [{ hasQuantifier: false, hasAlternation: false }];
-        let inClass = false;
-        for (let i = 0; i < src.length; i++) {
+
+        const stack = [newRegexFrame()];
+        let i = 0;
+
+        while (i < src.length) {
             const ch = src[i];
+            let atomEnd = -1;
+            let closedFrame = null;
+
             if (ch === '\\') {
                 const next = src[i + 1] || '';
-                if (!inClass && next >= '1' && next <= '9') return { ok: false, reason: 'backreference' };
+                if (next >= '1' && next <= '9') return { ok: false, reason: 'backreference' };
                 if (next === 'k') return { ok: false, reason: 'backreference' };
-                i++;
-                continue;
-            }
-            if (inClass) {
-                if (ch === ']') inClass = false;
-                continue;
-            }
-            if (ch === '[') { inClass = true; continue; }
-            if (ch === '(') {
-                if (src[i + 1] === '?') {
-                    const c2 = src[i + 2];
+                if (!next) return { ok: false, reason: 'syntax' };
+                atomEnd = i + 2;
+            } else if (ch === '[') {
+                let j = i + 1;
+                if (src[j] === '^') j++;
+                if (src[j] === ']') j++;
+                while (j < src.length && src[j] !== ']') {
+                    if (src[j] === '\\') j++;
+                    j++;
+                }
+                if (j >= src.length) return { ok: false, reason: 'syntax' };
+                atomEnd = j + 1;
+            } else if (ch === '(') {
+                let cursor = i + 1;
+                if (src[cursor] === '?') {
+                    const c2 = src[cursor + 1];
                     if (c2 === '=' || c2 === '!') return { ok: false, reason: 'lookaround' };
-                    if (c2 === '<' && (src[i + 3] === '=' || src[i + 3] === '!')) {
+                    if (c2 === '<' && (src[cursor + 2] === '=' || src[cursor + 2] === '!')) {
                         return { ok: false, reason: 'lookaround' };
                     }
+                    if (c2 === ':') {
+                        cursor += 2;
+                    } else if (c2 === '<') {
+                        const close = src.indexOf('>', cursor + 2);
+                        if (close === -1) return { ok: false, reason: 'syntax' };
+                        cursor = close + 1;
+                    } else {
+                        return { ok: false, reason: 'syntax' };
+                    }
                 }
-                stack.push({ hasQuantifier: false, hasAlternation: false });
+                stack.push(newRegexFrame());
+                i = cursor;
                 continue;
-            }
-            if (ch === ')') {
+            } else if (ch === ')') {
                 if (stack.length < 2) return { ok: false, reason: 'syntax' };
-                const group = stack.pop();
-                const parent = stack[stack.length - 1];
-                // Peek past the closing paren for a quantifier.
-                const next = src[i + 1];
-                const quantified = next === '*' || next === '+' || next === '?' || next === '{';
-                if (quantified && (group.hasQuantifier || group.hasAlternation)) {
+                closedFrame = stack.pop();
+                atomEnd = i + 1;
+            } else if (ch === '|') {
+                const frame = stack[stack.length - 1];
+                frame.hasAlternation = true;
+                frame.unboundedRun = false;
+                i++;
+                continue;
+            } else if (ch === '^' || ch === '$') {
+                // Zero-width anchors are not atoms and cannot be quantified.
+                i++;
+                continue;
+            } else if (ch === '*' || ch === '+' || ch === '?') {
+                // A quantifier with nothing in front of it.
+                return { ok: false, reason: 'syntax' };
+            } else {
+                atomEnd = i + 1;
+            }
+
+            const quant = readRegexQuantifier(src, atomEnd);
+            let next = atomEnd + quant.length;
+            // A trailing '?' makes the quantifier lazy; it does not change
+            // how much backtracking the engine can be made to do.
+            if (quant.length && src[next] === '?') next++;
+
+            const frame = stack[stack.length - 1];
+
+            if (closedFrame) {
+                if (quant.kind !== 'none' && (closedFrame.hasQuantifier || closedFrame.hasAlternation)) {
                     return { ok: false, reason: 'nestedQuantifier' };
                 }
-                parent.hasQuantifier = parent.hasQuantifier || group.hasQuantifier || quantified;
-                parent.hasAlternation = parent.hasAlternation || group.hasAlternation;
-                continue;
+                frame.hasQuantifier = frame.hasQuantifier || closedFrame.hasQuantifier;
+                frame.hasAlternation = frame.hasAlternation || closedFrame.hasAlternation;
+                if (quant.kind === 'none') {
+                    // An unquantified group hands its trailing run to the parent.
+                    frame.unboundedRun = closedFrame.unboundedRun;
+                }
             }
-            if (ch === '*' || ch === '+' || ch === '?' || ch === '{') {
-                stack[stack.length - 1].hasQuantifier = true;
-                continue;
+
+            if (quant.kind === 'unbounded') {
+                if (frame.unboundedRun) return { ok: false, reason: 'adjacentQuantifier' };
+                frame.unboundedRun = true;
+                frame.hasQuantifier = true;
+            } else if (quant.kind === 'bounded') {
+                frame.hasQuantifier = true;
+                // Only a quantifier that must consume input separates two
+                // unbounded runs; '?' and '{0,n}' can match empty.
+                if (quant.min >= 1) frame.unboundedRun = false;
+            } else {
+                // A mandatory atom is a real separator — but a group that
+                // closed without a quantifier already handed us its own
+                // trailing run, so it must not clear it here.
+                if (!closedFrame) frame.unboundedRun = false;
             }
-            if (ch === '|') {
-                stack[stack.length - 1].hasAlternation = true;
-            }
+
+            i = next;
         }
-        if (stack.length !== 1 || inClass) return { ok: false, reason: 'syntax' };
+
+        if (stack.length !== 1) return { ok: false, reason: 'syntax' };
         return { ok: true };
     }
 

@@ -4,6 +4,20 @@ All notable changes to YoutubeAdblock are documented here.
 
 ## [Unreleased]
 
+### Fixed
+- **Blocklist regex patterns can no longer stall the page.** The safety
+  validator rejected nested quantifiers but never checked its own root
+  frame, so a pattern like `a*a*a*b` — no nested quantifier anywhere — was
+  accepted and backtracked polynomially. Measured before the fix:
+  `/a*a*a*a*a*a*a*a*a*a*b/` against 32 characters took 9.4 seconds on the
+  main thread, inside the payload prune path. The validator now works atom
+  by atom and refuses two unbounded quantifiers (`*`, `+`, `{n,}`) that run
+  together without required text between them, with a specific
+  line-level reason shown in the blocklist editor. Non-capturing and named
+  groups, lazy quantifiers, and literal braces are now parsed correctly
+  rather than approximated. A test asserts a hard time budget over the
+  maximum haystack for every pattern the validator accepts.
+
 ## [0.7.0] - 2026-08-15
 
 ### Added

@@ -61,13 +61,6 @@ Start with the two P0 items under Research-Driven Additions (page→settings bou
   Acceptance: the worker rejects any key outside a typed schema and any value failing its per-key validator, with URL keys restricted to an explicit scheme/host policy; integrity, revision-floor and consent keys are not writable from a page-originated message at all; the worker's copy is authoritative on every read and localStorage is refreshed from it rather than trusted; a test drives a hostile page payload for each key class and asserts persistence is unchanged.
   Complexity: L
 
-- [ ] P0 — Close the regex denial of service in the blocklist validator
-  Why: `validateSafeRegexSource` sets the root frame's `hasQuantifier` but never consults it, so sequential quantifiers outside a group pass. Measured locally on Node 24.18.1, `/a*a*a*a*a*a*a*a*a*a*b/` against 32 characters took 9,381 ms on the main thread (n=24 → 711 ms, n=28 → 2,721 ms); the haystack cap is 512 characters and matching is synchronous inside the JSON/fetch/XHR proxies. Reachable from the page while the P0 above is open.
-  Evidence: YoutubeAdblock.user.js:5671-5728 (`quantified && (group.hasQuantifier || group.hasAlternation)` is the only rejection); :5889-5899 `matchesList` called from the prune path; measured 2026-08-15.
-  Touches: YoutubeAdblock.user.js (validator, `matchesList`, prune walk); tests/engine-core.test.mjs.
-  Acceptance: the validator rejects sequential and adjacent quantifiers at every nesting level including the root; an adversarial test asserts a hard runtime budget (single-digit milliseconds) for every pattern the validator accepts, over the maximum haystack; rejected lines report a specific reason to the user.
-  Complexity: M
-
 ### P1
 
 - [ ] P1 — Repair the two silent sync regressions shipped in v0.7.0

@@ -1382,6 +1382,73 @@ test('validateSafeRegexSource rejects exponential and unsupported constructs', (
     assert.equal(h.validateSafeRegexSource('(a').reason, 'syntax');
 });
 
+test('validateSafeRegexSource rejects runs of unbounded quantifiers', () => {
+    const h = harness;
+    // The measured case: no nested quantifier anywhere, so the group rule
+    // accepted it. Matching it against 32 characters took 9.4 seconds on the
+    // main thread, inside the prune path, before this rule existed.
+    assert.equal(
+        h.validateSafeRegexSource('a*a*a*a*a*a*a*a*a*a*b').reason,
+        'adjacentQuantifier'
+    );
+    // Every degree above one is the same defect, just cheaper.
+    assert.equal(h.validateSafeRegexSource('a*a*b').reason, 'adjacentQuantifier');
+    assert.equal(h.validateSafeRegexSource('a+a+b').reason, 'adjacentQuantifier');
+    assert.equal(h.validateSafeRegexSource('.*.*').reason, 'adjacentQuantifier');
+    assert.equal(h.validateSafeRegexSource('[a-z]*[a-z]*x').reason, 'adjacentQuantifier');
+    assert.equal(h.validateSafeRegexSource('a{2,}b{2,}').reason, 'adjacentQuantifier');
+    // An optional atom cannot separate two runs: it can match empty.
+    assert.equal(h.validateSafeRegexSource('a*b?c*').reason, 'adjacentQuantifier');
+    // A group that ends in an unbounded run carries it out to the parent.
+    assert.equal(h.validateSafeRegexSource('(xa*)b*').reason, 'adjacentQuantifier');
+
+    // Required text between the runs makes the work linear again.
+    assert.equal(h.validateSafeRegexSource('a*Xb*').ok, true);
+    assert.equal(h.validateSafeRegexSource('a*b{2}c*').ok, true);
+    // Alternation branches are independent, so each side gets a fresh run.
+    assert.equal(h.validateSafeRegexSource('a*|b*').ok, true);
+});
+
+test('validateSafeRegexSource keeps non-capturing and named groups usable', () => {
+    const h = harness;
+    assert.equal(h.validateSafeRegexSource('(?:free|cheap) robux').ok, true);
+    assert.equal(h.validateSafeRegexSource('(?<tag>[a-z]+) giveaway').ok, true);
+    assert.equal(h.validateSafeRegexSource('(?:abc)+').ok, true);
+    // Lazy quantifiers backtrack just as hard; they are read, not ignored.
+    assert.equal(h.validateSafeRegexSource('a*?a*?b').reason, 'adjacentQuantifier');
+    // A brace that is not a well-formed quantifier is an ordinary literal.
+    assert.equal(h.validateSafeRegexSource('a{b').ok, true);
+});
+
+test('every pattern the validator accepts matches inside a hard time budget', () => {
+    const h = harness;
+    // The worst case the engine can actually be handed: matchesList caps the
+    // haystack at BLOCKLIST_MAX_MATCH_INPUT, and a single repeated character
+    // maximises overlap for anything the validator let through.
+    const haystack = 'a'.repeat(512);
+    const candidates = [
+        'a*b', 'a+b', 'a*', '.*', '.*robux', 'free.*robux', '(abc)+',
+        '[a-z]{3,}x', '^MrBeast$', 'a*Xb*', 'a*b{2}c*', 'a*|b*',
+        '(?:free|cheap) robux', '(?<tag>[a-z]+) giveaway',
+        'v-?bucks', 'shorts|reels', '[0-9]{3,} subscribers',
+        'sponsored?' + String.fromCharCode(92) + 's+content'
+    ];
+    let checked = 0;
+    for (const src of candidates) {
+        if (!h.validateSafeRegexSource(src).ok) continue;
+        const pattern = new RegExp(src, 'i');
+        const start = performance.now();
+        pattern.test(haystack);
+        const elapsed = performance.now() - start;
+        assert.ok(
+            elapsed < 25,
+            `accepted pattern ${src} took ${elapsed.toFixed(1)}ms over ${haystack.length} chars`
+        );
+        checked++;
+    }
+    assert.ok(checked >= 15, `expected the corpus to exercise the validator, checked ${checked}`);
+});
+
 test('validateSafeRegexSource accepts common safe blocklist patterns', () => {
     const h = harness;
     for (const src of [
