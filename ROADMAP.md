@@ -98,13 +98,6 @@ Start with the P1 sync-regression repair under Research-Driven Additions, then t
   Acceptance: at 320 CSS px and at 200%/400% zoom the panel reflows without two-dimensional scrolling and no control is clipped; primary and hover CTA text meets 4.5:1 in both themes; every focus indicator pairs box-shadow with an outline and every toggle's state remains discernible under `forced-colors: active`.
   Complexity: M
 
-- [ ] P1 — Correct the architecture documentation to match the code
-  Why: README.md describes injecting the engine into the page via a `<script>` element across two realms; there are zero `createElement('script')`, `unsafeWindow` or `wrappedJSObject` occurrences in the canonical source. extension/README.md is self-contradictory: lines 49-55 state the bridge owns no storage code while lines 84-96 still describe the bridge chunking and resolving conflicts. Contributors following either will re-introduce the architecture v0.7.0 removed.
-  Evidence: README.md:151 and the diagram at :128-149; extension/README.md:49-55 vs :84-96; installProxies at YoutubeAdblock.user.js:6081-6135. Also stale: "150+ selectors" (≤92 before dedupe), "eight" clutter toggles (ten), six stats (7 rendered, 10 counted), eight intercepted endpoints (15), seven pruned fields (25).
-  Touches: README.md; extension/README.md; CLAUDE.md; tests/repo-contract.test.mjs.
-  Acceptance: the execution-model sections describe the realms the code actually uses; extension/README.md documents one storage architecture; the countable claims are either generated from source or asserted by a contract test that fails when the counts drift.
-  Complexity: S
-
 - [ ] P1 — Extend import preflight and undo to the text and migration paths
   Why: JSON import validates, previews, applies atomically and offers undo; the channel-text and migration importers have none of it, and both overwrite the user's pasted payload with the rejected-entry list on success and failure, destroying the source text with no way back — while the README advertises preview and undo for "Settings Import".
   Evidence: YoutubeAdblock.user.js:8978 (text), :8989 (migration), payload overwrite at :8991 and :8997; the good path at :8539-8634 and :8683-8714; README.md:180.

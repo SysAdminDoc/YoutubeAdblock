@@ -82,18 +82,22 @@ builds may also require `extensions.dnr.feedback` in `about:config` for this
 diagnostic API; that preference is not required for the packaged rules to block.
 
 Settings persistence is three-tier:
-- `localStorage[__ytab_ext_settings__]` is the sync read path used by
-  the engine at document-start.
+- `localStorage[__ytab_ext_settings__]` is the synchronous read path the
+  engine needs at document-start. It is a cache, not an authority: the
+  bridge rehydrates it from the worker on load and on every change, and the
+  worker validates anything written back against a per-key schema.
 - `chrome.storage.local` mirrors the same key for cross-subdomain
   propagation. The bridge pushes an early snapshot into each fresh load,
   so changes on `www.youtube.com` rehydrate on `m.youtube.com`,
   `music.youtube.com`, and `www.youtubekids.com` as soon as extension
   storage answers.
 - `chrome.storage.sync` mirrors eligible settings across signed-in browser
-  profiles. The bridge stores the serialized settings object as 7 KB chunks
-  under the 8 KB/item and 100 KB total sync quotas, resolves conflicts by
-  newest write timestamp, and leaves oversized blocklists local-only instead
-  of rejecting the save.
+  profiles. The **service worker** — not the bridge — splits the serialized
+  preferences into chunks sized in UTF-8 bytes under the 8 KB/item and
+  100 KB total sync quotas, writes chunks before the metadata so the
+  metadata acts as the commit marker, resolves conflicts by newest write
+  timestamp, and leaves oversized blocklists local-only behind a tombstone
+  instead of rejecting the save.
 
 Custom Rule Library URLs still use page-world fetches in this build, so
 the safest sources are hosts that allow direct browser fetches from

@@ -93,7 +93,7 @@ If you trigger the extension while you are not already on YouTube, YoutubeAdbloc
 | setTimeout Proxy | Neutralizes timed ad triggers and delayed ad insertion | Enabled |
 | Promise.then Proxy | Intercepts promise-chained ad delivery pipelines | Enabled |
 | Property Traps | Prevents YouTube from reading/writing ad-related player properties | Enabled |
-| CSS Cosmetic Filters | 150+ selectors hiding ad containers, banners, and promotions | Enabled |
+| CSS Cosmetic Filters | 21 built-in selectors plus the signed remote list (64 cosmetic rules today) hiding ad containers, banners, and promotions | Enabled |
 | SSAP Auto-Skip | Automatically clicks the skip button on skippable video ads | Enabled |
 | SSAI Signal Warning | Measures PlayerResponse `serverStitchedAd` signals, shows a Control Center warning when ads are stitched into the media stream, and includes the last signal in diagnostics | Enabled |
 | Anti-Detect Bypass | Defeats YouTube's abnormality/adblock detection system | Enabled |
@@ -111,7 +111,7 @@ If you trigger the extension while you are not already on YouTube, YoutubeAdbloc
 | Return YouTube Dislike | Restores the public dislike count under the like button. Sends full video IDs to returnyoutubedislikeapi.com, so it requires one-time consent in the Control Center | Consent-gated |
 | Force Original Audio | Switches back to the original-language audio track when YouTube defaults to an auto-dubbed or translated track | Optional |
 | Volume Boost | Web Audio gain stage up to 5x with an inline slider in the player controls | Optional |
-| Clutter-Free Mode | Eight Unhook-style toggles: home feed, Shorts shelves, Shorts tab, related videos, comments, end-screen cards, live chat, merch shelves | Optional |
+| Clutter-Free Mode | Ten Unhook-style toggles: home feed, Shorts shelves, Shorts tab, related videos, comments, end-screen cards, live chat, merch shelves | Optional |
 | Channel + Keyword Blocklist | Strips videos whose channel or title matches local blocklists. Channel entries support names, `UC...` IDs, `@handles`, channel URLs, regex, JSON/plain-text import-export, and BlockTube/FilterTube-style migration import. `/regex/` entries use a bounded safe subset (max 256 chars, 500 entries per list, no backreferences or lookarounds, and a quantified group may not contain another quantifier or alternation); rejected lines show a line-specific error in the editor instead of silently matching as text | Optional |
 | Shorts → /watch Redirect | Rewrites `/shorts/VIDEO_ID` to the full watch player | Optional |
 | DNR Network Blocking *(extension only)* | Blocks `/pagead/*`, `/api/stats/ads`, `/api/stats/atr`, `/pcs/activeview`, `/youtubei/v1/player/ad_break`, selected tracking posts, googlevideo ad-tier media, DoubleClick, Google Syndication, Google Ad Services, and `google.com/pagead/*` for YouTube initiators. DNR output is generated from the same typed source that validates userscript intercept metadata | Enabled |
@@ -126,35 +126,39 @@ If you trigger the extension while you are not already on YouTube, YoutubeAdbloc
 
 ```
 ┌──────────────────────────────────────────────────────────────────────┐
-│                        document-start                                │
+│  document-start, page realm (userscript: the manager's injection     │
+│  world; extension: content script declared "world": "MAIN")          │
 │                                                                      │
-│  ┌─────────────────────┐    ┌──────────────────────────────────┐    │
-│  │  PHASE 1: Page Ctx  │    │  PHASE 2: Sandbox                │    │
-│  │  (injected <script>)│    │  (Tampermonkey GM_* APIs)        │    │
-│  │                     │    │                                  │    │
-│  │  • JSON.parse proxy │    │  • 150+ CSS cosmetic selectors   │    │
-│  │  • fetch() proxy    │    │  • DOM MutationObserver cleanup  │    │
-│  │  • XHR proxy        │    │  • SSAP auto-skip delegation     │    │
-│  │  • appendChild proxy│    │  • GM_getValue/setValue storage   │    │
-│  │  • setTimeout proxy │    │  • Remote filter list fetching   │    │
-│  │  • Promise.then     │    │  • CSS re-injection protection   │    │
-│  │  • Property traps   │    │  • Control Center UI             │    │
-│  │  • Video ad skipper │    │                                  │    │
-│  └─────────────────────┘    └──────────────────────────────────┘    │
-│              │                            │                          │
-│              ▼                            ▼                          │
-│     Real window object            Shared DOM access                  │
-│     (YouTube sees proxies)        (CSS/elements work from sandbox)   │
+│  ┌──────────────────────────┐   ┌───────────────────────────────┐   │
+│  │  Interception            │   │  Presentation and state       │   │
+│  │                          │   │                               │   │
+│  │  • JSON.parse proxy      │   │  • CSS cosmetic selectors     │   │
+│  │  • fetch() proxy         │   │  • DOM sweep + cleanup        │   │
+│  │  • XHR proxy             │   │  • Control Center UI          │   │
+│  │  • appendChild proxy     │   │  • Remote filter fetching     │   │
+│  │  • setTimeout proxy      │   │  • GM_getValue/GM_setValue    │   │
+│  │  • Promise.then proxy    │   │  • SSAP skip handling         │   │
+│  │  • Property traps        │   │                               │   │
+│  └──────────────────────────┘   └───────────────────────────────┘   │
+└──────────────────────────────────────────────────────────────────────┘
+                              │ extension build only
+                              ▼
+┌──────────────────────────────────────────────────────────────────────┐
+│  bridge.js — isolated content-script world (validating relay)        │
+│  background.js — service worker: owns chrome.storage, validates      │
+│  every settings write against a schema, DNR diagnostics, menus        │
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
-Tampermonkey's `@grant GM_*` directives wrap userscripts in a sandbox where `window` is a proxy — YouTube's scripts never see modifications made in the sandbox. YoutubeAdblock solves this by injecting the proxy engine into the **real page context** via a `<script>` element at `document-start`, before any YouTube scripts execute. CSS injection, DOM observers, and settings management stay in the sandbox since they operate on the shared DOM.
+The engine has to run in the same JavaScript realm as YouTube's own scripts, because replacing `JSON.parse`, `fetch` and `XMLHttpRequest` is only observable to page code if it happens in that realm. There is no second phase and no injected `<script>` element: the userscript installs its proxies directly onto the realm it is loaded into, and the generated extension gets there by declaring its content script `"world": "MAIN"`.
+
+That single realm is also the reason the extension keeps a service worker. Anything the page must not be able to forge — persisted settings, the signed-update revision floor — is validated in `background.js`, which is the only component that touches `chrome.storage`. Which injection world each userscript manager actually provides is still being validated; see `Roadmap_Blocked.md`.
 
 Each proxy installation is individually try/catch wrapped using a `safeOverride()` helper (direct assign → `Object.defineProperty` → delete+redefine fallback), so one engine failure never prevents the others from loading.
 
 ## Configuration
 
-All settings persist via `GM_setValue`. Open the userscript menu and choose `YoutubeAdblock: Open Control Center` to adjust protection without leaving YouTube.
+Settings persist through `GM_setValue`; in the extension build that call is a shim that writes to the service worker, which validates it before storing. Open the userscript menu and choose `YoutubeAdblock: Open Control Center` to adjust protection without leaving YouTube.
 
 ### Control Center
 

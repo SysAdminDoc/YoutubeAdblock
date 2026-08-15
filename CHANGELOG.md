@@ -4,6 +4,17 @@ All notable changes to YoutubeAdblock are documented here.
 
 ## [Unreleased]
 
+### Changed
+- **Documentation now describes the architecture that exists.** The README
+  described injecting the engine into the page through a `<script>` element
+  across two realms; there is no such injection anywhere in the source, and
+  the engine simply installs its proxies into the realm it loads into
+  (`"world": "MAIN"` for the extension). `extension/README.md` described two
+  mutually exclusive storage designs thirty lines apart, one of them the
+  pre-v0.7.0 bridge-owns-chunking model. Also corrects the cosmetic selector
+  count (21 built-in plus 64 in the signed list, not "150+") and the number
+  of Clutter-Free toggles.
+
 ### Fixed
 - **DOM-bypass scripts are now neutralized before the browser runs them.**
   The guard rewrote a matching inline `<script>` *after* calling the native
