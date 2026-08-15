@@ -4,6 +4,8 @@ All notable changes to YoutubeAdblock are documented here.
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-08-15
+
 ### Added
 - **Temporary recovery pause**: the Overview now offers a 5-minute,
   30-minute, or this-tab pause that suspends every engine without touching
