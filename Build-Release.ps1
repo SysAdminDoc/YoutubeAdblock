@@ -132,7 +132,7 @@ if ([string]$manifest.version -ne $version) {
 }
 
 $readme = [System.IO.File]::ReadAllText((Join-Path $repoRootAbs 'README.md'))
-if ($readme -notmatch "version-$([regex]::Escape($version))-58A6FF") {
+if ($readme -notmatch "version-$([regex]::Escape($version))-[0-9A-Fa-f]{6}") {
     throw "README version badge does not match $version."
 }
 

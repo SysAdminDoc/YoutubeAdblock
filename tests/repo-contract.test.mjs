@@ -11,6 +11,17 @@ function read(relativePath) {
     return fs.readFileSync(path.join(repoRoot, relativePath), 'utf8');
 }
 
+function readPngInfo(relativePath) {
+    const bytes = fs.readFileSync(path.join(repoRoot, relativePath));
+    assert.equal(bytes.subarray(0, 8).toString('hex'), '89504e470d0a1a0a',
+        `asset is not a PNG: ${relativePath}`);
+    return {
+        width: bytes.readUInt32BE(16),
+        height: bytes.readUInt32BE(20),
+        colorType: bytes[25],
+    };
+}
+
 const userscript = read('YoutubeAdblock.user.js');
 const manifest = JSON.parse(read(path.join('extension', 'manifest.json')));
 const devManifest = JSON.parse(read(path.join('extension', 'manifest.dev.json')));
@@ -289,24 +300,28 @@ test('webpack signature database is signed with the same key as the filter list'
     assert.match(buildRelease, /webpack-ad-signatures\.manifest\.json/);
 });
 
-test('extension README reflects the current iconless manifest', () => {
-    assert.equal('icons' in manifest, false, 'manifest should stay iconless until replacement branding ships');
-    assert.equal('default_icon' in manifest.action, false,
-        'browser action should stay iconless until replacement branding ships');
-    assert.doesNotMatch(extensionReadme, /\|\s*`icons\/`\s*\|/);
-    assert.match(extensionReadme, /default toolbar icon/i);
+test('extension ships a complete, legible icon set', () => {
+    const expectedIcons = {
+        16: 'icons/icon16.png',
+        32: 'icons/icon32.png',
+        48: 'icons/icon48.png',
+        128: 'icons/icon128.png',
+    };
+    assert.deepEqual(manifest.icons, expectedIcons);
+    assert.deepEqual(manifest.action.default_icon, expectedIcons);
+    for (const iconPath of Object.values(expectedIcons)) {
+        assert.equal(fs.existsSync(path.join(repoRoot, 'extension', iconPath)), true,
+            `extension icon is missing: ${iconPath}`);
+    }
+    assert.match(extensionReadme, /`icons\/`/);
 });
 
-test('extension keyboard commands are opt-in with no default shortcuts', () => {
-    for (const [name, command] of Object.entries(manifest.commands || {})) {
-        assert.equal('suggested_key' in command, false,
-            `${name} should not ship a default suggested_key`);
-    }
-    assert.doesNotMatch(readme, /Ctrl\+Shift\+Y|Command\+Shift\+Y|Cmd\+Shift\+Y/);
-    assert.doesNotMatch(extensionReadme, /Ctrl\+Shift\+Y|Command\+Shift\+Y|Cmd\+Shift\+Y/);
-    assert.doesNotMatch(userscript, /Ctrl\s*\+\s*Shift\s*\+\s*Y|Command\s*\+\s*Shift\s*\+\s*Y|Cmd\s*\+\s*Shift\s*\+\s*Y/);
-    assert.match(readme, /chrome:\/\/extensions\/shortcuts/);
-    assert.match(extensionReadme, /chrome:\/\/extensions\/shortcuts/);
+test('extension exposes no browser keyboard commands', () => {
+    assert.equal('commands' in manifest, false);
+    assert.equal('commands' in devManifest, false);
+    assert.doesNotMatch(background, /chrome\.commands/);
+    assert.doesNotMatch(readme, /extensions\/shortcuts|keyboard shortcut/i);
+    assert.doesNotMatch(extensionReadme, /extensions\/shortcuts|keyboard shortcut/i);
 });
 
 test('extension settings sync only rebuilds the panel when mirrored settings actually changed', () => {
@@ -330,6 +345,8 @@ test('version strings stay in lockstep across userscript, manifest, generated bu
     // so Chromium + Firefox install the same build as the userscript source.
     assert.equal(manifest.version, version,
         `extension/manifest.json version (${manifest.version}) differs from userscript (${version})`);
+    assert.equal(devManifest.version, version,
+        `extension/manifest.dev.json version (${devManifest.version}) differs from userscript (${version})`);
 
     // Generated extension/main.js is a copy of the userscript, so its
     // SCRIPT_VERSION must also match. If this fails, re-run Build-Extension.ps1.
@@ -339,17 +356,50 @@ test('version strings stay in lockstep across userscript, manifest, generated bu
         `extension/main.js is stale (${generatedMatch[1]} vs ${version}); re-run Build-Extension.ps1`);
 
     // README badge is user-facing and easy to forget on version bumps.
-    const readmeBadge = readme.match(/version-([0-9][0-9A-Za-z.+-]*)-58A6FF/);
+    const readmeBadge = readme.match(/version-([0-9][0-9A-Za-z.+-]*)-ff7169/);
     assert(readmeBadge, 'README version badge missing');
     assert.equal(readmeBadge[1], version,
         `README version badge (${readmeBadge[1]}) differs from userscript (${version})`);
 
-    const screenshotMatch = readme.match(/design\/screenshots\/control-center-desktop-dark-v([0-9][0-9A-Za-z.+-]*)\.png/);
+    const screenshotMatch = readme.match(/design\/screenshots\/control-center-overview-dark-v([0-9][0-9A-Za-z.+-]*)\.png/);
     assert(screenshotMatch, 'README current Control Center screenshot is missing');
     assert.equal(screenshotMatch[1], version,
         `README screenshot (${screenshotMatch[1]}) differs from userscript (${version})`);
     assert.equal(fs.existsSync(path.join(repoRoot, screenshotMatch[0])), true,
         `README screenshot file is missing: ${screenshotMatch[0]}`);
+});
+
+test('repository marketing assets stay reproducible and current', () => {
+    const expectedDimensions = new Map([
+        ['banner.png', [1536, 448, 2]],
+        ['icon.png', [1024, 1024, 6]],
+        [path.join('.github', 'social-preview.png'), [1280, 640, 2]],
+        [path.join('design', 'screenshots', `control-center-overview-dark-v${manifest.version}.png`), [1182, 854, 2]],
+        [path.join('design', 'screenshots', `control-center-overview-light-v${manifest.version}.png`), [1182, 854, 2]],
+        [path.join('design', 'screenshots', `control-center-focus-filters-dark-v${manifest.version}.png`), [1182, 854, 2]],
+        [path.join('design', 'screenshots', `control-center-network-evidence-dark-v${manifest.version}.png`), [1182, 854, 2]],
+    ]);
+    for (const [asset, [width, height, colorType]] of expectedDimensions) {
+        assert.deepEqual(readPngInfo(asset), {
+            width,
+            height,
+            colorType,
+        }, `marketing asset has the wrong format or dimensions: ${asset}`);
+    }
+    for (const size of [16, 32, 48, 128]) {
+        const asset = path.join('extension', 'icons', `icon${size}.png`);
+        assert.deepEqual(readPngInfo(asset), {
+            width: size,
+            height: size,
+            colorType: 6,
+        }, `extension icon has the wrong format or dimensions: ${asset}`);
+    }
+    assert.equal(readPngInfo(path.join('assets', 'youtube-adblock-mark-source.png')).colorType, 6,
+        'approved source mark must preserve a real alpha channel');
+    assert.match(packageJson.scripts['assets:marketing'], /generate-marketing-assets\.mjs/);
+    assert.match(packageJson.scripts['screenshots:marketing'], /capture-extension-marketing\.mjs/);
+    assert.doesNotMatch(manifest.description, /undetectable|anti-detect/i);
+    assert.doesNotMatch(readme, /undetectable|split-context/i);
 });
 
 test('generated extension/main.js carries the required shim + command-bridge markers', () => {
@@ -373,6 +423,10 @@ test('generated extension/main.js carries the required shim + command-bridge mar
     // derived, not authored.
     assert(/^\/\*!\s*\n\s*\*\s*YoutubeAdblock\s*-\s*extension build/.test(generatedMain),
         'generated extension/main.js missing provenance header');
+    assert.doesNotMatch(generatedMain, /\r\n/,
+        'generated extension/main.js must use stable LF line endings');
+    assert.doesNotMatch(generatedRulesText, /\r\n/,
+        'generated DNR output must use stable LF line endings');
 });
 
 test('@inject-into directive pins the userscript to the sandbox so GM_* stays available', () => {

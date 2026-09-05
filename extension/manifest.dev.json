@@ -1,13 +1,25 @@
 {
   "manifest_version": 3,
   "name": "YoutubeAdblock (development)",
-  "version": "0.8.0",
-  "description": "YouTube ad blocker with payload pruning, anti-detect hardening, SponsorBlock, Return YouTube Dislike, and a Control Center.",
+  "version": "0.8.1",
+  "description": "Local YouTube ad blocking with signed rules and an in-page Control Center that explains what is running.",
   "author": "SysAdminDoc",
   "homepage_url": "https://github.com/SysAdminDoc/YoutubeAdblock",
   "minimum_chrome_version": "121",
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
   "action": {
-    "default_title": "Open YoutubeAdblock Control Center"
+    "default_title": "Open YoutubeAdblock Control Center",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
   },
   "background": {
     "service_worker": "background.js",
@@ -69,17 +81,6 @@
         "path": "rules/network-blocks.json"
       }
     ]
-  },
-  "commands": {
-    "ytab-open-panel": {
-      "description": "Open YoutubeAdblock Control Center"
-    },
-    "ytab-toggle-protection": {
-      "description": "Pause or Resume YoutubeAdblock Protection"
-    },
-    "ytab-refresh-rules": {
-      "description": "Refresh YoutubeAdblock Rules"
-    }
   },
   "browser_specific_settings": {
     "gecko": {

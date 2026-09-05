@@ -1,212 +1,82 @@
-# YoutubeAdblock — extension build
+# YoutubeAdblock extension build
 
-This is the Chrome / Firefox MV3 build of YoutubeAdblock. The core ad-blocking
-engine is **generated** from [../YoutubeAdblock.user.js](../YoutubeAdblock.user.js)
-by [../Build-Extension.ps1](../Build-Extension.ps1). Do not edit `main.js`
-directly — your changes will be overwritten on the next build.
+This folder is a loadable MV3 extension for Chromium 121+ and Firefox 128+. Its page-world engine is generated from [YoutubeAdblock.user.js](../YoutubeAdblock.user.js) by [Build-Extension.ps1](../Build-Extension.ps1). Edit the userscript source, then rebuild. Changes made directly to `main.js` will be overwritten.
 
-## Layout
+## Install in Chromium
 
-| File | Role |
-|------|------|
-| `manifest.json` | MV3 manifest for Chromium 121+ and Firefox 128+ |
-| `main.js` *(generated)* | Page-world (MAIN) content script - the ad-blocking engine |
-| `bridge.js` | Isolated-world content script, relays bounded `chrome.*` capabilities into the page world and re-sanitizes DNR evidence |
-| `background.js` | Service worker: toolbar action, keyboard commands, right-click context menu, tab messaging, and current-tab DNR match aggregation |
-| `rules/network-rules-source.json` | typed source for intercept-pattern metadata and DNR generation |
-| `rules/network-blocks.json` | generated declarativeNetRequest rules - network-layer blocks |
+1. Run the extension build from the repository root.
+2. Open `chrome://extensions` in Chrome, `edge://extensions` in Edge, or `brave://extensions` in Brave.
+3. Enable Developer mode and choose **Load unpacked**.
+4. Select this `extension` folder, then click the shield icon to open the Control Center.
 
-The manifest intentionally omits extension icons until replacement branding is
-available, so browsers show their default toolbar icon.
+If the action is used on another site, YoutubeAdblock opens a YouTube tab and carries the action there.
+
+## Files
+
+| Path | Purpose |
+|---|---|
+| `manifest.json` | Least-privilege production manifest. |
+| `manifest.dev.json` | Unpacked QA profile with bounded DNR feedback permission. Never included in release archives. |
+| `main.js` | Generated MAIN-world blocking engine and Control Center. |
+| `bridge.js` | Validating relay between the page world and extension APIs. |
+| `background.js` | Settings broker, toolbar and context-menu actions, tab messaging, plus bounded rule-match aggregation. |
+| `icons/` | Shipped 16, 32, 48, and 128 pixel extension marks. |
+| `rules/network-rules-source.json` | Typed source for network rule generation and userscript intercept metadata. |
+| `rules/network-blocks.json` | Generated packaged DNR rules. |
+
+Run `npm run assets:marketing` from the repository root to regenerate the icon set from the approved transparent source mark.
 
 ## Architecture
 
-Three cooperating layers:
+The browser gets four defensive layers.
 
-1. **Network layer** — declarativeNetRequest blocks `/pagead/`,
-   `/api/stats/ads`, `/youtubei/v1/player/ad_break`, googlevideo
-   `ctier=SA` segments, `doubleclick.net` + `googlesyndication.com`
-   (YouTube initiators only), `googleadservices.com`, and `/api/stats/atr`
-   ad telemetry before a single byte reaches the page.
-2. **Page layer** — MAIN-world content script installs proxies on
-   `JSON.parse`, `fetch`, `XMLHttpRequest`, `Node.prototype.appendChild`,
-   `Node.prototype.insertBefore`, `Node.prototype.replaceChild`,
-   `HTMLIFrameElement.prototype.contentWindow`, `Promise.prototype.then`,
-   and `window.setTimeout`. Prunes ad payloads, defends against
-   iframe-fetch-lift bypass, neutralizes anti-adblock timers.
-3. **Render layer** — cosmetic CSS hides any ad containers that slip
-   through, plus the enforcement-message modal; a polling fallback
-   mutes and 16x-fast-forwards any ad that still starts playing.
+1. Packaged DNR rules block tightly scoped ad endpoints before page code receives a response.
+2. The MAIN-world engine handles JSON, fetch, XHR, request bodies, selected DOM insertions, and known playback fallbacks.
+3. Cosmetic rules clean up containers that no longer have useful content.
+4. The isolated bridge and service worker own extension APIs, validate settings, and keep privileged data away from page code.
 
-For control-plane actions, `chrome.action.onClicked`,
-`chrome.commands.onCommand`, and `chrome.contextMenus.onClicked`
-(all handled by `background.js`) send a `chrome.tabs.sendMessage` to
-the active tab, `bridge.js` receives it and dispatches a `CustomEvent`
-on `document`, and `main.js` invokes the matching in-page action. The bounded
-reverse path handles settings and diagnostics: page events can access only the
-allowlisted settings object or request a sanitized current-tab DNR summary.
+The service worker is the only component that reads or writes `chrome.storage` for settings. It validates each known key, rejects oversized or malformed values, keeps anti-rollback floors monotonic, and mirrors only user-authored preferences to sync storage. Counters, integrity caches, consent, and signed-update floors stay local.
 
-Settings persistence lives entirely in the service worker. `bridge.js` owns no
-storage code; it validates the page request (single allowlisted key, size cap,
-rate limit, debounce) and relays `ytab:settings-read` / `ytab:settings-write`
-over `chrome.runtime`. `background.js` re-validates the sender (this extension,
-a real tab, a YouTube URL) plus the payload before writing, then mirrors
-eligible settings to `chrome.storage.sync` in 7 KB chunks with the metadata
-write as the commit marker.
+`bridge.js` accepts one allowlisted settings container. It applies a size cap, write debounce, request coalescing, and rate limit before forwarding anything. Incoming settings are validated again by the worker.
 
-Only a versioned allowlist of user-authored preferences is eligible for sync:
-the protection switch, feature overrides, channel/keyword blocklists, the ad
-allowlist, duration bounds, the filter URL, and volume boost. Everything else
-is device-local — stats, rule and signature caches, integrity state,
-signed-update revision floors, community-service consent, and onboarding
-flags. Consent is deliberately per-install so allowing a third-party service
-on one machine does not allow it everywhere. Incoming snapshots merge over
-local preferences and never remove a local-only key.
+## Production and development profiles
 
-Matched-rule evidence needs the `declarativeNetRequestFeedback` permission,
-which Chrome documents for unpacked-extension debugging. It therefore lives in
-`manifest.dev.json` — a development-only profile — and is absent from the
-production `manifest.json` and from every release artifact. To use the Browser
-Network Layer card during QA, copy `manifest.dev.json` over `manifest.json` in a
-scratch copy of `extension/` and load that unpacked. In production builds
-blocking is unchanged and the card reports that the evidence is unavailable
-rather than implying a blocking failure.
+`manifest.json` omits `declarativeNetRequestFeedback`. Blocking works normally, but the Browser Network Layer card explains that match evidence isn't available.
 
-That permission powers only that summary. `background.js` uses `getMatchedRules()` with a five-minute window,
-keeps only `ytab-network-blocks` rule IDs/counts/timestamps, and applies a
-30-second global cooldown. `bridge.js` validates the result again before the
-page can see it. No request URL, raw browser error, or unrelated-tab data is
-relayed or persisted. If feedback is unavailable, browser-level blocking still
-runs and Diagnostics reports only the evidence limitation. Firefox development
-builds may also require `extensions.dnr.feedback` in `about:config` for this
-diagnostic API; that preference is not required for the packaged rules to block.
+`manifest.dev.json` adds only that diagnostic permission. Copy it over `manifest.json` in a disposable extension folder when you need a current-tab match summary during QA. The summary contains packaged rule IDs, counts, and timestamps. It excludes request URLs, raw browser errors, unrelated tabs, and saved history.
 
-Settings persistence is three-tier:
-- `localStorage[__ytab_ext_settings__]` is the synchronous read path the
-  engine needs at document-start. It is a cache, not an authority: the
-  bridge rehydrates it from the worker on load and on every change, and the
-  worker validates anything written back against a per-key schema.
-- `chrome.storage.local` mirrors the same key for cross-subdomain
-  propagation. The bridge pushes an early snapshot into each fresh load,
-  so changes on `www.youtube.com` rehydrate on `m.youtube.com`,
-  `music.youtube.com`, and `www.youtubekids.com` as soon as extension
-  storage answers.
-- `chrome.storage.sync` mirrors eligible settings across signed-in browser
-  profiles. The **service worker** — not the bridge — splits the serialized
-  preferences into chunks sized in UTF-8 bytes under the 8 KB/item and
-  100 KB total sync quotas, writes chunks before the metadata so the
-  metadata acts as the commit marker, resolves conflicts by newest write
-  timestamp, and leaves oversized blocklists local-only behind a tombstone
-  instead of rejecting the save.
+Firefox may also require `extensions.dnr.feedback` in `about:config` for the development summary. The packaged rules don't depend on that preference.
 
-Custom Rule Library URLs still use page-world fetches in this build, so
-the safest sources are hosts that allow direct browser fetches from
-YouTube pages. The recommended GitHub-hosted list is the default because
-it works cleanly without adding broader extension fetch permissions.
+The extension does not request DeArrow thumbnail host access. DeArrow stays userscript-only until the extension has a narrow permission path.
 
-DeArrow remains userscript-only until its extension API permission is resolved,
-so the extension manifest does not request DeArrow thumbnail host access.
+## Rebuild
 
-## Install — Chrome / Edge / Brave (Chromium 121+)
-
-1. Clone the repo locally.
-2. From the repo root, run:
-
-   ```powershell
-   powershell -NoProfile -ExecutionPolicy Bypass -File .\Build-Extension.ps1
-   ```
-
-3. Visit `chrome://extensions`, enable **Developer mode**, click
-   **Load unpacked**, and select the `extension/` folder.
-4. Click the toolbar icon to open the Control Center.
-
-If you trigger the extension while you are not already on YouTube,
-YoutubeAdblock opens a YouTube tab and carries the action there automatically.
-
-The Chromium floor matters because this manifest intentionally includes both
-`background.service_worker` and `background.scripts` so one build can support
-Chromium and Firefox. Chrome ignored the extra `scripts` key starting in
-Chrome 121; earlier MV3 builds reject it.
-
-## Package A CRX
-
-Run the repo-root packer when you need a signed Chromium release artifact:
+From the repository root:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\Build-CRX.ps1 -KeyPath <private-key.pem>
+powershell -NoProfile -ExecutionPolicy Bypass -File .\Build-Extension.ps1
 ```
 
-The key must match the pinned extension ID in `extension/extension-id.txt`. The packer
-refuses to generate a replacement key because rotating that identity would
-break update continuity and extension storage. Keep the matching PEM private;
-it is deliberately ignored rather than committed. For most desktop
-Chrome/Edge users, the unpacked install path is still the friendliest option
-because local CRX installs are typically restricted outside managed or
-supported self-hosted flows.
+The builder strips the userscript header, adds the extension storage and network shims, regenerates DNR output, then verifies required markers before writing `main.js`.
 
-## Install — Firefox
-
-1. Build as above.
-2. Visit `about:debugging#/runtime/this-firefox`.
-3. Click **Load Temporary Add-on…** and select `extension/manifest.json`.
-4. The add-on is unloaded when Firefox closes; re-load per session.
-
-Persistent Firefox installs require Mozilla signing through AMO or
-`web-ext sign`. The local release gate can produce an unsigned development XPI
-only when `-Artifacts Xpi` is explicitly requested; do not publish that file as
-a signed install asset.
-
-## Keyboard commands
-
-| Command | Default shortcut | Effect |
-|---------|------------------|--------|
-| Open Control Center | *(unbound)* | Opens the in-page protection workspace |
-| Pause or Resume Protection | *(unbound)* | Toggles the master switch |
-| Refresh Rules | *(unbound)* | Forces a rule-list refresh |
-
-Bind optional shortcuts from `chrome://extensions/shortcuts` or
-`about:addons` → gear → *Manage Extension Shortcuts*.
-
-## Local release workflow
-
-This repo uses local builds only. For the full release gate from the repo root:
+## Test and package
 
 ```powershell
+npm ci
+npm test
 powershell -NoProfile -ExecutionPolicy Bypass -File .\Build-Release.ps1
 ```
 
-Run `npm ci` once before the full gate so browser-smoke dependencies are
-present. The default command regenerates generated files, runs syntax checks
-and tests, validates DNR freshness, signs or verifies the filter manifest,
-runs the browser smoke matrix, verifies the userscript/ZIP artifacts, writes
-SHA-256 checksums, cleans stale artifacts, and writes current artifacts to
-`dist/`. Add CRX only when the stable signing key is available:
+The default release produces a versioned userscript and unpacked-extension ZIP. It also writes checksums and provenance data after validating the archive contents.
+
+CRX packaging requires the private key that matches `extension-id.txt`:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\Build-Release.ps1 -Artifacts Userscript,Zip,Crx -CrxKeyPath <private-key.pem>
 ```
 
-For manual steps:
+The tools refuse to generate a replacement key. A new key would rotate the extension ID and break update continuity.
 
-1. Regenerate the extension engine:
+`Build-CRX.ps1` is the direct packer when only a CRX is needed. It enforces the same pinned extension ID and matching private key.
 
-   ```powershell
-   powershell -NoProfile -ExecutionPolicy Bypass -File .\Build-Extension.ps1
-   ```
-
-2. Run the local contract tests:
-
-   ```powershell
-   node --test tests/*.mjs
-   ```
-
-3. Package a signed Chromium CRX when a CRX artifact is needed:
-
-   ```powershell
-   powershell -NoProfile -ExecutionPolicy Bypass -File .\Build-CRX.ps1 -KeyPath <private-key.pem>
-   ```
-
-4. Attach only the generated and verified userscript, unpacked-extension ZIP,
-   optional stable-ID CRX, and checksum artifacts to GitHub Releases manually.
-   If `-Artifacts Xpi` was requested, treat the generated `.unsigned.xpi` as a
-   development artifact only.
+Firefox persistent installs require AMO or `web-ext sign`. The release gate can create an unsigned development XPI when explicitly requested; do not publish that file as a signed install asset.

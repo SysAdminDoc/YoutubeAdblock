@@ -125,7 +125,7 @@
      * ===================================================================== */
 
     const SCRIPT_NAME = 'YoutubeAdblock';
-    const SCRIPT_VERSION = '0.8.0';
+    const SCRIPT_VERSION = '0.8.1';
     const PROJECT_URL = 'https://github.com/SysAdminDoc/YoutubeAdblock';
     const ISSUES_URL = `${PROJECT_URL}/issues`;
     const FILTER_URL_DEFAULT = 'https://raw.githubusercontent.com/SysAdminDoc/YoutubeAdblock/refs/heads/main/youtube-adblock-filters.txt';
@@ -484,7 +484,7 @@
                 cacheCleared: 'Cached data for that service was cleared.',
                 requiresSegments: 'Requires SponsorBlock segments to be allowed first.',
                 sponsorBlockTitle: 'SponsorBlock segments',
-                sponsorBlockDetail: 'Sends the first 4 hex characters of sha256(video ID) — never the full video ID — to sponsor.ajay.app to fetch skippable segments. Purpose: skipping sponsors and similar segments. Responses are cached in memory for this tab only. Segment data is licensed CC BY-NC-SA 4.0.',
+                sponsorBlockDetail: 'Sends the first 4 hex characters of sha256(video ID), never the full video ID, to sponsor.ajay.app to fetch skippable segments. Purpose: skipping sponsors and similar segments. Responses are cached in memory for this tab only. Segment data is licensed CC BY-NC-SA 4.0.',
                 sponsorBlockViewTitle: 'SponsorBlock skip reports',
                 sponsorBlockViewDetail: 'After an auto-skip, reports that segment’s UUID to sponsor.ajay.app so community view counts stay accurate. The UUID identifies the segment, not you, but it is derived from what you watch.',
                 dearrowTitle: 'DeArrow titles & thumbnails',
@@ -545,12 +545,12 @@
                 importPreviewAdd: (key) => `add ${key}`,
                 importPreviewChange: (key) => `change ${key}`,
                 importPreviewRemove: (key) => `clear ${key}`,
-                importPreviewNoChanges: 'Nothing would change — the import matches your current settings.',
+                importPreviewNoChanges: 'Nothing would change. The import matches your current settings.',
                 importConfirm: 'Apply import',
                 importCancel: 'Cancel',
                 importRolledBack: 'Import failed part-way and every change was rolled back.',
                 importUndo: 'Undo import',
-                importUndone: 'Import undone — previous settings restored.',
+                importUndone: 'Import undone. Previous settings restored.',
                 durationTitle: 'Duration Filter (seconds)',
                 durationHelp: 'Hide videos shorter than min or longer than max. Leave blank to skip.',
                 minPlaceholder: 'Min (sec)',
@@ -732,7 +732,7 @@
             },
             clutter: {
                 title: 'Clutter-Free Mode',
-                description: 'Hide the parts of YouTube you never want to see. Selectors only — the engine stays in charge of ads.',
+                description: 'Hide the parts of YouTube you never want to see. This uses selectors only, so the engine stays in charge of ads.',
                 features: {
                     hideHomeFeed: {
                         label: 'Hide home feed',
@@ -7411,7 +7411,7 @@
 
             /* v0.5.21 desktop Control Center redesign. The existing component
                rules remain as conservative fallbacks; these tokens and shell
-               rules provide the ImageGen-led 1440x900 direction without
+               rules provide the selected 1440x900 direction without
                changing any setting keys or behavior. */
             .${CSS_PREFIX}-panel {
                 --accent: #49c7ab;
@@ -10303,7 +10303,7 @@
             `${report.unsupportedScriptlets}: ${formatScriptletCoverage(coverage.unsupportedScriptlets)}`,
             `${report.rejectedDangerousScriptlets}: ${formatScriptletCoverage(coverage.rejectedDangerousScriptlets)}`,
             `${report.ssaiSignals}: detected=${state.stats.ssaiDetected || 0}, lastSeen=${state.ssaiLastSeen ? new Date(state.ssaiLastSeen).toISOString() : STRINGS.common.never}, lastUrl=${redactUrl(state.ssaiLastUrl) || STRINGS.common.none}`,
-            `${report.sabrOnly}: detected=${state.stats.sabrOnlyResponses || 0}, lastSeen=${state.sabrLastSeen ? new Date(state.sabrLastSeen).toISOString() : STRINGS.common.never}${state.sabrOnlyActive ? ' — URL-shaped ad classification has no signal on these sessions; JSON pruning and cosmetic cleanup still apply' : ''}`,
+            `${report.sabrOnly}: detected=${state.stats.sabrOnlyResponses || 0}, lastSeen=${state.sabrLastSeen ? new Date(state.sabrLastSeen).toISOString() : STRINGS.common.never}${state.sabrOnlyActive ? '. URL-shaped ad classification has no signal on these sessions. JSON pruning and cosmetic cleanup still apply' : ''}`,
             `${report.complianceDialogs}: detected=${state.stats.complianceDialogs || 0}, lastSeen=${state.complianceDialogLastSeen ? new Date(state.complianceDialogLastSeen).toISOString() : STRINGS.common.never} (never hidden or dismissed)`,
             `${report.dnrMatchedRules}: ${formatDnrDiagnosticsReport()}`,
             `${report.communityApiPermission}: ${state.communityApiPermission || STRINGS.common.unknown}`,

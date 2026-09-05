@@ -1,7 +1,7 @@
 /*
  * YoutubeAdblock - MV3 service worker.
  *
- * Owns: action button clicks, keyboard commands, right-click context menu,
+ * Owns: action button clicks, right-click context menu,
  * message routing between the popup/menu UI and the active tab's content
  * scripts, plus privacy-bounded diagnostics for packaged DNR rules. The
  * actual page-world ad-blocking engine lives in main.js.
@@ -763,23 +763,6 @@ async function sendToActiveTab(payload) {
 
 chrome.action.onClicked.addListener(() => {
     sendToActiveTab({ type: 'ytab:open-panel' });
-});
-
-chrome.commands.onCommand.addListener((name) => {
-    switch (name) {
-        case 'ytab-open-panel':
-            sendToActiveTab({ type: 'ytab:open-panel' });
-            break;
-        case 'ytab-toggle-protection':
-            sendToActiveTab({ type: 'ytab:toggle-protection' });
-            break;
-        case 'ytab-refresh-rules':
-            sendToActiveTab({ type: 'ytab:refresh-rules' });
-            break;
-        case 'ytab-block-channel':
-            sendToActiveTab({ type: 'ytab:block-channel' });
-            break;
-    }
 });
 
 const COMMUNITY_API_ORIGINS = [

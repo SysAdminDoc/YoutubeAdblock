@@ -70,7 +70,8 @@ if (Test-Path -LiteralPath $networkSourcePath) {
     # PowerShell 5.1 and PowerShell 7 use different pretty-print indentation.
     # Keep generated rules compact so rebuilding is byte-stable in either host.
     $dnrJson = $dnrRules | ConvertTo-Json -Depth 30 -Compress
-    [System.IO.File]::WriteAllText($networkOutPath, $dnrJson + [Environment]::NewLine, (New-Object System.Text.UTF8Encoding($false)))
+    $stableDnrJson = $dnrJson.Replace("`r`n", "`n").Replace("`r", "`n") + "`n"
+    [System.IO.File]::WriteAllText($networkOutPath, $stableDnrJson, (New-Object System.Text.UTF8Encoding($false)))
 }
 
 # Strip the ==UserScript== block (and anything before it that is only
@@ -251,7 +252,7 @@ $header = @'
  */
 '@
 
-$final = $header + "`n" + $body.TrimStart()
+$final = ($header + "`n" + $body.TrimStart()).Replace("`r`n", "`n").Replace("`r", "`n")
 
 [System.IO.File]::WriteAllText($outPath, $final, (New-Object System.Text.UTF8Encoding($false)))
 

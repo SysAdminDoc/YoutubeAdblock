@@ -54,7 +54,7 @@ test('live evidence URLs remove query strings and media identifiers', () => {
     );
 });
 
-test('live unpacked extension blocks an ad-only image request on desktop YouTube', {
+test('live production extension blocks an ad-only image request and reports bounded diagnostics', {
     skip: !liveEnabled
         ? 'Set YTAB_LIVE_EXTENSION=1 to run the isolated live-network smoke.'
         : (!canLaunch ? `Playwright Chromium not found at ${chromiumPath}` : false),
@@ -159,9 +159,10 @@ test('live unpacked extension blocks an ad-only image request on desktop YouTube
         body: note.querySelector('.ytab-note-text')?.textContent || '',
         tone: note.dataset.tone || ''
     }));
-    assert.match(dnrDiagnostics.title, /[1-9][0-9]* recent network match/);
-    assert.match(dnrDiagnostics.body, /packaged rules? matched in the last 5 minutes/);
-    assert.equal(dnrDiagnostics.tone, 'success');
+    assert.equal(dnrDiagnostics.title, 'Matched-rule evidence unavailable');
+    assert.match(dnrDiagnostics.body, /Network blocking stays active/);
+    assert.match(dnrDiagnostics.body, /diagnostic counter is unavailable/);
+    assert.equal(dnrDiagnostics.tone, 'warn');
 
     const visibleAdSelectors = await page.locator(AD_SELECTOR).evaluateAll(elements =>
         elements.filter(element => {

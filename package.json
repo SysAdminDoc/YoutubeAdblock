@@ -1,8 +1,10 @@
 {
   "name": "youtube-adblock",
-  "version": "0.8.0",
+  "version": "0.8.1",
   "private": true,
   "scripts": {
+    "assets:marketing": "node tools/generate-marketing-assets.mjs",
+    "screenshots:marketing": "node tools/capture-extension-marketing.mjs",
     "test": "node --test tests/*.mjs",
     "test:browser": "node --test tests/browser-smoke.test.mjs"
   },
