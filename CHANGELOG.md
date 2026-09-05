@@ -26,8 +26,10 @@ All notable changes to YoutubeAdblock are documented here.
   host, which keeps rebuilds byte-stable on Windows.
 - The release gate now validates the README version badge without pinning its
   color, so visual identity updates don't weaken version lockstep.
-- Signed filter and webpack manifests advanced to revision 7, dated
+- Signed filter and webpack manifests advanced to revision 8, dated
   2026-09-05, with expiry on 2027-03-04.
+- Repeat release builds now verify unchanged signed data without advancing its
+  revision. The signer accepts `--refresh` when a deliberate renewal is needed.
 
 ### Removed
 - Browser command registrations and their manifest entries. Toolbar, context

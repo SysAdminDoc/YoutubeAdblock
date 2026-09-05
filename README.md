@@ -119,6 +119,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\Build-Release.ps1
 
 The release gate regenerates `extension/main.js`, runs the browser matrix and contract tests, checks signed data, and cleans old output. It writes SHA-256 checksums plus the userscript, unpacked-extension ZIP, and provenance file to `dist/`.
 
+Repeat builds verify a still-valid signed manifest without changing its revision. Maintainers can pass `--refresh` directly to the signing tool when publishing a deliberate rules renewal.
+
 Brand and screenshot assets are reproducible too:
 
 ```powershell

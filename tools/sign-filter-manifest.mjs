@@ -39,6 +39,7 @@ const SCHEMA_VERSION = 2;
 const SIGNING_KEY_ID = 'ytab-2026-08';
 const MANIFEST_DOMAIN = 'ytab-manifest-v2';
 const MANIFEST_VALIDITY_DAYS = Number(args.get('validity-days') || 180);
+const forceRefresh = args.get('refresh') === true;
 const ARTIFACT_ROLES = {
     'youtube-adblock-filters.txt': 'filters',
     'webpack-ad-signatures.json': 'webpack-signatures',
@@ -176,8 +177,15 @@ if (!fs.existsSync(filterPath)) {
 }
 
 const filterBytes = readCanonicalFilterBytes(filterPath);
-if (fs.existsSync(privateKeyPath)) {
+if (!fs.existsSync(privateKeyPath)) {
+    verifyCommittedManifest(filterBytes);
+} else if (forceRefresh) {
     writeSignedManifest(filterBytes);
 } else {
-    verifyCommittedManifest(filterBytes);
+    try {
+        verifyCommittedManifest(filterBytes);
+    } catch (error) {
+        console.log(`Existing ${filterName} signature needs renewal: ${error.message}`);
+        writeSignedManifest(filterBytes);
+    }
 }
