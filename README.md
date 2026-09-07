@@ -1,6 +1,6 @@
 # YoutubeAdblock
 
-[![Version](https://img.shields.io/badge/version-0.8.1-ff7169)](https://github.com/SysAdminDoc/YoutubeAdblock/releases/latest)
+[![Version](https://img.shields.io/badge/version-0.8.2-ff7169)](https://github.com/SysAdminDoc/YoutubeAdblock/releases/latest)
 [![License](https://img.shields.io/badge/license-MIT-56e0bd)](LICENSE)
 ![Platform](https://img.shields.io/badge/platform-Chromium%20121%2B%20%7C%20Firefox%20128%2B-17212b)
 [![Install](https://img.shields.io/badge/install-userscript-1f6feb)](https://github.com/SysAdminDoc/YoutubeAdblock/raw/refs/heads/main/YoutubeAdblock.user.js)
@@ -26,26 +26,26 @@ These are product captures, not mockups. The capture command loads the unpacked 
 
 ### See protection at a glance
 
-![YoutubeAdblock v0.8.1 protection overview with live counters](design/screenshots/control-center-overview-dark-v0.8.1.png)
+![YoutubeAdblock v0.8.2 protection overview with live counters](design/screenshots/control-center-overview-dark-v0.8.2.png)
 
 The counters above came from the same deterministic capture run: 26 blocked requests and 19 pruned responses. They aren't seeded totals.
 
 ### Quiet the feed as well as the ads
 
-![YoutubeAdblock v0.8.1 channel and keyword controls](design/screenshots/control-center-focus-filters-dark-v0.8.1.png)
+![YoutubeAdblock v0.8.2 channel and keyword controls](design/screenshots/control-center-focus-filters-dark-v0.8.2.png)
 
 Redirect Shorts, filter channels or keywords, set duration limits, and keep selected creators on an ad allowlist. These controls start off.
 
 ### Check the browser layer without exposing URLs
 
-![YoutubeAdblock v0.8.1 privacy-bounded browser network evidence](design/screenshots/control-center-network-evidence-dark-v0.8.1.png)
+![YoutubeAdblock v0.8.2 privacy-bounded browser network evidence](design/screenshots/control-center-network-evidence-dark-v0.8.2.png)
 
 This image uses the unpacked development profile, which adds Chrome's diagnostic permission. The capture fires a real `pagead` probe and waits for a packaged-rule match. Production builds use the same DNR rules but omit that permission, so the card reports that evidence is unavailable instead of asking for broader access.
 
 <details>
 <summary>View the light theme</summary>
 
-![YoutubeAdblock v0.8.1 light Control Center](design/screenshots/control-center-overview-light-v0.8.1.png)
+![YoutubeAdblock v0.8.2 light Control Center](design/screenshots/control-center-overview-light-v0.8.2.png)
 
 </details>
 
@@ -66,7 +66,7 @@ If a Chromium browser says the manager can't inject scripts, open its extension 
 
 The extension adds packaged `declarativeNetRequest` rules. Chrome, Edge, and Brave 121 or newer are supported.
 
-1. Download `YoutubeAdblock-extension-v0.8.1.zip` from the [latest release](https://github.com/SysAdminDoc/YoutubeAdblock/releases/latest).
+1. Download `YoutubeAdblock-extension-v0.8.2.zip` from the [latest release](https://github.com/SysAdminDoc/YoutubeAdblock/releases/latest).
 2. Extract the ZIP to a folder you plan to keep.
 3. Open your browser's extensions page, enable Developer mode, and choose **Load unpacked**.
 4. Select the extracted folder. Click the new shield icon to open the Control Center.
@@ -107,7 +107,7 @@ The local suite covers the userscript and generated extension across dark, light
 
 `npm run screenshots:marketing` loads the actual unpacked extension headlessly. Its development pass proves that a packaged DNR rule rejects a `google.com/pagead` image probe and that the Control Center reports the match without a URL.
 
-Safari and mobile browser paths haven't been exercised in this v0.8.1 release. Firefox-compatible code and fixtures are tested, but a real Firefox userscript-manager session isn't part of the current desktop gate.
+Safari and mobile browser paths haven't been exercised in this v0.8.2 release. Firefox-compatible code and fixtures are tested, but a real Firefox userscript-manager session isn't part of the current desktop gate.
 
 ## Build and verify
 

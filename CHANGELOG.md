@@ -4,6 +4,21 @@ All notable changes to YoutubeAdblock are documented here.
 
 ## [Unreleased]
 
+## [0.8.2] (2026-09-07)
+
+### Added
+- The original approved blocked-play shield is preserved under
+  `assets/brand/concepts/`. A selection record points to the chosen direction,
+  with an untouched master stored separately from the generated icon family.
+
+### Changed
+- Install icons, the README banner, the repository social card, and all four
+  real extension captures were regenerated for this release.
+
+### Verified
+- The installed-extension capture still exercises live blocking counters and
+  packaged DNR evidence before writing any screenshot.
+
 ## [0.8.1] (2026-09-05)
 
 ### Added

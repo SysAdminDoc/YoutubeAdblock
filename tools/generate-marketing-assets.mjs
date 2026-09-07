@@ -107,7 +107,7 @@ h1 span{color:#ff7169}
 <div class="eyebrow">YoutubeAdblock</div>
 <h1>Keep the video.<br><span>Cut the interruptions.</span></h1>
 <p class="sub">Local blocking with signed rules. Every decision stays visible in the Control Center.</p>
-<div class="pills"><span class="pill">LOCAL FIRST</span><span class="pill">SIGNED RULES</span><span class="pill">MV3 + USERSCRIPT</span><span class="pill">V0.8.1</span></div>
+<div class="pills"><span class="pill">LOCAL FIRST</span><span class="pill">SIGNED RULES</span><span class="pill">MV3 + USERSCRIPT</span><span class="pill">V0.8.2</span></div>
 </div><div class="mark-wrap"><div class="halo"></div><img class="mark" src="${sourceUrl}" alt=""></div><div class="edge"></div></main></body></html>`;
 }
 

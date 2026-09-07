@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         YoutubeAdblock
 // @namespace    https://github.com/SysAdminDoc
-// @version      0.8.1
+// @version      0.8.2
 // @description  Local YouTube ad blocking with signed rules, plus an in-page Control Center that explains what is running.
 // @author       SysAdminDoc
 // @license      MIT
@@ -42,7 +42,7 @@
      * ===================================================================== */
 
     const SCRIPT_NAME = 'YoutubeAdblock';
-    const SCRIPT_VERSION = '0.8.1';
+    const SCRIPT_VERSION = '0.8.2';
     const PROJECT_URL = 'https://github.com/SysAdminDoc/YoutubeAdblock';
     const ISSUES_URL = `${PROJECT_URL}/issues`;
     const FILTER_URL_DEFAULT = 'https://raw.githubusercontent.com/SysAdminDoc/YoutubeAdblock/refs/heads/main/youtube-adblock-filters.txt';
