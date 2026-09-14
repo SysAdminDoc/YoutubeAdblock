@@ -5,6 +5,16 @@
 ![Platform](https://img.shields.io/badge/platform-Chromium%20121%2B%20%7C%20Firefox%20128%2B-17212b)
 [![Install](https://img.shields.io/badge/install-userscript-1f6feb)](https://github.com/SysAdminDoc/YoutubeAdblock/raw/refs/heads/main/YoutubeAdblock.user.js)
 
+<p align="center">
+  <a href="https://ko-fi.com/X8K126YVER">
+    <img height="42" src="https://storage.ko-fi.com/cdn/kofi2.png?v=3" alt="Buy me a coffee on Ko-fi" />
+  </a>
+</p>
+
+<p align="center">
+  <sub><em>If YoutubeAdblock makes YouTube less disruptive, a coffee helps me keep its blocker and browser builds current.</em></sub>
+</p>
+
 ![YoutubeAdblock. Keep the video. Cut the interruptions.](banner.png)
 
 YoutubeAdblock is a local YouTube blocker with two install paths: a userscript for the quickest setup, and an unpacked MV3 extension with browser-level network rules. Both builds include the same in-page Control Center, so protection never feels like a black box.
